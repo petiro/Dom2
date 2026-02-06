@@ -1,7 +1,16 @@
 import re
 import json
-from ai_bridge import AIBridge  # Fixed import
 from gateway.pattern_memory import PatternMemory
+
+
+class AIBridge:
+    """Lightweight bridge to OpenRouter API for the parser"""
+
+    def __init__(self, api_key, model="google/gemini-2.0-flash-exp:free"):
+        self.api_key = api_key
+        self.model = model
+        self.url = "https://openrouter.ai/api/v1/chat/completions"
+
 
 class TelegramParser:
     def __init__(self, logger, api_key=None):
@@ -12,7 +21,7 @@ class TelegramParser:
     def parse_signal(self, text):
         """
         Parse betting signal from Telegram message
-        
+
         Returns dict with keys: teams, market, score
         or None if not a valid signal
         """
@@ -44,13 +53,13 @@ class TelegramParser:
                 r = requests.post(self.ai.url, headers=headers, json=data, timeout=10)
                 r.raise_for_status()
                 res = r.json()['choices'][0]['message']['content'].strip()
-                
+
                 # Clean markdown if AI adds it
                 if "```json" in res:
                     res = res.split("```json")[1].split("```")[0].strip()
-                
+
                 result = json.loads(res)
-                
+
                 # 3. Save new pattern to memory
                 self.memory.save_pattern(text, result)
                 return result
@@ -61,12 +70,12 @@ class TelegramParser:
         try:
             teams_match = re.search(r'🆚(.*?)\n', text)
             teams = teams_match.group(1).strip() if teams_match else None
-            
+
             score_match = re.search(r'⚽\s*(\d+\s*-\s*\d+)|⌚.*?,.*?(\d+\s*-\s*\d+)', text)
             current_score = score_match.group(1) or score_match.group(2) if score_match else None
-            
+
             market = "Over 0.5" if "OVER" in text.upper() else None
-            
+
             if teams:
                 return {
                     "teams": teams,
@@ -75,5 +84,5 @@ class TelegramParser:
                 }
         except Exception as e:
             self.logger.error(f"Regex parsing failed: {e}")
-        
+
         return None

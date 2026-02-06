@@ -1,0 +1,31 @@
+# SuperAgent - CSS Selectors for bet365.it
+# These selectors are monitored by RPAHealer for auto-fix when the site changes.
+# If a selector breaks, AI Vision takes a screenshot and finds the new one.
+
+# Login elements
+login_button: "text=Login"
+pin_input: ".lms-StandardPinModal_Digit"
+login_submit: "text=Accedi"
+
+# Navigation
+search_button: ".s-SearchButton"
+search_input: "input.s-SearchInput"
+
+# Market state
+market_lock:
+  - ".ml-SuspendedLabel"
+  - ".sip-MarketSuspendedLabel"
+
+# Live score
+score:
+  - ".ml-ScoreContainer"
+  - ".sip-MarketScoreContainer"
+
+# Bet placement
+bet_button: 'button:has-text("Piazza")'
+bet_slip: ".bs-BetslipContent"
+stake_input: ".bs-StakeBox input"
+
+# Odds display
+odds_value: ".sac-ParticipantOddsOnly80_Odds"
+event_name: ".rcl-ParticipantFixtureDetails_TeamNames"

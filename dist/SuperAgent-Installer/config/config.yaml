@@ -2,8 +2,14 @@
 
 # OpenRouter API (for AI features)
 openrouter:
-  api_key: ""  # Get free key at https://openrouter.ai/keys
+  api_key: "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"
   model: "google/gemini-2.0-flash-exp:free"  # Free Gemini model
+
+# Telegram API (get from https://my.telegram.org)
+telegram:
+  api_id: ""       # Numeric API ID
+  api_hash: ""     # API Hash string
+  phone: ""        # Phone number with country code (+39...)
 
 # Desktop UI Settings
 ui:
