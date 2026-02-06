@@ -202,6 +202,11 @@ class RPAWorker(QThread):
                         and selectors and time.time() - last_heal_check > heal_interval):
                     last_heal_check = time.time()
                     try:
+                        # Verify page is still alive before testing
+                        if not self.executor._recover_page():
+                            self.logger.error("Page recovery failed, skipping healing cycle")
+                            continue
+
                         # Test all selectors on the live page
                         results = self.rpa_healer.test_all_selectors(
                             self.executor.page, selectors
