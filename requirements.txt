@@ -1,22 +1,6 @@
-# Desktop UI
-PySide6>=6.6.0
-
-# AI and ML
-requests>=2.31.0
-Pillow>=10.0.0
-
-# Web Automation (RPA)
-playwright>=1.41
-
-# Data and Config
-pyyaml>=6.0
-beautifulsoup4>=4.12.0
-sqlite-utils>=3.35
-
-# Optional: Telegram integration
-telethon>=1.34.0
-
-# Optional: Advanced features
-fastapi>=0.109.0
-uvicorn>=0.27.0
-openai>=1.10.0
+PySide6
+playwright
+telethon
+pyyaml
+requests
+openai

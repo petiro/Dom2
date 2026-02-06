@@ -2,7 +2,7 @@
 
 # OpenRouter API (for AI features)
 openrouter:
-  api_key: ""  # Get free key at https://openrouter.ai/keys
+  api_key: "INSERISCI_KEY"  # Get free key at https://openrouter.ai/keys
   model: "google/gemini-2.0-flash-exp:free"  # Free Gemini model
 
 # Desktop UI Settings
