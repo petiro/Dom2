@@ -142,11 +142,13 @@ class RPAWorker(QThread):
     task_completed = Signal()
     healing_performed = Signal(str, str, str, str)  # timestamp, key, old, new
 
-    def __init__(self, logger, rpa_healer=None, headless=True):
+    def __init__(self, logger, rpa_healer=None, headless=False, use_real_chrome=True, chrome_profile="Default"):
         super().__init__()
         self.logger = logger
         self.rpa_healer = rpa_healer
         self.headless = headless
+        self.use_real_chrome = use_real_chrome
+        self.chrome_profile = chrome_profile
         self.running = False
         self.executor = None
 
@@ -161,7 +163,9 @@ class RPAWorker(QThread):
             self.executor = DomExecutorPlaywright(
                 logger=self.logger,
                 headless=self.headless,
-                allow_place=False
+                allow_place=False,
+                use_real_chrome=self.use_real_chrome,
+                chrome_profile=self.chrome_profile
             )
 
             # Initialize browser immediately (lazy init won't trigger otherwise)
@@ -328,7 +332,29 @@ class RPAMonitorTab(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
 
-        self.rpa_worker = RPAWorker(logger=self.logger, rpa_healer=self.rpa_healer, headless=True)
+        # Read chrome settings from config
+        config_path = os.path.join(BASE_DIR, "config", "config.yaml")
+        use_real_chrome = True
+        chrome_profile = "Default"
+        headless = False
+        try:
+            import yaml as _yaml
+            with open(config_path, "r", encoding="utf-8") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+            rpa_cfg = _cfg.get("rpa", {})
+            use_real_chrome = rpa_cfg.get("use_real_chrome", True)
+            chrome_profile = rpa_cfg.get("chrome_profile", "Default")
+            headless = rpa_cfg.get("headless", False)
+        except Exception:
+            pass
+
+        self.rpa_worker = RPAWorker(
+            logger=self.logger,
+            rpa_healer=self.rpa_healer,
+            headless=headless,
+            use_real_chrome=use_real_chrome,
+            chrome_profile=chrome_profile,
+        )
         self.rpa_worker.status_changed.connect(self.on_status_changed)
         self.rpa_worker.error_occurred.connect(self.on_error)
         self.rpa_worker.task_completed.connect(self.on_task_completed)
