@@ -183,10 +183,10 @@ class RPAWorker(QThread):
                 self.logger.info("Navigating to bet365...")
                 self.executor.page.goto(
                     "https://www.bet365.it/#/HO/",
-                    wait_until="domcontentloaded",
                     timeout=30000
                 )
-                time.sleep(3)
+                # Use smart wait instead of fixed sleep
+                self.executor._wait_for_page_ready()
                 self.logger.info("Page loaded, starting selector monitoring")
             except Exception as e:
                 self.logger.warning(f"Navigation failed (will retry): {e}")
