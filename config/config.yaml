@@ -21,9 +21,11 @@ ui:
 # RPA Settings
 rpa:
   enabled: false  # Enable RPA automation
-  headless: true  # Hide browser
-  autobet: false  # ⚠️ Enable auto-betting (USE WITH CAUTION!)
+  headless: false  # Must be false for real Chrome
+  autobet: false  # Enable auto-betting (USE WITH CAUTION!)
   pin: "0503"  # Quick login PIN
+  use_real_chrome: true  # true = use YOUR Chrome (cookies, login saved), false = standalone Chromium
+  chrome_profile: "Default"  # Chrome profile: "Default", "Profile 1", "Profile 2" etc.
   
 # AI Learning Settings
 learning:

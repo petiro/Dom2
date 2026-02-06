@@ -1,22 +1,70 @@
+import os
+import sys
 import time
+import getpass
+import platform
 from playwright.sync_api import sync_playwright
+
+
+def _detect_chrome_path():
+    """Auto-detect Chrome executable path based on OS."""
+    if platform.system() == "Windows":
+        candidates = [
+            os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        ]
+    elif platform.system() == "Darwin":
+        candidates = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+    else:
+        candidates = ["/usr/bin/google-chrome", "/usr/bin/chromium-browser", "/usr/bin/chromium"]
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def _detect_chrome_profile():
+    """Auto-detect Chrome user data directory based on OS."""
+    user = getpass.getuser()
+    if platform.system() == "Windows":
+        return os.path.join(os.environ.get("LOCALAPPDATA", f"C:\\Users\\{user}\\AppData\\Local"),
+                            "Google", "Chrome", "User Data")
+    elif platform.system() == "Darwin":
+        return os.path.expanduser("~/Library/Application Support/Google/Chrome")
+    else:
+        return os.path.expanduser("~/.config/google-chrome")
 
 
 class DomExecutorPlaywright:
     """
     DOM Executor using Playwright for browser automation.
+    Uses the user's real Chrome browser (persistent context) with their cookies,
+    login sessions, and profile. Falls back to standalone Chromium if Chrome not found.
     Enterprise-grade: smart waits, retry logic, fallback selectors, auto-recovery.
-    No fixed sleeps - all waits are element-based or state-based.
     """
 
     MAX_RETRIES = 3
-    RETRY_DELAY = 2  # seconds between retries
+    RETRY_DELAY = 2
 
-    def __init__(self, logger, headless=True, allow_place=False, pin="0503"):
+    def __init__(self, logger, headless=False, allow_place=False, pin="0503",
+                 chrome_profile="Default", use_real_chrome=True):
+        """
+        Args:
+            logger: Logger instance
+            headless: Run browser headless (must be False for persistent context)
+            allow_place: Enable real bet placement
+            pin: Login PIN
+            chrome_profile: Chrome profile name ("Default", "Profile 1", etc.)
+            use_real_chrome: True = use real Chrome with cookies, False = standalone Chromium
+        """
         self.logger = logger
         self.allow_place = allow_place
         self.pin = pin
         self.headless = headless
+        self.chrome_profile = chrome_profile
+        self.use_real_chrome = use_real_chrome
 
         self.pw = None
         self.browser = None
@@ -26,27 +74,65 @@ class DomExecutorPlaywright:
         self._initialized = False
 
     def _ensure_browser(self):
-        """Initialize browser if not already initialized."""
+        """Initialize browser. Uses real Chrome if available, otherwise standalone Chromium."""
         if self._initialized:
             return True
 
         try:
-            self.logger.info("Initializing Playwright browser...")
             self.pw = sync_playwright().start()
-            self.browser = self.pw.chromium.launch(headless=self.headless)
-            self.ctx = self.browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                viewport={"width": 1366, "height": 768},
-                locale="it-IT",
-                timezone_id="Europe/Rome"
-            )
-            self.page = self.ctx.new_page()
+
+            chrome_path = _detect_chrome_path() if self.use_real_chrome else None
+            chrome_profile_dir = _detect_chrome_profile() if self.use_real_chrome else None
+
+            if chrome_path and chrome_profile_dir and os.path.exists(chrome_profile_dir):
+                # Use real Chrome with persistent context (cookies, login, history)
+                self.logger.info(f"Using real Chrome: {chrome_path}")
+                self.logger.info(f"Profile: {chrome_profile_dir} ({self.chrome_profile})")
+
+                self.ctx = self.pw.chromium.launch_persistent_context(
+                    chrome_profile_dir,
+                    executable_path=chrome_path,
+                    headless=False,  # Must be visible for persistent context
+                    no_viewport=True,
+                    args=[
+                        f"--profile-directory={self.chrome_profile}",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                    locale="it-IT",
+                    timezone_id="Europe/Rome",
+                )
+                self.browser = None  # No separate browser object with persistent context
+
+                # Use existing page if Chrome already had one open, otherwise create new
+                if self.ctx.pages:
+                    self.page = self.ctx.pages[0]
+                else:
+                    self.page = self.ctx.new_page()
+
+                self.logger.info("Real Chrome initialized (your cookies and sessions are active)")
+            else:
+                # Fallback: standalone Chromium (no cookies, fresh browser)
+                if self.use_real_chrome:
+                    self.logger.warning("Chrome not found, falling back to standalone Chromium")
+
+                self.browser = self.pw.chromium.launch(headless=self.headless)
+                self.ctx = self.browser.new_context(
+                    viewport={"width": 1366, "height": 768},
+                    locale="it-IT",
+                    timezone_id="Europe/Rome",
+                )
+                self.page = self.ctx.new_page()
+                self.logger.info("Standalone Chromium initialized")
+
             self._initialized = True
-            self.logger.info("Browser initialized successfully")
             return True
+
         except Exception as e:
             self.logger.error(f"Failed to initialize browser: {e}")
-            self.logger.error("Make sure Playwright browsers are installed: playwright install chromium")
+            if "Target page, context or browser has been closed" in str(e):
+                self.logger.error("Close ALL Chrome windows before starting SuperAgent")
+            elif "playwright install" in str(e).lower() or "executable doesn't exist" in str(e).lower():
+                self.logger.error("Run: playwright install chromium")
             return False
 
     def _wait_for_page_ready(self, timeout=15000):
@@ -55,7 +141,6 @@ class DomExecutorPlaywright:
             self.page.wait_for_load_state("domcontentloaded", timeout=timeout)
             self.page.wait_for_load_state("networkidle", timeout=timeout)
         except Exception:
-            # networkidle can timeout on heavy SPA sites, that's acceptable
             pass
 
     def _safe_click(self, selector, timeout=10000):
@@ -80,7 +165,7 @@ class DomExecutorPlaywright:
             return False
 
     def _safe_fill(self, selector, text, timeout=10000):
-        """Wait for input to be visible, clear it, then fill. Returns True on success."""
+        """Wait for input to be visible, then fill. Returns True on success."""
         try:
             loc = self.page.locator(selector)
             loc.first.wait_for(state="visible", timeout=timeout)
@@ -91,12 +176,7 @@ class DomExecutorPlaywright:
             return False
 
     def _find_element(self, selectors):
-        """
-        Try multiple selectors (fallback chain). Returns first matching locator or None.
-
-        Args:
-            selectors: str or list of str
-        """
+        """Try multiple selectors (fallback chain). Returns first matching locator or None."""
         if isinstance(selectors, str):
             selectors = [selectors]
 
@@ -110,13 +190,7 @@ class DomExecutorPlaywright:
         return None
 
     def _retry(self, func, description="operation"):
-        """
-        Retry a function up to MAX_RETRIES times with delay between attempts.
-
-        Args:
-            func: callable that returns a truthy value on success
-            description: human-readable name for logging
-        """
+        """Retry a function up to MAX_RETRIES times with delay between attempts."""
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 result = func()
@@ -133,9 +207,8 @@ class DomExecutorPlaywright:
         return None
 
     def _recover_page(self):
-        """Attempt to recover if page is in a bad state (crashed, navigated away, etc.)."""
+        """Attempt to recover if page is in a bad state."""
         try:
-            # Check if page is still alive
             self.page.evaluate("() => document.readyState")
             return True
         except Exception:
@@ -151,10 +224,7 @@ class DomExecutorPlaywright:
                 return False
 
     def ensure_login(self, selectors):
-        """
-        Ensure user is logged in to the betting site.
-        Uses smart waits and retry logic.
-        """
+        """Ensure user is logged in. With real Chrome, user may already be logged in via cookies."""
         if not self._ensure_browser():
             return False
 
@@ -162,23 +232,19 @@ class DomExecutorPlaywright:
             return True
 
         def _do_login():
-            self.logger.info("Navigating to login page...")
+            self.logger.info("Navigating to site...")
             self.page.goto("https://www.bet365.it/#/HO/", timeout=30000)
             self._wait_for_page_ready()
 
             login_btn = self.page.locator("text=Login")
             if login_btn.count() == 0:
-                self.logger.info("Already logged in")
+                self.logger.info("Already logged in (cookies active)")
+                self.last_login_time = time.time()
                 return True
 
             self.logger.info("Login required, clicking login button...")
             self._safe_click_locator(login_btn)
 
-            # Wait for login form to appear
-            pin_input = self.page.locator(".lms-StandardPinModal_Digit")
-            accedi_btn = self.page.locator("text=Accedi")
-
-            # Wait for either PIN input or Accedi button
             try:
                 self.page.wait_for_selector(
                     ".lms-StandardPinModal_Digit, text=Accedi",
@@ -188,13 +254,16 @@ class DomExecutorPlaywright:
                 self.logger.warning("Login form did not appear")
                 return False
 
+            pin_input = self.page.locator(".lms-StandardPinModal_Digit")
+            accedi_btn = self.page.locator("text=Accedi")
+
             if pin_input.count() > 0:
                 self.logger.info("PIN login detected. Entering PIN...")
                 for digit in self.pin:
                     self.page.keyboard.type(digit)
                     time.sleep(0.2)
             elif accedi_btn.count() > 0:
-                self.logger.info("Waiting for credentials...")
+                self.logger.info("Credential login...")
                 self._safe_click_locator(accedi_btn)
 
             self._wait_for_page_ready()
@@ -214,12 +283,7 @@ class DomExecutorPlaywright:
             return False
 
     def read_market_state(self, selectors):
-        """
-        Read current market state (suspended status and score).
-
-        Returns:
-            dict: {"suspended": bool, "score_now": str or None}
-        """
+        """Read current market state (suspended status and score)."""
         if not self._ensure_browser():
             return {"suspended": False, "score_now": None}
 
@@ -272,7 +336,6 @@ class DomExecutorPlaywright:
                     self.logger.info("Match navigation successful")
                     return True
 
-            # Fallback: click team text directly
             team_loc = self.page.locator(f"text={teams}").first
             if self._safe_click_locator(team_loc, timeout=5000):
                 self._wait_for_page_ready()
@@ -299,10 +362,7 @@ class DomExecutorPlaywright:
         return self._retry(_do_select, f"select market {market_name}")
 
     def place_bet(self, selectors):
-        """
-        Place a bet (only if allow_place is True).
-        Waits for button to be visible and enabled before clicking.
-        """
+        """Place a bet (only if allow_place is True)."""
         if not self.allow_place:
             self.logger.warning("BETS ARE DISABLED (allow_place=False). Skipping.")
             return False
@@ -325,12 +385,17 @@ class DomExecutorPlaywright:
     def close(self):
         """Clean up browser resources."""
         self.logger.info("Closing browser...")
-        for resource, name in [(self.ctx, "context"), (self.browser, "browser")]:
+        try:
+            if self.ctx:
+                self.ctx.close()
+        except Exception as e:
+            self.logger.warning(f"Error closing context: {e}")
+
+        if self.browser:
             try:
-                if resource:
-                    resource.close()
+                self.browser.close()
             except Exception as e:
-                self.logger.warning(f"Error closing {name}: {e}")
+                self.logger.warning(f"Error closing browser: {e}")
 
         try:
             if self.pw:
