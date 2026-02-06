@@ -132,8 +132,22 @@ def main():
     # PATCH 4 — Avvia servizi prima della UI
     start_services()
 
+    # Initialize RPA healer if AI is available
+    rpa_healer = None
+    if vision and config.get("learning", {}).get("rpa_healing", {}).get("enabled", True):
+        try:
+            from ai.rpa_healer import RPAHealer
+            rpa_healer = RPAHealer(
+                vision_learner=vision,
+                logger=logger,
+                confidence_threshold=config.get("learning", {}).get("rpa_healing", {}).get("confidence_threshold", 0.8)
+            )
+            logger.info("RPA Healer initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize RPA Healer: {e}")
+
     logger.info("Starting desktop application...")
-    sys.exit(run_app(vision, telegram_learner, None, logger))
+    sys.exit(run_app(vision, telegram_learner, rpa_healer, logger))
 
 
 # PATCH 3 — Avvio UI sicuro con traceback visibile

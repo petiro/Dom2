@@ -136,14 +136,16 @@ class ChatTab(QWidget):
 
 
 class RPAWorker(QThread):
-    """Worker thread for RPA browser automation"""
+    """Worker thread for RPA browser automation with self-healing"""
     status_changed = Signal(str, str)  # status, color
     error_occurred = Signal(str)
     task_completed = Signal()
+    healing_performed = Signal(str, str, str, str)  # timestamp, key, old, new
 
-    def __init__(self, logger, headless=True):
+    def __init__(self, logger, rpa_healer=None, headless=True):
         super().__init__()
         self.logger = logger
+        self.rpa_healer = rpa_healer
         self.headless = headless
         self.running = False
         self.executor = None
@@ -159,10 +161,49 @@ class RPAWorker(QThread):
             )
             self.status_changed.emit("RUNNING", "green")
 
-            # Keep alive while running
             import time
+            import yaml
+            from datetime import datetime
+
+            # Load selectors config if it exists
+            selectors_path = os.path.join(BASE_DIR, "config", "selectors.yaml")
+            selectors = {}
+            if os.path.exists(selectors_path):
+                with open(selectors_path, "r", encoding="utf-8") as f:
+                    selectors = yaml.safe_load(f) or {}
+
+            heal_interval = 30  # seconds between healing checks
+            last_heal_check = 0
+
             while self.running:
                 time.sleep(1)
+
+                # Periodic self-healing check
+                if (self.rpa_healer and self.executor and self.executor._initialized
+                        and selectors and time.time() - last_heal_check > heal_interval):
+                    last_heal_check = time.time()
+                    try:
+                        # Test all selectors
+                        results = self.rpa_healer.test_all_selectors(
+                            self.executor.page, selectors
+                        )
+                        broken = [k for k, v in results.items() if not v]
+
+                        if broken:
+                            self.logger.info(f"Broken selectors detected: {broken}")
+                            # Selector descriptions for healing
+                            descriptions = {k: k.replace("_", " ") for k in broken}
+                            healed = self.rpa_healer.auto_heal_all(
+                                self.executor.page, descriptions
+                            )
+                            for key, new_sel in healed.items():
+                                old_sel = selectors.get(key, "N/A")
+                                selectors[key] = new_sel
+                                ts = datetime.now().strftime("%H:%M:%S")
+                                self.healing_performed.emit(ts, key, str(old_sel), new_sel)
+                                self.task_completed.emit()
+                    except Exception as e:
+                        self.logger.error(f"Healing check error: {e}")
 
         except Exception as e:
             self.error_occurred.emit(f"RPA Error: {str(e)}")
@@ -178,9 +219,10 @@ class RPAWorker(QThread):
 class RPAMonitorTab(QWidget):
     """RPA monitoring and control tab"""
 
-    def __init__(self, logger=None, parent=None):
+    def __init__(self, logger=None, rpa_healer=None, parent=None):
         super().__init__(parent)
         self.logger = logger
+        self.rpa_healer = rpa_healer
         self.rpa_worker = None
         self.tasks_completed = 0
         self.init_ui()
@@ -243,10 +285,11 @@ class RPAMonitorTab(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
 
-        self.rpa_worker = RPAWorker(logger=self.logger, headless=True)
+        self.rpa_worker = RPAWorker(logger=self.logger, rpa_healer=self.rpa_healer, headless=True)
         self.rpa_worker.status_changed.connect(self.on_status_changed)
         self.rpa_worker.error_occurred.connect(self.on_error)
         self.rpa_worker.task_completed.connect(self.on_task_completed)
+        self.rpa_worker.healing_performed.connect(self.add_healing_record)
         self.rpa_worker.start()
 
     def stop_agent(self):
@@ -537,11 +580,11 @@ class SettingsTab(QWidget):
 class MainWindow(QMainWindow):
     """Main application window"""
 
-    def __init__(self, vision_learner=None, telegram_learner=None, agent=None, logger=None):
+    def __init__(self, vision_learner=None, telegram_learner=None, rpa_healer=None, logger=None):
         super().__init__()
         self.vision = vision_learner
         self.telegram_learner = telegram_learner
-        self.agent = agent
+        self.rpa_healer = rpa_healer
         self.logger = logger
         self.init_ui()
 
@@ -569,8 +612,8 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
 
         self.chat_tab = ChatTab(self.vision)
-        self.rpa_tab = RPAMonitorTab(logger=self.logger)
-        self.telegram_tab = TelegramTab(self.agent, self.telegram_learner, self.logger)
+        self.rpa_tab = RPAMonitorTab(logger=self.logger, rpa_healer=self.rpa_healer)
+        self.telegram_tab = TelegramTab(None, self.telegram_learner, self.logger)
         self.stats_tab = StatsTab(telegram_learner=self.telegram_learner)
         self.settings_tab = SettingsTab()
 
@@ -613,12 +656,12 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Uptime: {uptime.seconds}s | Status: Ready")
 
 
-def run_app(vision_learner=None, telegram_learner=None, agent=None, logger=None):
+def run_app(vision_learner=None, telegram_learner=None, rpa_healer=None, logger=None):
     """Run the desktop application"""
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    window = MainWindow(vision_learner, telegram_learner, agent, logger)
+    window = MainWindow(vision_learner, telegram_learner, rpa_healer, logger)
     window.show()
 
     return app.exec()
