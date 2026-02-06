@@ -54,7 +54,7 @@ jobs:
             --hidden-import gateway.telegram_parser_fixed \
             --hidden-import gateway.pattern_memory \
             --hidden-import gateway.telegram_listener_fixed \
-            --add-data "config/config.yaml:config" \
+            --add-data "config:config" \
             --add-data "ai:ai" \
             --add-data "core:core" \
             --add-data "ui:ui" \
@@ -116,7 +116,7 @@ jobs:
             --hidden-import gateway.telegram_parser_fixed `
             --hidden-import gateway.pattern_memory `
             --hidden-import gateway.telegram_listener_fixed `
-            --add-data "config/config.yaml;config" `
+            --add-data "config;config" `
             --add-data "ai;ai" `
             --add-data "core;core" `
             --add-data "ui;ui" `

@@ -154,23 +154,42 @@ class RPAWorker(QThread):
         self.running = True
         try:
             from core.dom_executor_playwright import DomExecutorPlaywright
+            import time
+            import yaml
+            from datetime import datetime
+
             self.executor = DomExecutorPlaywright(
                 logger=self.logger,
                 headless=self.headless,
                 allow_place=False
             )
+
+            # Initialize browser immediately (lazy init won't trigger otherwise)
+            if not self.executor._ensure_browser():
+                self.error_occurred.emit("Failed to start browser. Run: playwright install chromium")
+                return
+
             self.status_changed.emit("RUNNING", "green")
 
-            import time
-            import yaml
-            from datetime import datetime
-
-            # Load selectors config if it exists
+            # Load selectors config
             selectors_path = os.path.join(BASE_DIR, "config", "selectors.yaml")
             selectors = {}
             if os.path.exists(selectors_path):
                 with open(selectors_path, "r", encoding="utf-8") as f:
                     selectors = yaml.safe_load(f) or {}
+
+            # Navigate to target site so selectors can be tested
+            try:
+                self.logger.info("Navigating to bet365...")
+                self.executor.page.goto(
+                    "https://www.bet365.it/#/HO/",
+                    wait_until="domcontentloaded",
+                    timeout=30000
+                )
+                time.sleep(3)
+                self.logger.info("Page loaded, starting selector monitoring")
+            except Exception as e:
+                self.logger.warning(f"Navigation failed (will retry): {e}")
 
             heal_interval = 30  # seconds between healing checks
             last_heal_check = 0
@@ -179,11 +198,11 @@ class RPAWorker(QThread):
                 time.sleep(1)
 
                 # Periodic self-healing check
-                if (self.rpa_healer and self.executor and self.executor._initialized
+                if (self.rpa_healer and self.executor._initialized
                         and selectors and time.time() - last_heal_check > heal_interval):
                     last_heal_check = time.time()
                     try:
-                        # Test all selectors
+                        # Test all selectors on the live page
                         results = self.rpa_healer.test_all_selectors(
                             self.executor.page, selectors
                         )
@@ -191,7 +210,6 @@ class RPAWorker(QThread):
 
                         if broken:
                             self.logger.info(f"Broken selectors detected: {broken}")
-                            # Selector descriptions for healing
                             descriptions = {k: k.replace("_", " ") for k in broken}
                             healed = self.rpa_healer.auto_heal_all(
                                 self.executor.page, descriptions
@@ -202,6 +220,15 @@ class RPAWorker(QThread):
                                 ts = datetime.now().strftime("%H:%M:%S")
                                 self.healing_performed.emit(ts, key, str(old_sel), new_sel)
                                 self.task_completed.emit()
+
+                            # Save healed selectors back to file
+                            if healed:
+                                try:
+                                    with open(selectors_path, "w", encoding="utf-8") as f:
+                                        yaml.dump(selectors, f, default_flow_style=False)
+                                    self.logger.info("Healed selectors saved to config/selectors.yaml")
+                                except Exception as e:
+                                    self.logger.error(f"Failed to save healed selectors: {e}")
                     except Exception as e:
                         self.logger.error(f"Healing check error: {e}")
 
