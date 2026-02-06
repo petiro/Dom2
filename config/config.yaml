@@ -5,6 +5,12 @@ openrouter:
   api_key: "INSERISCI_KEY"  # Get free key at https://openrouter.ai/keys
   model: "google/gemini-2.0-flash-exp:free"  # Free Gemini model
 
+# Telegram API (get from https://my.telegram.org)
+telegram:
+  api_id: ""       # Numeric API ID
+  api_hash: ""     # API Hash string
+  phone: ""        # Phone number with country code (+39...)
+
 # Desktop UI Settings
 ui:
   theme: "dark"  # dark or light
