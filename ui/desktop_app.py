@@ -214,26 +214,37 @@ class RPAWorker(QThread):
                         broken = [k for k, v in results.items() if not v]
 
                         if broken:
-                            self.logger.info(f"Broken selectors detected: {broken}")
-                            descriptions = {k: k.replace("_", " ") for k in broken}
-                            healed = self.rpa_healer.auto_heal_all(
-                                self.executor.page, descriptions
-                            )
-                            for key, new_sel in healed.items():
-                                old_sel = selectors.get(key, "N/A")
-                                selectors[key] = new_sel
-                                ts = datetime.now().strftime("%H:%M:%S")
-                                self.healing_performed.emit(ts, key, str(old_sel), new_sel)
-                                self.task_completed.emit()
+                            total = len(selectors)
+                            broken_ratio = len(broken) / total if total > 0 else 0
 
-                            # Save healed selectors back to file
-                            if healed:
-                                try:
-                                    with open(selectors_path, "w", encoding="utf-8") as f:
-                                        yaml.dump(selectors, f, default_flow_style=False)
-                                    self.logger.info("Healed selectors saved to config/selectors.yaml")
-                                except Exception as e:
-                                    self.logger.error(f"Failed to save healed selectors: {e}")
+                            if broken_ratio > 0.5:
+                                # More than half broken → site changed significantly → full relearn
+                                self.logger.info(
+                                    f"MAJOR CHANGE: {len(broken)}/{total} selectors broken "
+                                    f"({broken_ratio:.0%}). Triggering full site relearn..."
+                                )
+                                relearned = self.rpa_healer.full_site_relearn(
+                                    self.executor.page
+                                )
+                                for key, new_sel in relearned.items():
+                                    old_sel = selectors.get(key, "N/A")
+                                    selectors[key] = new_sel
+                                    ts = datetime.now().strftime("%H:%M:%S")
+                                    self.healing_performed.emit(ts, key, str(old_sel), new_sel)
+                                    self.task_completed.emit()
+                            else:
+                                # Few broken → heal individually
+                                self.logger.info(f"Broken selectors: {broken}")
+                                descriptions = {k: k.replace("_", " ") for k in broken}
+                                healed = self.rpa_healer.auto_heal_all(
+                                    self.executor.page, descriptions
+                                )
+                                for key, new_sel in healed.items():
+                                    old_sel = selectors.get(key, "N/A")
+                                    selectors[key] = new_sel
+                                    ts = datetime.now().strftime("%H:%M:%S")
+                                    self.healing_performed.emit(ts, key, str(old_sel), new_sel)
+                                    self.task_completed.emit()
                     except Exception as e:
                         self.logger.error(f"Healing check error: {e}")
 
