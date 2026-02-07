@@ -21,15 +21,23 @@ last_heartbeat = time.time()
 
 
 def setup_logger():
+    from logging.handlers import RotatingFileHandler
     log_dir = os.path.join(BASE_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
+    fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Rotating log: 5 MB per file, keep 5 backups (max ~25 MB total)
+    file_handler = RotatingFileHandler(
+        os.path.join(log_dir, 'superagent.log'),
+        maxBytes=5_000_000,
+        backupCount=5,
+        encoding='utf-8',
+    )
+    file_handler.setFormatter(fmt)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(fmt)
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(os.path.join(log_dir, 'superagent.log'), encoding='utf-8'),
-            logging.StreamHandler()
-        ]
+        handlers=[file_handler, console_handler]
     )
     return logging.getLogger("SuperAgent")
 
