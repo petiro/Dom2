@@ -32,6 +32,9 @@ jobs:
             --hidden-import PySide6.QtGui `
             --hidden-import yaml `
             --hidden-import requests `
+            --hidden-import playwright `
+            --hidden-import playwright.sync_api `
+            --hidden-import playwright._impl._api_types `
             --hidden-import ui.desktop_app `
             --hidden-import ui.telegram_tab `
             --hidden-import ai.vision_learner `
@@ -92,6 +95,9 @@ jobs:
             --hidden-import PySide6.QtGui \
             --hidden-import yaml \
             --hidden-import requests \
+            --hidden-import playwright \
+            --hidden-import playwright.sync_api \
+            --hidden-import playwright._impl._api_types \
             --hidden-import ui.desktop_app \
             --hidden-import ui.telegram_tab \
             --hidden-import ai.vision_learner \

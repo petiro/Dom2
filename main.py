@@ -11,6 +11,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 from ui.desktop_app import run_app
+from core.dom_executor_playwright import close_chrome
 
 
 def setup_logger():
@@ -115,6 +116,10 @@ def main():
     logger = setup_logger()
     print_banner(logger)
 
+    # Kill Chrome to free user profile for Playwright persistent context
+    logger.info("Closing any existing Chrome instances...")
+    close_chrome()
+
     logger.info("Loading configuration...")
     config = load_config()
 
@@ -145,6 +150,22 @@ def main():
             logger.info("RPA Healer initialized")
         except Exception as e:
             logger.error(f"Failed to initialize RPA Healer: {e}")
+
+    # Initialize DomExecutor and connect healer
+    executor = None
+    if config.get("rpa", {}).get("enabled", True):
+        try:
+            from core.dom_executor_playwright import DomExecutorPlaywright
+            executor = DomExecutorPlaywright(
+                logger=logger,
+                allow_place=config.get("rpa", {}).get("allow_place", False),
+                pin=config.get("rpa", {}).get("pin", "0503"),
+            )
+            if rpa_healer:
+                executor.set_healer(rpa_healer)
+            logger.info("DomExecutor initialized with healer connected")
+        except Exception as e:
+            logger.error(f"Failed to initialize DomExecutor: {e}")
 
     logger.info("Starting desktop application...")
     sys.exit(run_app(vision, telegram_learner, rpa_healer, logger))
