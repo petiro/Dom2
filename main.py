@@ -31,10 +31,8 @@ def freeze_monitor(logger):
     """Controlla se il sistema si è bloccato (freeze logico)."""
     while True:
         time.sleep(30)
-        # Se non riceve battiti per più di 5 minuti, forza il restart
         if time.time() - last_heartbeat > 300:
-            logger.critical("🚨 SISTEMA BLOCCATO (FREEZE) RILEVATO! Riavvio forzato...")
-            # Riavvia il processo attuale
+            logger.critical("SISTEMA BLOCCATO (FREEZE) RILEVATO! Riavvio forzato...")
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
 def setup_logger():
@@ -70,37 +68,67 @@ def validate_config(config, logger):
     """Verifica che le chiavi essenziali siano presenti."""
     api_key = config.get("openrouter", {}).get("api_key")
     if not api_key or "YOUR_KEY" in api_key:
-        logger.warning("⚠️ API Key di OpenRouter mancante o non valida!")
+        logger.warning("API Key di OpenRouter mancante o non valida!")
         return False
     return True
 
 def initialize_ai(config, logger):
-    """Inizializza i componenti AI (Vision e Telegram)."""
-    from ai.vision_learner import VisionLearner
-    from ai.telegram_learner import TelegramLearner
-
+    """Inizializza i componenti AI (Vision e Telegram) con gestione errori robusta."""
     api_key = config.get("openrouter", {}).get("api_key")
-    if not api_key:
+    if not api_key or api_key == "INSERISCI_KEY":
+        logger.warning("No API key found. AI features will be limited.")
         return None, None
 
-    vision = VisionLearner(api_key=api_key, logger=logger)
-    telegram_learner = TelegramLearner(vision_learner=vision, logger=logger)
-    return vision, telegram_learner
+    try:
+        from ai.vision_learner import VisionLearner
+        from ai.telegram_learner import TelegramLearner
+
+        vision = VisionLearner(
+            api_key=api_key,
+            model=config.get("openrouter", {}).get("model", "google/gemini-2.0-flash-exp:free"),
+            logger=logger
+        )
+        logger.info("Vision AI initialized")
+
+        telegram_learner = None
+        if config.get("learning", {}).get("telegram", {}).get("enabled", True):
+            telegram_learner = TelegramLearner(
+                vision_learner=vision,
+                logger=logger,
+                min_confidence=config.get("learning", {}).get("telegram", {}).get("confidence_threshold", 0.75),
+                min_examples_to_learn=config.get("learning", {}).get("telegram", {}).get("min_examples", 3)
+            )
+            logger.info("Telegram learner initialized")
+
+        return vision, telegram_learner
+    except Exception as e:
+        logger.error(f"Failed to initialize AI: {e}")
+        return None, None
+
+
+def start_services():
+    """Valida la config Telegram all'avvio."""
+    try:
+        from gateway.telegram_listener_fixed import validate_telegram_config
+        validate_telegram_config()
+        print("Telegram config validata")
+    except Exception as e:
+        print("Telegram non attivo:", e)
+
 
 def main():
     # 0. KILL CHROME PREVENTIVO
-    # Libera il profilo per permettere a Playwright di agganciarsi
     close_chrome()
 
     logger = setup_logger()
     logger.info("=" * 40)
-    logger.info("🚀 SUPERAGENT STARTUP (H24 MODE)")
+    logger.info("SUPERAGENT STARTUP (H24 MODE)")
     logger.info("=" * 40)
 
     # 1. CARICAMENTO E VALIDAZIONE CONFIG
     config = load_config()
     if config is None:
-        logger.error("❌ config.yaml MANCANTE! Impossibile procedere.")
+        logger.error("config.yaml MANCANTE! Impossibile procedere.")
         return
 
     validate_config(config, logger)
@@ -111,6 +139,9 @@ def main():
 
     # 3. INIZIALIZZAZIONE AI
     vision, telegram_learner = initialize_ai(config, logger)
+
+    # 3.5. VALIDAZIONE TELEGRAM
+    start_services()
 
     # 4. INIZIALIZZAZIONE HEALER (AUTO-RIPARAZIONE)
     rpa_healer = None
@@ -125,23 +156,22 @@ def main():
         except Exception as e:
             logger.error(f"Healer init failed: {e}")
 
-    # 5. INIZIALIZZAZIONE EXECUTOR SINGLETON (GHOST MODE)
-    # Creato una sola volta per tutto il ciclo di vita dell'app
+    # 5. INIZIALIZZAZIONE EXECUTOR SINGLETON
     executor = None
     try:
         executor = DomExecutorPlaywright(
             logger=logger,
             allow_place=config.get("rpa", {}).get("allow_place", False),
             pin=config.get("rpa", {}).get("pin", "0503"),
-            use_real_chrome=True # Forza l'uso del tuo Chrome reale
+            use_real_chrome=True
         )
         if rpa_healer:
             executor.set_healer(rpa_healer)
-        logger.info("✅ Singleton DomExecutor pronto (Stealth Mode)")
+        logger.info("Singleton DomExecutor pronto")
     except Exception as e:
         logger.error(f"DomExecutor init failed: {e}")
 
-    # 6. AVVIO UI (Iniezione dipendenze)
+    # 6. AVVIO UI (Iniezione dipendenze — executor singleton passato alla UI)
     logger.info("Starting desktop application...")
     try:
         run_app(vision, telegram_learner, rpa_healer, logger, executor)
@@ -158,6 +188,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nChiusura manuale richiesta.")
     except Exception as e:
-        # Questo cattura errori fatali fuori dal main loop per il watchdog
         print(f"FATAL ERROR: {e}")
         sys.exit(1)

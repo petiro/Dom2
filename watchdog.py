@@ -1,6 +1,8 @@
 """
 SuperAgent Watchdog - Auto Restart on Crash
+Uses subprocess.Popen + process.wait() to block properly without CPU spin.
 """
+import subprocess
 import time
 import os
 import sys
@@ -10,9 +12,12 @@ MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
 
 while True:
     print("Avvio agente...")
-    exit_code = os.system(f"{sys.executable} {MAIN_SCRIPT}")
-    if exit_code == 0:
+    process = subprocess.Popen([sys.executable, MAIN_SCRIPT])
+    process.wait()  # Blocks efficiently (no CPU spin) until process exits
+
+    if process.returncode == 0:
         print("Agente terminato normalmente.")
         break
-    print(f"Crash rilevato (exit code: {exit_code}), riavvio tra 5 sec...")
+
+    print(f"Crash rilevato (exit code: {process.returncode}), riavvio tra 5 sec...")
     time.sleep(5)
