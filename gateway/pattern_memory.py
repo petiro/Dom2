@@ -31,6 +31,11 @@ class PatternMemory:
     def _generate_signature(self, text):
         # Estrae solo la struttura (emoji e placeholder) per identificare il formato
         import re
+        # Rimuovi caratteri invisibili (zero-width spaces ecc.) e normalizza
+        cleaned = text.replace("\u200b", "").replace("\u200c", "").replace("\u200d", "")
+        cleaned = cleaned.replace("\xa0", " ").strip().lower()
         # Sostituisce nomi squadre e numeri con placeholder
-        struct = re.sub(r'[a-zA-Z0-9]+', 'X', text)
+        struct = re.sub(r'[a-zA-Z0-9]+', 'X', cleaned)
+        # Normalizza spazi multipli
+        struct = re.sub(r'\s+', ' ', struct).strip()
         return hashlib.md5(struct.encode()).hexdigest()

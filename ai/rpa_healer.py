@@ -270,6 +270,76 @@ Selector:"""
 
         return new_selector
 
+    def heal_and_fix(self, page, failed_selector_key: str, selectors_dict: Dict) -> Optional[str]:
+        """
+        Quick healing bridge: receives the error context, analyzes the page,
+        and returns the corrected selector. Updates config automatically.
+        """
+        if self.logger:
+            self.logger.warning(f"Auto-healing triggered for: {failed_selector_key}")
+
+        # Tier 1: DOM scan (fast)
+        try:
+            from core.dom_scanner import scan_dom
+            dom_data = scan_dom(page)
+
+            if dom_data:
+                import json as _json
+                dom_text = _json.dumps(dom_data[:200], ensure_ascii=False)
+                if len(dom_text) > 8000:
+                    dom_text = dom_text[:8000]
+
+                prompt = f"""Find the CSS selector for "{failed_selector_key}" in this DOM data.
+DOM: {dom_text}
+Return ONLY the selector string."""
+
+                messages = [{"role": "user", "content": prompt}]
+                response = self.vision._call_api(messages, temperature=0.1, max_tokens=100)
+
+                if response:
+                    selector = response.strip().strip('`').strip('"').strip("'")
+                    if '\n' in selector:
+                        selector = selector.split('\n')[0].strip()
+                    try:
+                        if page.locator(selector).count() > 0:
+                            selectors_dict[failed_selector_key] = selector
+                            self._save_selectors(selectors_dict)
+                            if self.logger:
+                                self.logger.info(f"Healed: {failed_selector_key} -> {selector}")
+                            return selector
+                    except Exception:
+                        pass
+        except ImportError:
+            pass
+
+        # Tier 2: Screenshot fallback
+        try:
+            screenshot_path = f"logs/healing_{failed_selector_key}.png"
+            page.screenshot(path=screenshot_path)
+
+            import base64 as _b64
+            with open(screenshot_path, 'rb') as f:
+                screenshot_b64 = _b64.b64encode(f.read()).decode('utf-8')
+
+            new_selector = self.vision.find_selector(screenshot_b64, failed_selector_key)
+            if new_selector:
+                try:
+                    if page.locator(new_selector).count() > 0:
+                        selectors_dict[failed_selector_key] = new_selector
+                        self._save_selectors(selectors_dict)
+                        if self.logger:
+                            self.logger.info(f"Healed (vision): {failed_selector_key} -> {new_selector}")
+                        return new_selector
+                except Exception:
+                    pass
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Tier 2 healing failed: {e}")
+
+        if self.logger:
+            self.logger.error(f"All healing failed for: {failed_selector_key}")
+        return None
+
     def auto_heal_all(self, page, selector_descriptions: Dict[str, str]) -> Dict[str, str]:
         """Heal all broken selectors."""
         if self.logger:

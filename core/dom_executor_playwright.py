@@ -3,7 +3,21 @@ import sys
 import time
 import getpass
 import platform
+import subprocess
 from playwright.sync_api import sync_playwright
+
+
+def close_chrome():
+    """Kill all Chrome processes to free the user profile for Playwright persistent context."""
+    try:
+        if platform.system() == "Windows":
+            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"],
+                           capture_output=True, timeout=5)
+        else:
+            subprocess.run(["pkill", "-f", "chrome"], capture_output=True, timeout=5)
+        time.sleep(1)
+    except Exception:
+        pass
 
 
 def _detect_chrome_path():
@@ -72,6 +86,7 @@ class DomExecutorPlaywright:
         self.page = None
         self.last_login_time = 0
         self._initialized = False
+        self.healer = None  # Set externally via set_healer()
 
     def _ensure_browser(self):
         """Initialize browser. Uses real Chrome if available, otherwise standalone Chromium."""
@@ -380,6 +395,59 @@ class DomExecutorPlaywright:
             return True
         except Exception as e:
             self.logger.error(f"Failed to place bet: {e}")
+            return False
+
+    def set_healer(self, healer):
+        """Connect RPA healer for auto-recovery of broken selectors."""
+        self.healer = healer
+        self.logger.info("RPA Healer connected to DomExecutor")
+
+    def _load_selectors(self):
+        """Load selectors from YAML config."""
+        import yaml
+        selectors_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                      "config", "selectors.yaml")
+        try:
+            with open(selectors_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            return {}
+
+    def safe_click(self, selector_key, element_description=None):
+        """
+        Click with auto-healing: if selector fails, use RPA Healer to find
+        the new selector via DOM scan + AI vision, then retry.
+        """
+        selectors = self._load_selectors()
+        target = selectors.get(selector_key)
+
+        if not target:
+            self.logger.warning(f"No selector found for key: {selector_key}")
+            return False
+
+        if not self._ensure_browser():
+            return False
+
+        try:
+            self._safe_click(target)
+            return True
+        except Exception as e:
+            self.logger.warning(f"Click failed for {selector_key}: {e}")
+
+            # Auto-heal if healer is available
+            if self.healer and element_description:
+                self.logger.info(f"Attempting auto-heal for: {selector_key}")
+                new_selector = self.healer.heal_selector(
+                    self.page, selector_key, element_description, auto_update=True
+                )
+                if new_selector:
+                    try:
+                        self._safe_click(new_selector)
+                        self.logger.info(f"Auto-healed click succeeded for: {selector_key}")
+                        return True
+                    except Exception as e2:
+                        self.logger.error(f"Auto-healed click also failed: {e2}")
+
             return False
 
     def close(self):
