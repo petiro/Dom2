@@ -2,6 +2,7 @@
 Telegram Tab - Monitor and manage Telegram integration
 All heavy operations (API calls, parsing) run in separate QThreads to avoid blocking UI.
 """
+import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
     QLabel, QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem,
@@ -55,9 +56,12 @@ class TelegramListenerThread(QThread):
 
             self.status_changed.emit("Connecting...")
 
-            # Use api_id-based session name to avoid conflicts when switching accounts
-            session_name = f'session_{self.api_id}'
-            self.client = TelegramClient(session_name, self.api_id, self.api_hash)
+            # EXE-safe absolute session path in data/ folder
+            _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            _data_dir = os.path.join(_base, "data")
+            os.makedirs(_data_dir, exist_ok=True)
+            session_path = os.path.join(_data_dir, f"session_{self.api_id}")
+            self.client = TelegramClient(session_path, self.api_id, self.api_hash)
             client = self.client
             signal_ref = self.message_received
             signal_parsed_ref = self.signal_parsed
