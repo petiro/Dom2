@@ -106,6 +106,27 @@ def initialize_ai(config, logger):
         return None, None
 
 
+def create_executor(config, logger, rpa_healer=None):
+    """Factory: crea il Singleton DomExecutor con tutta la config RPA."""
+    try:
+        rpa_cfg = config.get("rpa", {})
+        executor = DomExecutorPlaywright(
+            logger=logger,
+            headless=rpa_cfg.get("headless", False),
+            allow_place=rpa_cfg.get("allow_place", False),
+            pin=rpa_cfg.get("pin", "0503"),
+            use_real_chrome=rpa_cfg.get("use_real_chrome", True),
+            chrome_profile=rpa_cfg.get("chrome_profile", "Default"),
+        )
+        if rpa_healer:
+            executor.set_healer(rpa_healer)
+        logger.info("Singleton DomExecutor pronto")
+        return executor
+    except Exception as e:
+        logger.error(f"DomExecutor init failed: {e}")
+        return None
+
+
 def start_services():
     """Valida la config Telegram all'avvio."""
     try:
@@ -157,19 +178,7 @@ def main():
             logger.error(f"Healer init failed: {e}")
 
     # 5. INIZIALIZZAZIONE EXECUTOR SINGLETON
-    executor = None
-    try:
-        executor = DomExecutorPlaywright(
-            logger=logger,
-            allow_place=config.get("rpa", {}).get("allow_place", False),
-            pin=config.get("rpa", {}).get("pin", "0503"),
-            use_real_chrome=True
-        )
-        if rpa_healer:
-            executor.set_healer(rpa_healer)
-        logger.info("Singleton DomExecutor pronto")
-    except Exception as e:
-        logger.error(f"DomExecutor init failed: {e}")
+    executor = create_executor(config, logger, rpa_healer)
 
     # 6. AVVIO UI (Iniezione dipendenze — executor singleton passato alla UI)
     logger.info("Starting desktop application...")
