@@ -512,12 +512,69 @@ class DomExecutorPlaywright:
                         self.logger.error(f"Auto-healed click also failed: {e2}")
             return False
 
+    def handle_signal(self, signal_data: dict):
+        """Handle a parsed Telegram signal — navigate, select market, place bet.
+        Called from the main thread via Qt Signal/Slot."""
+        teams = signal_data.get("teams", "")
+        market = signal_data.get("market", "")
+        self.logger.info(f"handle_signal: {teams} / {market}")
+
+        if not self._ensure_browser():
+            self.logger.error("handle_signal: browser not available")
+            return False
+
+        selectors = self._load_selectors()
+
+        if not self.ensure_login(selectors):
+            self.logger.error("handle_signal: login failed")
+            return False
+
+        if teams and not self.navigate_to_match(teams, selectors):
+            self.logger.error(f"handle_signal: could not find match {teams}")
+            return False
+
+        if market and not self.select_market(market, selectors):
+            self.logger.error(f"handle_signal: could not select market {market}")
+            return False
+
+        return self.place_bet(selectors)
+
     def close(self):
-        """Clean up browser resources."""
+        """Clean up browser resources (page, context, browser, playwright)."""
         self.logger.info("Closing browser...")
         try:
-            if self.ctx: self.ctx.close()
-            if self.browser: self.browser.close()
-            if self.pw: self.pw.stop()
-        except: pass
+            if self.page:
+                try:
+                    self.page.close()
+                except Exception:
+                    pass
+            if self.ctx:
+                try:
+                    self.ctx.close()
+                except Exception:
+                    pass
+            if self.browser:
+                try:
+                    self.browser.close()
+                except Exception:
+                    pass
+            if self.pw:
+                try:
+                    self.pw.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._initialized = False
+        self.page = None
+        self.ctx = None
+        self.browser = None
+        self.pw = None
         self.logger.info("Browser closed")
+
+    def __del__(self):
+        """Destructor — ensure browser resources are freed."""
+        try:
+            self.close()
+        except Exception:
+            pass
