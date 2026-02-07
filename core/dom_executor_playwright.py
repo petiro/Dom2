@@ -512,6 +512,32 @@ class DomExecutorPlaywright:
                         self.logger.error(f"Auto-healed click also failed: {e2}")
             return False
 
+    def check_health(self):
+        """Check if the browser is still responding."""
+        try:
+            if not self.page:
+                return False
+            self.page.evaluate("1+1")
+            return True
+        except Exception:
+            self.logger.error("Browser not responding — health check failed")
+            return False
+
+    def recover_session(self):
+        """Close everything and re-launch the browser.
+        Returns True on success, triggers hard restart on total failure."""
+        try:
+            self.close()
+            time.sleep(3)
+            ok = self._ensure_browser()
+            if not ok:
+                raise Exception("Browser relaunch failed")
+            self.logger.info("Browser session recovered successfully")
+            return True
+        except Exception as e:
+            self.logger.critical(f"Browser unrecoverable: {e} — triggering restart")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
     def handle_signal(self, signal_data: dict):
         """Handle a parsed Telegram signal — navigate, select market, place bet.
         Called from the main thread via Qt Signal/Slot."""

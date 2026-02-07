@@ -88,12 +88,13 @@ class RPAWorker(QThread):
     bet_placed = Signal(dict)   # emitted after a bet attempt
     bet_error = Signal(str)     # emitted on failure
 
-    def __init__(self, executor, logger=None):
+    def __init__(self, executor, logger=None, monitor=None):
         super().__init__()
         self._queue = queue.Queue()
         self._running = True
         self.executor = executor
         self.logger = logger
+        self.monitor = monitor  # HealthMonitor for heartbeat
 
     # --- public API (called from any thread) ---
     def enqueue_bet(self, signal_data: dict):
@@ -126,6 +127,10 @@ class RPAWorker(QThread):
         if not self.executor:
             self.bet_error.emit("Executor not available")
             return
+        # Heartbeat: prove RPA thread is alive
+        if self.monitor:
+            self.monitor.heartbeat()
+
         teams = signal_data.get("teams", "")
         market = signal_data.get("market", "")
         if self.logger:
@@ -280,10 +285,11 @@ class RPAMonitorTab(QWidget):
 #  Statistics Tab
 # ---------------------------------------------------------------------------
 class StatsTab(QWidget):
-    def __init__(self, telegram_learner=None, logger=None, parent=None):
+    def __init__(self, telegram_learner=None, logger=None, monitor=None, parent=None):
         super().__init__(parent)
         self.telegram_learner = telegram_learner
         self.logger = logger
+        self.monitor = monitor
         self._init_ui()
 
     def _init_ui(self):
@@ -310,14 +316,25 @@ class StatsTab(QWidget):
         else:
             lines.append("Telegram learner not available.")
 
-        # Heartbeat info
-        try:
-            import main as _main_mod
-            elapsed = time.time() - _main_mod.last_heartbeat
-            lines.append(f"\n=== Heartbeat ===")
+        # HealthMonitor info
+        if self.monitor:
+            elapsed = time.time() - self.monitor.last_heartbeat
+            uptime = time.time() - self.monitor.start_time.timestamp()
+            lines.append(f"\n=== Health Monitor ===")
             lines.append(f"  Last heartbeat: {elapsed:.0f}s ago")
-        except Exception:
-            pass
+            lines.append(f"  Uptime: {uptime/3600:.1f}h")
+            lines.append(f"  Internet: {'OK' if self.monitor.internet_alive(2) else 'OFFLINE'}")
+            if self.monitor._mem_samples:
+                avg = sum(self.monitor._mem_samples) / len(self.monitor._mem_samples)
+                lines.append(f"  Memory avg: {avg:.0f} MB")
+        else:
+            try:
+                import main as _main_mod
+                elapsed = time.time() - _main_mod.last_heartbeat
+                lines.append(f"\n=== Heartbeat ===")
+                lines.append(f"  Last heartbeat: {elapsed:.0f}s ago")
+            except Exception:
+                pass
 
         self.stats_display.setPlainText("\n".join(lines))
 
@@ -396,7 +413,7 @@ class MainWindow(QMainWindow):
     """Central window — owns all tabs and coordinates signal routing."""
 
     def __init__(self, vision=None, telegram_learner=None, rpa_healer=None,
-                 logger=None, executor=None, config=None):
+                 logger=None, executor=None, config=None, monitor=None):
         super().__init__()
         self.vision = vision
         self.telegram_learner = telegram_learner
@@ -404,6 +421,7 @@ class MainWindow(QMainWindow):
         self.logger = logger
         self.executor = executor
         self.config = config or {}
+        self.monitor = monitor  # HealthMonitor
 
         self.setWindowTitle("SuperAgent H24")
         self.setMinimumSize(1100, 750)
@@ -411,7 +429,9 @@ class MainWindow(QMainWindow):
         # --- RPA Worker (thread-safe bet queue) ---
         self.rpa_worker = None
         if self.executor:
-            self.rpa_worker = RPAWorker(executor=self.executor, logger=self.logger)
+            self.rpa_worker = RPAWorker(
+                executor=self.executor, logger=self.logger, monitor=self.monitor
+            )
             self.rpa_worker.start()
 
         # --- Tabs ---
@@ -433,6 +453,7 @@ class MainWindow(QMainWindow):
             telegram_learner=telegram_learner,
             logger=logger,
             executor=executor,
+            monitor=self.monitor,
         )
         self.tabs.addTab(self.telegram_tab, "Telegram")
 
@@ -441,7 +462,7 @@ class MainWindow(QMainWindow):
         self.telegram_tab.signal_received.connect(self.process_new_signal)
 
         # 4. Statistics
-        self.stats_tab = StatsTab(telegram_learner=telegram_learner, logger=logger)
+        self.stats_tab = StatsTab(telegram_learner=telegram_learner, logger=logger, monitor=self.monitor)
         self.tabs.addTab(self.stats_tab, "Statistics")
 
         # 5. Settings
@@ -466,7 +487,10 @@ class MainWindow(QMainWindow):
                     self.logger.error(f"[MainWindow] Error enqueuing signal: {e}")
 
     def _update_heartbeat(self):
-        """Refresh heartbeat in main module (proves UI is alive)."""
+        """Refresh heartbeat via HealthMonitor (proves UI is alive)."""
+        if self.monitor:
+            self.monitor.heartbeat()
+        # Backward compat: also update main.last_heartbeat directly
         try:
             import main as _main_mod
             _main_mod.last_heartbeat = time.time()
@@ -535,7 +559,7 @@ def apply_dark_theme(app: QApplication):
 #  run_app  — entry point called from main.py
 # ---------------------------------------------------------------------------
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
-            logger=None, executor=None, config=None):
+            logger=None, executor=None, config=None, monitor=None):
     """Create QApplication, apply theme, show MainWindow, exec."""
     app = QApplication(sys.argv)
     app.setApplicationName("SuperAgent")
@@ -550,6 +574,7 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
         logger=logger,
         executor=executor,
         config=config,
+        monitor=monitor,
     )
     window.show()
     return app.exec()
