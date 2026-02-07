@@ -127,6 +127,8 @@ class TelegramListenerThread(QThread):
 
 class TelegramTab(QWidget):
     """Telegram integration tab"""
+    # Widget-level signal: emitted when a valid signal is parsed (for MainWindow routing)
+    signal_received = Signal(dict)
 
     def __init__(self, agent=None, telegram_learner=None, logger=None, parent=None, executor=None):
         super().__init__(parent)
@@ -313,6 +315,11 @@ class TelegramTab(QWidget):
         # Connect parsed signals to executor via Qt Signal/Slot (thread-safe)
         if self.executor and hasattr(self.executor, 'handle_signal'):
             self.listener_thread.signal_parsed.connect(self._on_signal_for_executor)
+
+        # Re-emit parsed signals as widget-level signal_received for MainWindow routing
+        self.listener_thread.signal_parsed.connect(
+            lambda data: self.signal_received.emit(data) if isinstance(data, dict) else None
+        )
 
         self.listener_thread.start()
 
