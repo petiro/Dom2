@@ -29,6 +29,13 @@ def freeze_monitor(logger):
             logger.critical("FREEZE RILEVATO! Riavvio forzato...")
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
+def scheduled_restart(logger):
+    """Anti memory-leak: soft restart every 12 hours for H24 stability."""
+    while True:
+        time.sleep(43200)  # 12h
+        logger.info("Scheduled 12h restart for memory stability...")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
 
 def setup_logger():
     log_dir = os.path.join(BASE_DIR, "logs")
@@ -85,6 +92,7 @@ def main():
     # 2. AVVIO MONITORAGGIO
     threading.Thread(target=heartbeat_worker, daemon=True).start()
     threading.Thread(target=freeze_monitor, args=(logger,), daemon=True).start()
+    threading.Thread(target=scheduled_restart, args=(logger,), daemon=True).start()
 
     # 3. INIZIALIZZAZIONE AI
     vision = None

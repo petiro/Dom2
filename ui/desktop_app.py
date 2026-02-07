@@ -436,18 +436,9 @@ class MainWindow(QMainWindow):
         )
         self.tabs.addTab(self.telegram_tab, "Telegram")
 
-        # Connect Telegram parsed signals → our process_new_signal slot
-        if hasattr(self.telegram_tab, 'listener_thread') and self.telegram_tab.listener_thread:
-            self._connect_telegram_signals(self.telegram_tab.listener_thread)
-        # Also monkey-patch TelegramTab.connect_telegram to hook future threads
-        _orig_connect = self.telegram_tab.connect_telegram
-        _self = self
-
-        def _patched_connect():
-            _orig_connect()
-            if _self.telegram_tab.listener_thread:
-                _self._connect_telegram_signals(_self.telegram_tab.listener_thread)
-        self.telegram_tab.connect_telegram = _patched_connect
+        # Connect TelegramTab's widget-level signal_received → process_new_signal
+        # This is the clean, stable connection (no monkey-patching needed)
+        self.telegram_tab.signal_received.connect(self.process_new_signal)
 
         # 4. Statistics
         self.stats_tab = StatsTab(telegram_learner=telegram_learner, logger=logger)
@@ -462,14 +453,7 @@ class MainWindow(QMainWindow):
         self._heartbeat_timer.timeout.connect(self._update_heartbeat)
         self._heartbeat_timer.start(10000)  # every 10 s
 
-    def _connect_telegram_signals(self, listener_thread):
-        """Wire a TelegramListenerThread's signal_parsed → process_new_signal."""
-        try:
-            listener_thread.signal_parsed.connect(self.process_new_signal)
-        except Exception:
-            pass  # already connected or thread not ready
-
-    @Slot(object)
+    @Slot(dict)
     def process_new_signal(self, data):
         """Receive a parsed signal from Telegram and enqueue it for RPA."""
         if self.logger:
