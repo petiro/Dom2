@@ -33,6 +33,7 @@ class TelegramParseWorker(QThread):
 class TelegramListenerThread(QThread):
     """Thread for running Telegram listener via Telethon"""
     message_received = Signal(str, str)  # timestamp, message
+    signal_parsed = Signal(object)  # parsed signal dict (for executor sync)
     status_changed = Signal(str)  # status
     error_occurred = Signal(str)  # error message
 
@@ -44,6 +45,8 @@ class TelegramListenerThread(QThread):
         self.parser = parser
         self.logger = logger
         self.running = True
+        self.client = None  # Keep reference for clean disconnect
+        self._loop = None
 
     def run(self):
         try:
@@ -52,11 +55,14 @@ class TelegramListenerThread(QThread):
 
             self.status_changed.emit("Connecting...")
 
-            client = TelegramClient('session_name', self.api_id, self.api_hash)
+            # Use api_id-based session name to avoid conflicts when switching accounts
+            session_name = f'session_{self.api_id}'
+            self.client = TelegramClient(session_name, self.api_id, self.api_hash)
+            client = self.client
             signal_ref = self.message_received
+            signal_parsed_ref = self.signal_parsed
             parser_ref = self.parser
             logger_ref = self.logger
-            agent_ref = self.agent
 
             async def main():
                 @client.on(events.NewMessage)
@@ -75,8 +81,8 @@ class TelegramListenerThread(QThread):
                         if result:
                             if logger_ref:
                                 logger_ref.info(f"Parsed signal: {result}")
-                            if agent_ref and hasattr(agent_ref, 'handle_signal'):
-                                asyncio.create_task(agent_ref.handle_signal(result))
+                            # Emit parsed signal via Qt Signal for thread-safe executor access
+                            signal_parsed_ref.emit(result)
                     except Exception as e:
                         if logger_ref:
                             logger_ref.error(f"Parse error in listener: {e}")
@@ -87,26 +93,43 @@ class TelegramListenerThread(QThread):
                 self.status_changed.emit("Connected")
                 await client.run_until_disconnected()
 
-            asyncio.run(main())
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(main())
 
         except ImportError:
             self.error_occurred.emit("Telethon not installed. Run: pip install telethon")
         except Exception as e:
             self.error_occurred.emit(f"Telegram error: {str(e)}")
             self.status_changed.emit("Disconnected")
+        finally:
+            if self._loop and not self._loop.is_closed():
+                self._loop.close()
 
     def stop(self):
+        """Cleanly disconnect Telethon client and stop the thread."""
         self.running = False
+        if self.client and self._loop and not self._loop.is_closed():
+            try:
+                import asyncio
+                # Schedule disconnect on the event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    self.client.disconnect(), self._loop
+                )
+                future.result(timeout=5)
+            except Exception:
+                pass  # Client may already be disconnected
 
 
 class TelegramTab(QWidget):
     """Telegram integration tab"""
 
-    def __init__(self, agent=None, telegram_learner=None, logger=None, parent=None):
+    def __init__(self, agent=None, telegram_learner=None, logger=None, parent=None, executor=None):
         super().__init__(parent)
         self.agent = agent
         self.telegram_learner = telegram_learner
         self.logger = logger
+        self.executor = executor  # Shared singleton executor for signal handling
         self.listener_thread = None
         self._parse_workers = []  # Keep references to active workers
         self.init_ui()
@@ -283,13 +306,20 @@ class TelegramTab(QWidget):
         self.listener_thread.status_changed.connect(self.on_status_changed)
         self.listener_thread.error_occurred.connect(self.on_error)
 
+        # Connect parsed signals to executor via Qt Signal/Slot (thread-safe)
+        if self.executor and hasattr(self.executor, 'handle_signal'):
+            self.listener_thread.signal_parsed.connect(self._on_signal_for_executor)
+
         self.listener_thread.start()
 
     def disconnect_telegram(self):
-        """Disconnect from Telegram"""
+        """Disconnect from Telegram with clean shutdown"""
         if self.listener_thread:
             self.listener_thread.stop()
+            self.listener_thread.quit()
             self.listener_thread.wait(5000)
+            self.listener_thread.deleteLater()
+            self.listener_thread = None
 
         self.connect_btn.setEnabled(True)
         self.disconnect_btn.setEnabled(False)
@@ -337,9 +367,12 @@ class TelegramTab(QWidget):
                 break
 
     def _cleanup_worker(self, worker):
-        """Remove finished worker from list"""
+        """Remove finished worker from list and schedule deletion"""
         if worker in self._parse_workers:
             self._parse_workers.remove(worker)
+        worker.quit()
+        worker.wait()
+        worker.deleteLater()
 
     def on_status_changed(self, status):
         """Handle status change"""
@@ -400,6 +433,19 @@ Confidence: HIGH
             QMessageBox.information(self, "Parser Test", msg)
         else:
             QMessageBox.warning(self, "Parser Test", "Failed to parse test message")
+
+    def _on_signal_for_executor(self, signal_data):
+        """Handle parsed signal via Qt Signal/Slot — thread-safe executor access.
+        This runs on the main thread, so calling executor methods is safe."""
+        if self.executor and signal_data:
+            try:
+                if self.logger:
+                    self.logger.info(f"Dispatching signal to executor: {signal_data}")
+                if hasattr(self.executor, 'handle_signal'):
+                    self.executor.handle_signal(signal_data)
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"Executor signal handling failed: {e}")
 
     def get_settings(self):
         """Get Telegram settings"""

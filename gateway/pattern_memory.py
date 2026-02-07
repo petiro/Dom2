@@ -1,7 +1,13 @@
 import json, os, hashlib
 
+# Resolve absolute base dir (works both in dev and inside PyInstaller exe)
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 class PatternMemory:
-    def __init__(self, storage_path="data/message_patterns.json"):
+    def __init__(self, storage_path=None):
+        if storage_path is None:
+            storage_path = os.path.join(_BASE_DIR, "data", "message_patterns.json")
         self.storage_path = storage_path
         self.patterns = self._load()
 
