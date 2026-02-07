@@ -53,6 +53,8 @@ def main():
         "--hidden-import", "ai.telegram_learner",
         "--hidden-import", "core.utils",
         "--hidden-import", "core.dom_executor_playwright",
+        "--hidden-import", "core.health",
+        "--hidden-import", "psutil",
         "--hidden-import", "core.dom_scanner",
         "--hidden-import", "gateway.telegram_parser_fixed",
         "--hidden-import", "gateway.pattern_memory",

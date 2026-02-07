@@ -130,12 +130,14 @@ class TelegramTab(QWidget):
     # Widget-level signal: emitted when a valid signal is parsed (for MainWindow routing)
     signal_received = Signal(dict)
 
-    def __init__(self, agent=None, telegram_learner=None, logger=None, parent=None, executor=None):
+    def __init__(self, agent=None, telegram_learner=None, logger=None,
+                 parent=None, executor=None, monitor=None):
         super().__init__(parent)
         self.agent = agent
         self.telegram_learner = telegram_learner
         self.logger = logger
         self.executor = executor  # Shared singleton executor for signal handling
+        self.monitor = monitor   # HealthMonitor for heartbeat
         self.listener_thread = None
         self._parse_workers = []  # Keep references to active workers
         self.init_ui()
@@ -338,6 +340,9 @@ class TelegramTab(QWidget):
 
     def on_message_received(self, timestamp, message):
         """Handle new message - adds to table immediately, parses in background thread"""
+        # Heartbeat: prove Telegram thread is alive
+        if self.monitor:
+            self.monitor.heartbeat()
         self.messages_received += 1
         self.messages_count_label.setText(f"Messages received: {self.messages_received}")
 

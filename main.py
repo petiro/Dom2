@@ -1,40 +1,23 @@
 """
 SuperAgent MERGED - Main Entry Point (Immortality & Singleton Edition)
+Central orchestrator: creates executor singleton, HealthMonitor, injects into UI.
 """
 import os
 import sys
 import time
 import logging
 import threading
-from ui.desktop_app import run_app, ConfigValidator
-from core.dom_executor_playwright import DomExecutorPlaywright, close_chrome
 
-# PATCH 1 — Path stabile
+# PATCH 1 — Path stabile (before any local imports)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-# --- MONITORAGGIO HEARTBEAT ---
+from ui.desktop_app import run_app, ConfigValidator
+from core.dom_executor_playwright import DomExecutorPlaywright, close_chrome
+from core.health import HealthMonitor
+
+# --- MONITORAGGIO HEARTBEAT (global, for backward compat) ---
 last_heartbeat = time.time()
-
-def heartbeat_worker():
-    global last_heartbeat
-    while True:
-        last_heartbeat = time.time()
-        time.sleep(10)
-
-def freeze_monitor(logger):
-    while True:
-        time.sleep(30)
-        if time.time() - last_heartbeat > 300:  # 5 minuti di freeze
-            logger.critical("FREEZE RILEVATO! Riavvio forzato...")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-
-def scheduled_restart(logger):
-    """Anti memory-leak: soft restart every 12 hours for H24 stability."""
-    while True:
-        time.sleep(43200)  # 12h
-        logger.info("Scheduled 12h restart for memory stability...")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def setup_logger():
@@ -49,6 +32,7 @@ def setup_logger():
         ]
     )
     return logging.getLogger("SuperAgent")
+
 
 def load_config():
     import yaml
@@ -89,12 +73,7 @@ def main():
     if errors:
         logger.warning(f"Config has {len(errors)} issue(s) — app will start anyway")
 
-    # 2. AVVIO MONITORAGGIO
-    threading.Thread(target=heartbeat_worker, daemon=True).start()
-    threading.Thread(target=freeze_monitor, args=(logger,), daemon=True).start()
-    threading.Thread(target=scheduled_restart, args=(logger,), daemon=True).start()
-
-    # 3. INIZIALIZZAZIONE AI
+    # 2. INIZIALIZZAZIONE AI
     vision = None
     telegram_learner = None
     try:
@@ -105,7 +84,7 @@ def main():
     except Exception as e:
         logger.error(f"AI init failed: {e}")
 
-    # 4. INIZIALIZZAZIONE HEALER
+    # 3. INIZIALIZZAZIONE HEALER
     rpa_healer = None
     try:
         from ai.rpa_healer import RPAHealer
@@ -113,23 +92,31 @@ def main():
     except Exception as e:
         logger.error(f"Healer init failed: {e}")
 
-    # 5. INIZIALIZZAZIONE EXECUTOR SINGLETON (L'UNICO)
+    # 4. INIZIALIZZAZIONE EXECUTOR SINGLETON (L'UNICO)
     executor = None
     try:
         executor = create_executor(config, logger, rpa_healer)
     except Exception as e:
         logger.error(f"Executor init failed: {e}")
 
-    # 6. AVVIO UI CON INIEZIONE SINGLETON
-    logger.info("Iniezione executor nella UI...")
+    # 5. HEALTH MONITOR — Centralised Immortality Layer
+    monitor = HealthMonitor(logger, executor)
+    monitor.run_forever()   # starts freeze detector, memory guard, maintenance restart
+
+    # 6. AVVIO UI CON INIEZIONE SINGLETON + MONITOR
+    logger.info("Iniezione executor + monitor nella UI...")
     try:
-        sys.exit(run_app(vision, telegram_learner, rpa_healer, logger, executor, config))
+        sys.exit(run_app(
+            vision, telegram_learner, rpa_healer,
+            logger, executor, config, monitor
+        ))
     finally:
         if executor:
             try:
                 executor.close()
             except Exception:
                 pass
+
 
 if __name__ == "__main__":
     main()
