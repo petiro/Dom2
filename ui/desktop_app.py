@@ -1,7 +1,7 @@
 """
-SuperAgent Desktop App V3 - PySide6 Multi-Tab UI
+SuperAgent Desktop App V4 - PySide6 Multi-Tab UI
 Production-grade: Signal routing, RPAWorker queue, TrainerTab with memory,
-Stealth slider, ConfigValidator, Dark Theme, Controller integration.
+Stealth slider, ConfigValidator, Dark Theme, Controller V4 signal wiring.
 """
 import os
 import sys
@@ -292,6 +292,12 @@ class TrainerTab(QWidget):
         self.clear_memory_btn.clicked.connect(self._clear_memory)
         ctx_layout.addWidget(self.clear_memory_btn)
 
+        # V4: Train Step button
+        self.train_btn = QPushButton("Train Step")
+        self.train_btn.setToolTip("Esegui un ciclo completo di training (Snapshot+Vision+LLM)")
+        self.train_btn.clicked.connect(self._on_train_step)
+        ctx_layout.addWidget(self.train_btn)
+
         ctx_layout.addStretch()
         layout.addLayout(ctx_layout)
 
@@ -352,6 +358,20 @@ class TrainerTab(QWidget):
         if self.controller:
             self.controller.clear_trainer_memory()
         self.chat_display.append("<i>--- Memoria conversazione cancellata ---</i>")
+        self._update_memory_label()
+
+    def _on_train_step(self):
+        """Trigger V4 training step via controller."""
+        if self.controller:
+            self.train_btn.setEnabled(False)
+            self.chat_display.append("<i>Training step in corso...</i>")
+            self.controller.request_training()
+
+    @Slot(str)
+    def on_training_complete(self, result: str):
+        """Called when controller emits training_complete signal."""
+        self.chat_display.append(f"<b>Training Result:</b><pre>{result}</pre>")
+        self.train_btn.setEnabled(True)
         self._update_memory_label()
 
     def _update_memory_label(self):
@@ -459,7 +479,7 @@ class StatsTab(QWidget):
         # Controller stats
         if self.controller:
             cstats = self.controller.get_stats()
-            lines.append(f"\n=== Controller V3 ===")
+            lines.append(f"\n=== Controller V4 ===")
             lines.append(f"  State: {cstats.get('state', 'N/A')}")
             lines.append(f"  Signals received: {cstats.get('signals_received', 0)}")
             lines.append(f"  Bets total: {cstats.get('bets_total', 0)}")
@@ -600,9 +620,9 @@ class MainWindow(QMainWindow):
         self.executor = executor
         self.config = config or {}
         self.monitor = monitor  # HealthMonitor
-        self.controller = controller  # SuperAgentController V3
+        self.controller = controller  # SuperAgentController V4
 
-        self.setWindowTitle("SuperAgent H24 V3")
+        self.setWindowTitle("SuperAgent H24 V4")
         self.setMinimumSize(1100, 750)
 
         # --- RPA Worker (thread-safe bet queue) ---
@@ -659,6 +679,15 @@ class MainWindow(QMainWindow):
         # Connect stealth mode changes to executor
         self.settings_tab.stealth_changed.connect(self._on_stealth_changed)
 
+        # --- V4: Controller signal wiring ---
+        if self.controller:
+            # Wire controller.log_message -> log display
+            self.controller.log_message.connect(self._on_controller_log)
+            # Wire controller.training_complete -> trainer tab
+            self.controller.training_complete.connect(self.trainer_tab.on_training_complete)
+            # Wire state_manager.state_changed -> status bar update
+            self.controller.state_manager.state_changed.connect(self._on_state_changed)
+
         # --- Heartbeat timer (update UI with uptime) ---
         self._heartbeat_timer = QTimer(self)
         self._heartbeat_timer.timeout.connect(self._update_heartbeat)
@@ -667,9 +696,24 @@ class MainWindow(QMainWindow):
         # --- State label in status bar ---
         self._state_label = QLabel("State: BOOT")
         self.statusBar().addPermanentWidget(self._state_label)
-        self._state_timer = QTimer(self)
-        self._state_timer.timeout.connect(self._update_state_label)
-        self._state_timer.start(2000)
+
+        # --- V4: Controller log display in status bar ---
+        self._log_label = QLabel("")
+        self._log_label.setStyleSheet("color: #888; font-size: 11px;")
+        self.statusBar().addWidget(self._log_label, 1)
+
+    # ------------------------------------------------------------------
+    #  V4: Controller signal handlers
+    # ------------------------------------------------------------------
+    @Slot(str)
+    def _on_controller_log(self, msg: str):
+        """Display controller log messages in status bar."""
+        self._log_label.setText(msg)
+
+    @Slot(object)
+    def _on_state_changed(self, new_state):
+        """Update status bar when agent state changes."""
+        self._state_label.setText(f"State: {new_state.name}")
 
     @Slot(str)
     def _on_stealth_changed(self, mode: str):
@@ -700,12 +744,6 @@ class MainWindow(QMainWindow):
             _main_mod.last_heartbeat = time.time()
         except Exception:
             pass
-
-    def _update_state_label(self):
-        """Update status bar with current agent state."""
-        if self.controller:
-            state = self.controller.get_state()
-            self._state_label.setText(f"State: {state}")
 
     def closeEvent(self, event):
         """Graceful shutdown on window close."""
@@ -773,7 +811,7 @@ def apply_dark_theme(app: QApplication):
 
 
 # ---------------------------------------------------------------------------
-#  run_app  — entry point called from main.py
+#  run_app  — entry point called from main.py (backward compat)
 # ---------------------------------------------------------------------------
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
             logger=None, executor=None, config=None, monitor=None,

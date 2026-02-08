@@ -10,7 +10,7 @@ def build():
     project_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(project_dir)
 
-    print("🚀 AVVIO MASTER BUILD IMMORTALE - SuperAgent Pro")
+    print("AVVIO MASTER BUILD IMMORTALE - SuperAgent Pro V4")
 
     # 1. Pulizia build precedenti
     for d in ["build", "dist"]:
@@ -24,7 +24,7 @@ def build():
 
     # 3. Configurazione comando PyInstaller
     separator = ";" if is_windows else ":"
-    
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "main.py",               # Il file principale
@@ -66,11 +66,18 @@ def build():
         "core.state_machine",
         "core.ai_trainer",
         "core.controller",
+        # V4: New modules
+        "core.human_behavior",
+        "core.anti_detect",
+        "core.os_human_interaction",
+        "core.lifecycle",
+        "pyautogui",
+        "cv2",
         "gateway.telegram_parser_fixed",
         "gateway.pattern_memory",
         "gateway.telegram_listener_fixed",
     ]
-    
+
     for h in hidden_imports:
         cmd.extend(["--hidden-import", h])
 
@@ -83,9 +90,9 @@ def build():
     result = subprocess.run(cmd)
 
     if result.returncode == 0:
-        print("\n✅ BUILD COMPLETATA! Trovi l'eseguibile in: dist/SuperAgent_Pro.exe")
+        print("\nBUILD COMPLETATA! Trovi l'eseguibile in: dist/SuperAgent_Pro.exe")
     else:
-        print("\n❌ ERRORE DURANTE LA BUILD.")
+        print("\nERRORE DURANTE LA BUILD.")
 
 if __name__ == "__main__":
     build()

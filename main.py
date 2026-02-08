@@ -1,7 +1,8 @@
 """
-SuperAgent V3 - Main Entry Point (Immortality + Controller + AI Trainer)
-Central orchestrator: creates executor singleton, HealthMonitor, StateManager,
-AITrainerEngine, SuperAgentController, injects everything into UI.
+SuperAgent V4 - Main Entry Point (SplashScreen + Async Boot)
+Async bootloader: shows SplashScreen while lazy-importing modules in background.
+Creates executor singleton, HealthMonitor, StateManager, AITrainerEngine,
+SuperAgentController, SystemWatchdog, injects everything into UI.
 """
 import os
 import sys
@@ -13,11 +14,9 @@ import threading
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-from ui.desktop_app import run_app, ConfigValidator
-from core.dom_executor_playwright import DomExecutorPlaywright, close_chrome
-from core.health import HealthMonitor
-from core.ai_trainer import AITrainerEngine
-from core.controller import SuperAgentController
+from PySide6.QtWidgets import QApplication, QSplashScreen, QLabel
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QPixmap, QFont, QColor
 
 # --- MONITORAGGIO HEARTBEAT (global, for backward compat) ---
 last_heartbeat = time.time()
@@ -54,93 +53,223 @@ def load_config():
         return yaml.safe_load(f) or {}
 
 
-def create_executor(config, logger, rpa_healer=None):
-    """Factory function: creates and configures the singleton DomExecutorPlaywright."""
-    rpa_cfg = config.get("rpa", {})
-    executor = DomExecutorPlaywright(
-        logger=logger,
-        allow_place=rpa_cfg.get("allow_place", False),
-        pin=rpa_cfg.get("pin", "0503"),
-        headless=rpa_cfg.get("headless", False),
-        use_real_chrome=rpa_cfg.get("use_real_chrome", True),
-        chrome_profile=rpa_cfg.get("chrome_profile", "Default"),
-    )
-    # Set stealth mode from config
-    stealth = rpa_cfg.get("stealth_mode", "balanced")
-    executor.stealth_mode = stealth
+# ---------------------------------------------------------------------------
+#  V4: System Boot Thread — lazy imports in background
+# ---------------------------------------------------------------------------
+class SystemBootThread(QThread):
+    """Background thread that initializes all heavy modules while SplashScreen shows.
+    Emits progress updates and completion signal with all components."""
 
-    if rpa_healer:
-        executor.set_healer(rpa_healer)
-    return executor
+    progress = Signal(str)
+    boot_complete = Signal(dict)  # emits dict of all initialized components
+
+    def __init__(self, config, logger):
+        super().__init__()
+        self.config = config
+        self.logger = logger
+
+    def run(self):
+        components = {}
+
+        # 1. Config validation
+        self.progress.emit("Validating config...")
+        try:
+            from ui.desktop_app import ConfigValidator
+            errors = ConfigValidator.validate(self.config, self.logger)
+            if errors:
+                self.logger.warning(f"Config has {len(errors)} issue(s)")
+        except Exception as e:
+            self.logger.error(f"Config validation failed: {e}")
+
+        # 2. AI initialization
+        self.progress.emit("Initializing AI engines...")
+        vision = None
+        telegram_learner = None
+        try:
+            from ai.vision_learner import VisionLearner
+            from ai.telegram_learner import TelegramLearner
+            vision = VisionLearner(api_key=self.config.get("openrouter", {}).get("api_key"), logger=self.logger)
+            telegram_learner = TelegramLearner(vision_learner=vision, logger=self.logger)
+        except Exception as e:
+            self.logger.error(f"AI init failed: {e}")
+        components["vision"] = vision
+        components["telegram_learner"] = telegram_learner
+
+        # 3. RPA Healer
+        self.progress.emit("Loading RPA Healer...")
+        rpa_healer = None
+        try:
+            from ai.rpa_healer import RPAHealer
+            rpa_healer = RPAHealer(vision_learner=vision, logger=self.logger)
+        except Exception as e:
+            self.logger.error(f"Healer init failed: {e}")
+        components["rpa_healer"] = rpa_healer
+
+        # 4. Kill Chrome + Executor
+        self.progress.emit("Initializing browser executor...")
+        executor = None
+        try:
+            from core.dom_executor_playwright import DomExecutorPlaywright, close_chrome
+            close_chrome()
+            rpa_cfg = self.config.get("rpa", {})
+            executor = DomExecutorPlaywright(
+                logger=self.logger,
+                allow_place=rpa_cfg.get("allow_place", False),
+                pin=rpa_cfg.get("pin", "0503"),
+                headless=rpa_cfg.get("headless", False),
+                use_real_chrome=rpa_cfg.get("use_real_chrome", True),
+                chrome_profile=rpa_cfg.get("chrome_profile", "Default"),
+            )
+            stealth = rpa_cfg.get("stealth_mode", "balanced")
+            executor.stealth_mode = stealth
+            if rpa_healer:
+                executor.set_healer(rpa_healer)
+        except Exception as e:
+            self.logger.error(f"Executor init failed: {e}")
+        components["executor"] = executor
+
+        # 5. Health Monitor
+        self.progress.emit("Starting health monitor...")
+        monitor = None
+        try:
+            from core.health import HealthMonitor
+            monitor = HealthMonitor(self.logger, executor)
+            monitor.run_forever()
+        except Exception as e:
+            self.logger.error(f"HealthMonitor init failed: {e}")
+        components["monitor"] = monitor
+
+        # 6. AI Trainer
+        self.progress.emit("Initializing AI Trainer...")
+        trainer = None
+        try:
+            from core.ai_trainer import AITrainerEngine
+            trainer = AITrainerEngine(vision_learner=vision, logger=self.logger)
+            if executor:
+                trainer.set_executor(executor)
+            if executor:
+                executor.set_trainer(trainer)
+        except Exception as e:
+            self.logger.error(f"AITrainer init failed: {e}")
+        components["trainer"] = trainer
+
+        # 7. Controller
+        self.progress.emit("Starting V4 Controller...")
+        controller = None
+        try:
+            from core.controller import SuperAgentController
+            controller = SuperAgentController(self.logger, self.config)
+            controller.set_executor(executor)
+            controller.set_trainer(trainer)
+            controller.set_monitor(monitor)
+            controller.set_vision(vision)
+            controller.set_telegram_learner(telegram_learner)
+            controller.set_rpa_healer(rpa_healer)
+            controller.boot()
+        except Exception as e:
+            self.logger.error(f"Controller init failed: {e}")
+        components["controller"] = controller
+
+        # 8. System Watchdog
+        self.progress.emit("Starting system watchdog...")
+        watchdog = None
+        try:
+            from core.lifecycle import SystemWatchdog
+            watchdog = SystemWatchdog(check_interval=30)
+            watchdog.start()
+        except Exception as e:
+            self.logger.error(f"SystemWatchdog init failed: {e}")
+        components["watchdog"] = watchdog
+
+        self.progress.emit("Boot complete!")
+        self.logger.info("SUPERAGENT V4 BOOT COMPLETE — all systems initialized")
+        self.boot_complete.emit(components)
 
 
 def main():
-    # 1. KILL CHROME PREVENTIVO
-    close_chrome()
-
     logger = setup_logger()
-    logger.info("SUPERAGENT V3 STARTUP (H24 MODE)")
+    logger.info("SUPERAGENT V4 STARTUP (H24 MODE)")
 
     config = load_config()
 
-    # 1b. VALIDAZIONE CONFIG
-    errors = ConfigValidator.validate(config, logger)
-    if errors:
-        logger.warning(f"Config has {len(errors)} issue(s) — app will start anyway")
+    # Create QApplication first (required for SplashScreen)
+    app = QApplication(sys.argv)
+    app.setApplicationName("SuperAgent")
 
-    # 2. INIZIALIZZAZIONE AI
-    vision = None
-    telegram_learner = None
+    # Apply dark theme
+    from ui.desktop_app import apply_dark_theme
+    apply_dark_theme(app)
+
+    # V4: SplashScreen while booting
+    splash_pix = QPixmap(480, 280)
+    splash_pix.fill(QColor(30, 30, 30))
+    splash = QSplashScreen(splash_pix)
+    splash.setFont(QFont("Arial", 14))
+    splash.showMessage(
+        "SuperAgent V4 — Starting...",
+        Qt.AlignBottom | Qt.AlignCenter,
+        QColor(42, 130, 218),
+    )
+    splash.show()
+    app.processEvents()
+
+    # Boot thread results container
+    boot_result = {}
+    boot_done = threading.Event()
+
+    def on_progress(msg):
+        splash.showMessage(
+            f"SuperAgent V4 — {msg}",
+            Qt.AlignBottom | Qt.AlignCenter,
+            QColor(42, 130, 218),
+        )
+        app.processEvents()
+
+    def on_boot_complete(components):
+        nonlocal boot_result
+        boot_result.update(components)
+        boot_done.set()
+
+    # Start background boot
+    boot_thread = SystemBootThread(config, logger)
+    boot_thread.progress.connect(on_progress)
+    boot_thread.boot_complete.connect(on_boot_complete)
+    boot_thread.start()
+
+    # Process events while waiting for boot
+    while not boot_done.is_set():
+        app.processEvents()
+        boot_done.wait(0.05)
+
+    boot_thread.wait()  # ensure thread finished
+
+    # Extract components
+    vision = boot_result.get("vision")
+    telegram_learner = boot_result.get("telegram_learner")
+    rpa_healer = boot_result.get("rpa_healer")
+    executor = boot_result.get("executor")
+    monitor = boot_result.get("monitor")
+    controller = boot_result.get("controller")
+
+    # Create and show main window
+    from ui.desktop_app import MainWindow
+    window = MainWindow(
+        vision=vision,
+        telegram_learner=telegram_learner,
+        rpa_healer=rpa_healer,
+        logger=logger,
+        executor=executor,
+        config=config,
+        monitor=monitor,
+        controller=controller,
+    )
+    window.show()
+    splash.finish(window)
+
+    logger.info("SuperAgent V4 UI visible — entering event loop")
+
     try:
-        from ai.vision_learner import VisionLearner
-        from ai.telegram_learner import TelegramLearner
-        vision = VisionLearner(api_key=config.get("openrouter", {}).get("api_key"), logger=logger)
-        telegram_learner = TelegramLearner(vision_learner=vision, logger=logger)
-    except Exception as e:
-        logger.error(f"AI init failed: {e}")
-
-    # 3. INIZIALIZZAZIONE HEALER
-    rpa_healer = None
-    try:
-        from ai.rpa_healer import RPAHealer
-        rpa_healer = RPAHealer(vision_learner=vision, logger=logger)
-    except Exception as e:
-        logger.error(f"Healer init failed: {e}")
-
-    # 4. INIZIALIZZAZIONE EXECUTOR SINGLETON (L'UNICO)
-    executor = None
-    try:
-        executor = create_executor(config, logger, rpa_healer)
-    except Exception as e:
-        logger.error(f"Executor init failed: {e}")
-
-    # 5. HEALTH MONITOR — Centralised Immortality Layer
-    monitor = HealthMonitor(logger, executor)
-    monitor.run_forever()   # starts freeze detector, memory guard, maintenance restart
-
-    # 6. AI TRAINER ENGINE — Memory-based conversation + DOM/Screenshot analysis
-    trainer = AITrainerEngine(vision_learner=vision, logger=logger)
-    logger.info("AITrainerEngine initialized")
-
-    # 7. V3 CONTROLLER — Central orchestrator
-    controller = SuperAgentController(logger, config)
-    controller.set_executor(executor)
-    controller.set_trainer(trainer)
-    controller.set_monitor(monitor)
-    controller.set_vision(vision)
-    controller.set_telegram_learner(telegram_learner)
-    controller.set_rpa_healer(rpa_healer)
-    controller.boot()
-    logger.info("SuperAgentController V3 booted — state: IDLE")
-
-    # 8. AVVIO UI CON INIEZIONE SINGLETON + MONITOR + CONTROLLER
-    logger.info("Iniezione executor + monitor + controller nella UI...")
-    try:
-        sys.exit(run_app(
-            vision, telegram_learner, rpa_healer,
-            logger, executor, config, monitor,
-            controller,
-        ))
+        sys.exit(app.exec())
     finally:
         if controller:
             try:
@@ -150,6 +279,15 @@ def main():
         if executor:
             try:
                 executor.close()
+            except Exception:
+                pass
+        # Stop watchdog
+        watchdog = boot_result.get("watchdog")
+        if watchdog:
+            try:
+                watchdog.stop()
+                watchdog.quit()
+                watchdog.wait(3000)
             except Exception:
                 pass
 

@@ -1,3 +1,18 @@
+"""
+DomExecutorPlaywright V4 — Enterprise Stealth Browser Automation.
+
+Features:
+  - Bezier mouse movements with stealth profiles
+  - Hardware spoofing (Canvas, WebGL, Font)
+  - V4 Anti-Detection injection (iframe recursion, MutationObserver)
+  - HumanInput integration (stateful mouse, no teleportation)
+  - smart_click() self-healing loop with AI trainer
+  - memory_check() browser recycling
+  - CDP connect_over_cdp support
+  - Human warmup, curiosity simulation
+  - DOM snapshot, Screenshot capture
+  - Vision-validated click (anti-honeypot)
+"""
 import os
 import sys
 import time
@@ -8,6 +23,8 @@ import getpass
 import platform
 import subprocess
 from playwright.sync_api import sync_playwright
+
+from core.anti_detect import STEALTH_INJECTION_V4
 
 # --- STEALTH MODE PROFILES ---
 STEALTH_PROFILES = {
@@ -33,48 +50,6 @@ STEALTH_PROFILES = {
         "warmup_actions": 1,
     },
 }
-
-# --- HARDWARE SPOOFING JS ---
-HARDWARE_SPOOF_JS = """
-// Canvas fingerprint noise
-(function() {
-    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function(type) {
-        if (type === 'image/png' || type === undefined) {
-            const ctx = this.getContext('2d');
-            if (ctx) {
-                const imageData = ctx.getImageData(0, 0, this.width, this.height);
-                for (let i = 0; i < imageData.data.length; i += 4) {
-                    imageData.data[i] = imageData.data[i] ^ (Math.random() > 0.5 ? 1 : 0);
-                }
-                ctx.putImageData(imageData, 0, 0);
-            }
-        }
-        return origToDataURL.apply(this, arguments);
-    };
-})();
-
-// WebGL vendor spoofing
-(function() {
-    const getParam = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(param) {
-        if (param === 37445) return 'Google Inc. (Intel)';
-        if (param === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)';
-        return getParam.apply(this, arguments);
-    };
-})();
-
-// Font fingerprint spoofing — add random offset to measureText
-(function() {
-    const origMeasure = CanvasRenderingContext2D.prototype.measureText;
-    CanvasRenderingContext2D.prototype.measureText = function(text) {
-        const result = origMeasure.apply(this, arguments);
-        const noise = 0.00001 * (Math.random() - 0.5);
-        Object.defineProperty(result, 'width', { value: result.width + noise });
-        return result;
-    };
-})();
-"""
 
 
 # --- FUNZIONI HELPER PER IL COMPORTAMENTO UMANO ---
@@ -184,9 +159,10 @@ def _detect_chrome_profile():
 
 class DomExecutorPlaywright:
     """
-    DOM Executor using Playwright for browser automation.
-    Enterprise-grade Stealth version: Bezier movements, Hardware Spoofing,
-    Human warmup, Anti-HoneyPot, DOM snapshot, Screenshot capture.
+    DOM Executor V4 using Playwright for browser automation.
+    Enterprise-grade Stealth: Bezier movements, Hardware Spoofing,
+    V4 Anti-Detection (iframe recursion), HumanInput integration,
+    smart_click self-healing, memory_check recycling, CDP connect.
     """
 
     MAX_RETRIES = 3
@@ -209,6 +185,24 @@ class DomExecutorPlaywright:
         self._initialized = False
         self.healer = None  # Set externally via set_healer()
         self._stealth_mode = "balanced"  # slow | balanced | pro
+
+        # V4: HumanInput integration (lazy init after page is ready)
+        self._human_input = None
+
+        # V4: AI Trainer for self-healing
+        self._trainer = None
+
+        # V4: Memory check tracking
+        self._page_count = 0
+        self._last_memory_check = time.time()
+
+    # ------------------------------------------------------------------
+    #  V4: Dependency injection
+    # ------------------------------------------------------------------
+    def set_trainer(self, trainer):
+        """Connect AI trainer for self-healing smart_click."""
+        self._trainer = trainer
+        self.logger.info("[Executor] AI Trainer connected for self-healing")
 
     # ------------------------------------------------------------------
     #  Stealth mode property
@@ -234,6 +228,21 @@ class DomExecutorPlaywright:
         self.healer = healer
         self.logger.info("RPA Healer connected to DomExecutor")
 
+    # ------------------------------------------------------------------
+    #  V4: HumanInput accessor
+    # ------------------------------------------------------------------
+    @property
+    def human(self):
+        """Lazy-init HumanInput from human_behavior module."""
+        if self._human_input is None and self.page:
+            try:
+                from core.human_behavior import HumanInput
+                self._human_input = HumanInput(self.page)
+                self.logger.info("[Executor] HumanInput initialized (stateful mouse)")
+            except ImportError:
+                self.logger.warning("[Executor] HumanInput not available")
+        return self._human_input
+
     def _ensure_profile_unlocked(self):
         """Remove stale Chrome lock files left by a crash.
         Without this, persistent context launch fails after an unclean exit."""
@@ -250,7 +259,7 @@ class DomExecutorPlaywright:
                     pass
 
     def _ensure_browser(self):
-        """Initialize browser with Stealth arguments, WebDriver bypass, and Hardware Spoofing."""
+        """Initialize browser with Stealth arguments, V4 Anti-Detection, and Hardware Spoofing."""
         if self._initialized:
             return True
 
@@ -291,12 +300,10 @@ class DomExecutorPlaywright:
                 else:
                     self.page = self.ctx.new_page()
 
-                # BYPASS navigator.webdriver
-                self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                # HARDWARE SPOOFING (Canvas, WebGL, Font)
-                self.page.add_init_script(HARDWARE_SPOOF_JS)
+                # V4: Full stealth injection (replaces old webdriver + hardware spoof)
+                self.page.add_init_script(STEALTH_INJECTION_V4)
 
-                self.logger.info("Real Chrome initialized with Stealth + Hardware Spoofing")
+                self.logger.info("Real Chrome initialized with V4 Ghost Protocol Stealth")
             else:
                 if self.use_real_chrome:
                     self.logger.warning("Chrome not found, falling back to standalone Chromium")
@@ -309,11 +316,12 @@ class DomExecutorPlaywright:
                 )
                 self.page = self.ctx.new_page()
 
-                # Bypass WebDriver anche su Chromium standalone
-                self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                # HARDWARE SPOOFING
-                self.page.add_init_script(HARDWARE_SPOOF_JS)
-                self.logger.info("Standalone Chromium initialized with Stealth + Hardware Spoofing")
+                # V4: Full stealth injection
+                self.page.add_init_script(STEALTH_INJECTION_V4)
+                self.logger.info("Standalone Chromium initialized with V4 Ghost Protocol Stealth")
+
+            # Reset HumanInput for new page
+            self._human_input = None
 
             self._initialized = True
             return True
@@ -321,6 +329,79 @@ class DomExecutorPlaywright:
         except Exception as e:
             self.logger.error(f"Failed to initialize browser: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    #  V4: CDP Connect (attach to desktop-opened Chrome)
+    # ------------------------------------------------------------------
+    def launch_browser_cdp(self, cdp_url: str = "http://localhost:9222"):
+        """Connect to an already-running Chrome via CDP.
+        Use this when Chrome is opened from desktop (HumanOS).
+        """
+        try:
+            self.pw = sync_playwright().start()
+            self.browser = self.pw.chromium.connect_over_cdp(cdp_url)
+            self.ctx = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
+            self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
+
+            # V4: Full stealth injection
+            self.page.add_init_script(STEALTH_INJECTION_V4)
+
+            # Reset HumanInput for new page
+            self._human_input = None
+
+            self._initialized = True
+            self.logger.info(f"[Executor] Connected to Chrome via CDP: {cdp_url}")
+            return True
+        except Exception as e:
+            self.logger.error(f"[Executor] CDP connect failed: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    #  V4: Navigate to URL
+    # ------------------------------------------------------------------
+    def go_to_url(self, url: str, timeout: int = 30000) -> bool:
+        """Navigate to a URL with stealth injection."""
+        if not self._ensure_browser():
+            return False
+        try:
+            self.page.goto(url, timeout=timeout)
+            self._wait_for_page_ready()
+            self._page_count += 1
+            return True
+        except Exception as e:
+            self.logger.error(f"[Executor] go_to_url failed: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    #  V4: Memory Check (browser recycling)
+    # ------------------------------------------------------------------
+    def memory_check(self, max_pages: int = 50, max_interval: int = 3600):
+        """Check if browser needs recycling to prevent memory leaks.
+        Closes and reopens browser context after too many page loads
+        or after a time interval."""
+        should_recycle = False
+
+        if self._page_count > max_pages:
+            self.logger.info(f"[Executor] Memory check: {self._page_count} pages loaded — recycling")
+            should_recycle = True
+        elif time.time() - self._last_memory_check > max_interval:
+            self.logger.info("[Executor] Memory check: interval elapsed — recycling")
+            should_recycle = True
+
+        if should_recycle:
+            try:
+                self.close()
+                time.sleep(2)
+                self._ensure_browser()
+                self._page_count = 0
+                self._last_memory_check = time.time()
+                self.logger.info("[Executor] Browser recycled successfully")
+                return True
+            except Exception as e:
+                self.logger.error(f"[Executor] Browser recycling failed: {e}")
+                return False
+
+        return False
 
     # ------------------------------------------------------------------
     #  Stealth: Human Warmup
@@ -477,6 +558,81 @@ class DomExecutorPlaywright:
         else:
             loc.first.click()
             return True
+
+    # ------------------------------------------------------------------
+    #  V4: Smart Click (self-healing loop)
+    # ------------------------------------------------------------------
+    def smart_click(self, selector: str, element_description: str = "",
+                    max_heal_attempts: int = 2) -> bool:
+        """Click with self-healing: if selector fails, use AI trainer
+        to find a new selector via DOM + vision analysis, then retry.
+
+        Args:
+            selector: CSS selector to click
+            element_description: human description of the target element
+            max_heal_attempts: max AI healing retries
+        """
+        if not self._ensure_browser():
+            return False
+
+        # Try normal click first
+        try:
+            loc = self.page.locator(selector)
+            loc.first.wait_for(state="visible", timeout=7000)
+            profile = self._profile
+            human_delay(profile["delay_min"] * 0.5, profile["delay_max"] * 0.5)
+            x, y = human_move_to_element(self.page, loc.first, mode=self._stealth_mode)
+            if x and y:
+                human_delay(0.1, 0.3)
+                self.page.mouse.down()
+                time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
+                self.page.mouse.up()
+            else:
+                loc.first.click()
+            return True
+        except Exception as e:
+            self.logger.warning(f"[SmartClick] Primary selector failed: {selector} — {e}")
+
+        # Self-healing loop
+        if self._trainer and element_description:
+            for attempt in range(1, max_heal_attempts + 1):
+                self.logger.info(f"[SmartClick] Healing attempt {attempt}/{max_heal_attempts}")
+                new_selector = self._trainer.heal_selector(selector, element_description)
+                if new_selector:
+                    try:
+                        loc = self.page.locator(new_selector)
+                        loc.first.wait_for(state="visible", timeout=5000)
+                        profile = self._profile
+                        human_delay(0.2, 0.5)
+                        x, y = human_move_to_element(self.page, loc.first, mode=self._stealth_mode)
+                        if x and y:
+                            human_delay(0.1, 0.2)
+                            self.page.mouse.down()
+                            time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
+                            self.page.mouse.up()
+                        else:
+                            loc.first.click()
+                        self.logger.info(f"[SmartClick] Healed click succeeded: {new_selector}")
+                        return True
+                    except Exception as e2:
+                        self.logger.warning(f"[SmartClick] Healed selector also failed: {new_selector} — {e2}")
+                        selector = new_selector  # use as base for next heal attempt
+
+        # Fallback: try old healer if available
+        if self.healer and element_description:
+            self.logger.info("[SmartClick] Trying legacy RPA Healer...")
+            new_selector = self.healer.heal_selector(
+                self.page, selector, element_description, auto_update=True
+            )
+            if new_selector:
+                try:
+                    self._safe_click(new_selector)
+                    return True
+                except Exception:
+                    pass
+
+        self.logger.error(f"[SmartClick] All attempts failed for: {selector}")
+        return False
 
     # ------------------------------------------------------------------
     #  DOM Snapshot
@@ -662,10 +818,12 @@ class DomExecutorPlaywright:
             self.logger.warning("Page unresponsive, attempting recovery...")
             try:
                 self.page = self.ctx.new_page()
-                self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                self.page.add_init_script(HARDWARE_SPOOF_JS)
+                # V4: Full stealth injection on new page
+                self.page.add_init_script(STEALTH_INJECTION_V4)
                 self.page.goto("https://www.bet365.it/#/HO/", timeout=30000)
                 self._wait_for_page_ready()
+                # Reset HumanInput for new page
+                self._human_input = None
                 self.logger.info("Page recovered successfully")
                 return True
             except Exception as e:
@@ -942,6 +1100,7 @@ class DomExecutorPlaywright:
         self.ctx = None
         self.browser = None
         self.pw = None
+        self._human_input = None
         self.logger.info("Browser closed")
 
     def __del__(self):
