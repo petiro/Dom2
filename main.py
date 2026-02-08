@@ -166,6 +166,13 @@ class SystemBootThread(QThread):
             controller.set_telegram_learner(telegram_learner)
             controller.set_rpa_healer(rpa_healer)
             controller.boot()
+            # Wire CommandParser
+            try:
+                from core.command_parser import CommandParser
+                cmd_parser = CommandParser(self.logger, self.config)
+                controller.set_command_parser(cmd_parser)
+            except Exception as e:
+                self.logger.warning(f"CommandParser init failed: {e}")
         except Exception as e:
             self.logger.error(f"Controller init failed: {e}")
         components["controller"] = controller
