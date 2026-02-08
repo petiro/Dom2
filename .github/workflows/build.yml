@@ -29,6 +29,7 @@ jobs:
             --add-data "core;core" `
             --add-data "ui;ui" `
             --add-data "data;data" `
+            --hidden-import core.security `
             --hidden-import cryptography `
             --hidden-import telethon `
             --hidden-import pyautogui `

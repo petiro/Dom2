@@ -28,6 +28,7 @@ from core.state_machine import AgentState, StateManager
 from core.signal_parser import TelegramSignalParser
 from core.money_management import RoserpinaTable
 from core.bet_worker import BetWorker
+from core.security import Vault
 
 
 class SuperAgentController(QObject):
@@ -87,6 +88,11 @@ class SuperAgentController(QObject):
         self.parser = TelegramSignalParser()
         self.table = RoserpinaTable(table_id=1)  # Default Table 1
         self.bet_worker = None
+
+        # Secure credential vault
+        self.vault = Vault()
+        self.current_config = self.vault.decrypt_data()
+        self.telegram_worker = None
 
     # ------------------------------------------------------------------
     #  Internal logging (emits Qt Signal + logger)
@@ -564,6 +570,24 @@ class SuperAgentController(QObject):
         if self.executor and hasattr(self.executor, 'stealth_mode'):
             return self.executor.stealth_mode
         return "balanced"
+
+    # ------------------------------------------------------------------
+    #  Telegram Secure Connection
+    # ------------------------------------------------------------------
+    def connect_telegram(self, ui_config):
+        """Save credentials to vault and (re)start Telegram worker."""
+        self.vault.encrypt_data(ui_config)
+        self.current_config = ui_config
+
+        # Restart worker with new credentials
+        if self.telegram_worker:
+            self.telegram_worker.stop()
+            self.telegram_worker.wait()
+
+        from core.telegram_worker import TelegramWorker
+        self.telegram_worker = TelegramWorker(ui_config)
+        self.telegram_worker.message_received.connect(self.handle_telegram_signal)
+        self.telegram_worker.start()
 
     # ------------------------------------------------------------------
     #  Roserpina / Blind Over (Telegram signal → BetWorker)

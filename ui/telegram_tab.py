@@ -131,16 +131,25 @@ class TelegramTab(QWidget):
     signal_received = Signal(dict)
 
     def __init__(self, agent=None, telegram_learner=None, logger=None,
-                 parent=None, executor=None, monitor=None):
+                 parent=None, executor=None, monitor=None, controller=None):
         super().__init__(parent)
         self.agent = agent
         self.telegram_learner = telegram_learner
         self.logger = logger
         self.executor = executor  # Shared singleton executor for signal handling
         self.monitor = monitor   # HealthMonitor for heartbeat
+        self.controller = controller
         self.listener_thread = None
         self._parse_workers = []  # Keep references to active workers
         self.init_ui()
+
+        # Load saved credentials from vault
+        if self.controller:
+            saved = self.controller.current_config
+            if saved:
+                self.api_id_input.setText(saved.get("api_id", ""))
+                self.api_hash_input.setText(saved.get("api_hash", ""))
+                self.phone_input.setText(saved.get("bot_token", ""))
 
     def init_ui(self):
         layout = QVBoxLayout(self)
