@@ -54,6 +54,7 @@ class SuperAgentController(QObject):
     # Qt Signals for UI binding
     log_message = Signal(str)
     training_complete = Signal(str)
+    mapping_ready = Signal(str)
 
     def __init__(self, logger, config: dict = None):
         super().__init__()
@@ -570,6 +571,41 @@ class SuperAgentController(QObject):
         if self.executor and hasattr(self.executor, 'stealth_mode'):
             return self.executor.stealth_mode
         return "balanced"
+
+    # ------------------------------------------------------------------
+    #  Auto-Mapping (AI selector generation)
+    # ------------------------------------------------------------------
+    def request_auto_mapping(self, url):
+        """Start AI auto-mapping for the given URL."""
+        api_key = self.vault.decrypt_data().get("openrouter_api_key")
+
+        if not api_key:
+            self.log_message.emit("API Key OpenRouter mancante nel Vault")
+            return
+
+        from core.auto_mapper_worker import AutoMapperWorker
+        self.mapper_worker = AutoMapperWorker(url, api_key, self.executor)
+        self.mapper_worker.finished.connect(self.on_mapping_success)
+        self.mapper_worker.error.connect(lambda e: self.log_message.emit(f"Mapping fallito: {e}"))
+        self.mapper_worker.start()
+
+    def on_mapping_success(self, yaml_code):
+        self.mapping_ready.emit(yaml_code)
+        self.log_message.emit("Mappatura AI completata!")
+
+    def test_mapping_visual(self, yaml_code):
+        if self.executor and self.executor.highlight_selectors(yaml_code):
+            self.log_message.emit("Highlight attivato sul browser")
+        else:
+            self.log_message.emit("Errore nell'highlight dei selettori")
+
+    def save_selectors_yaml(self, yaml_code):
+        try:
+            with open("config/selectors.yaml", "w", encoding="utf-8") as f:
+                f.write(yaml_code)
+            self.log_message.emit("selectors.yaml salvato correttamente")
+        except Exception as e:
+            self.log_message.emit(f"Errore salvataggio YAML: {e}")
 
     # ------------------------------------------------------------------
     #  Telegram Secure Connection

@@ -19,6 +19,7 @@ from PySide6.QtGui import QFont, QColor, QPalette
 from datetime import datetime
 
 from core.money_management import RoserpinaTable
+from ui.mapping_tab import MappingTab
 
 # Absolute base dir (EXE-safe)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -721,6 +722,11 @@ class MainWindow(QMainWindow):
         if self.controller:
             self.money_tab = MoneyTab(self.controller)
             self.tabs.addTab(self.money_tab, "Money Management")
+
+        # 8. Auto-Mapping
+        if self.controller:
+            self.mapping_tab = MappingTab(self.controller)
+            self.tabs.addTab(self.mapping_tab, "Auto-Mapping")
 
         # Connect stealth mode changes to executor
         self.settings_tab.stealth_changed.connect(self._on_stealth_changed)

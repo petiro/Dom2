@@ -635,6 +635,54 @@ class DomExecutorPlaywright:
             return ""
 
     # ------------------------------------------------------------------
+    #  Highlight Selectors (Visual Feedback)
+    # ------------------------------------------------------------------
+    def highlight_selectors(self, yaml_string):
+        import yaml
+        if not yaml_string:
+            return False
+
+        try:
+            selectors = yaml.safe_load(yaml_string)
+            if not selectors:
+                return False
+
+            js = """
+            (selectors) => {
+                // Reset highlights precedenti
+                document.querySelectorAll('[data-ai-highlight]').forEach(el => {
+                    el.style.outline = '';
+                    el.removeAttribute('data-ai-highlight');
+                    const label = el.querySelector('.ai-label');
+                    if(label) label.remove();
+                });
+
+                Object.entries(selectors).forEach(([key, selector]) => {
+                    try {
+                        const el = document.querySelector(selector);
+                        if (el) {
+                            el.style.outline = '4px solid red';
+                            el.style.outlineOffset = '-2px';
+                            el.setAttribute('data-ai-highlight', '1');
+                            
+                            // Etichetta
+                            const label = document.createElement('div');
+                            label.className = 'ai-label';
+                            label.innerText = key;
+                            label.style.cssText = "position:absolute; background:red; color:white; font-size:10px; padding:2px; top:-15px; left:0; z-index:9999;";
+                            el.appendChild(label);
+                        }
+                    } catch(e) {}
+                });
+            }
+            """
+            self.page.evaluate(js, selectors)
+            return True
+        except Exception as e:
+            self.logger.error(f"Highlight error: {e}")
+            return False
+
+    # ------------------------------------------------------------------
     #  Screenshot to Base64
     # ------------------------------------------------------------------
     def take_screenshot_b64(self) -> str:
