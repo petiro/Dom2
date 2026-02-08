@@ -604,5 +604,5 @@ class SuperAgentController(QObject):
         if self.executor:
             try:
                 self.executor.close()
-            except Exception:
-                pass
+            except Exception as recovery_exc:
+                self.logger.error(f"[Controller] Session recovery failed: {recovery_exc}")

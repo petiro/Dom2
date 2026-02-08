@@ -91,6 +91,8 @@ class HumanInput:
 
             return True
         except Exception as e:
+            if self.logger:
+                self.logger.warning(f"[HumanInput] Action failed: {e}")
             return False
 
     def move_to_coordinates(self, target_x, target_y):
@@ -183,6 +185,7 @@ class HumanInput:
         delta = random.choice([-300, -200, -100, 100, 200, 300])
         try:
             self.page.mouse.wheel(0, delta)
-        except Exception:
-            pass
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"[HumanInput] Action failed: {e}")
         time.sleep(random.uniform(0.3, 0.8))

@@ -25,6 +25,7 @@ import subprocess
 from playwright.sync_api import sync_playwright
 
 from core.anti_detect import STEALTH_INJECTION_V4
+from core.ai_trainer import AITrainerEngine
 
 # --- STEALTH MODE PROFILES ---
 STEALTH_PROFILES = {
@@ -237,7 +238,7 @@ class DomExecutorPlaywright:
         if self._human_input is None and self.page:
             try:
                 from core.human_behavior import HumanInput
-                self._human_input = HumanInput(self.page)
+                self._human_input = HumanInput(self.page, self.logger)
                 self.logger.info("[Executor] HumanInput initialized (stateful mouse)")
             except ImportError:
                 self.logger.warning("[Executor] HumanInput not available")
@@ -575,23 +576,10 @@ class DomExecutorPlaywright:
         if not self._ensure_browser():
             return False
 
-        # Try normal click first
-        try:
-            loc = self.page.locator(selector)
-            loc.first.wait_for(state="visible", timeout=7000)
-            profile = self._profile
-            human_delay(profile["delay_min"] * 0.5, profile["delay_max"] * 0.5)
-            x, y = human_move_to_element(self.page, loc.first, mode=self._stealth_mode)
-            if x and y:
-                human_delay(0.1, 0.3)
-                self.page.mouse.down()
-                time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
-                self.page.mouse.up()
-            else:
-                loc.first.click()
+        # Try normal click first (via HumanInput for stateful mouse)
+        if self.human and self.human.click(selector):
             return True
-        except Exception as e:
-            self.logger.warning(f"[SmartClick] Primary selector failed: {selector} — {e}")
+        self.logger.warning(f"[SmartClick] Primary selector failed: {selector} — attempting healing.")
 
         # Self-healing loop
         if self._trainer and element_description:
@@ -599,24 +587,11 @@ class DomExecutorPlaywright:
                 self.logger.info(f"[SmartClick] Healing attempt {attempt}/{max_heal_attempts}")
                 new_selector = self._trainer.heal_selector(selector, element_description)
                 if new_selector:
-                    try:
-                        loc = self.page.locator(new_selector)
-                        loc.first.wait_for(state="visible", timeout=5000)
-                        profile = self._profile
-                        human_delay(0.2, 0.5)
-                        x, y = human_move_to_element(self.page, loc.first, mode=self._stealth_mode)
-                        if x and y:
-                            human_delay(0.1, 0.2)
-                            self.page.mouse.down()
-                            time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
-                            self.page.mouse.up()
-                        else:
-                            loc.first.click()
+                    if self.human and self.human.click(new_selector):
                         self.logger.info(f"[SmartClick] Healed click succeeded: {new_selector}")
                         return True
-                    except Exception as e2:
-                        self.logger.warning(f"[SmartClick] Healed selector also failed: {new_selector} — {e2}")
-                        selector = new_selector  # use as base for next heal attempt
+                    self.logger.warning(f"[SmartClick] Healed selector also failed: {new_selector}")
+                    selector = new_selector  # use as base for next heal attempt
 
         # Fallback: try old healer if available
         if self.healer and element_description:
@@ -637,13 +612,11 @@ class DomExecutorPlaywright:
     # ------------------------------------------------------------------
     #  DOM Snapshot
     # ------------------------------------------------------------------
-    DOM_MAX_LENGTH = 20000  # max chars for DOM snapshot truncation
-
     def get_dom_snapshot(self, max_length: int = None) -> str:
         """Get cleaned DOM snapshot: removes script/style/svg, truncated to max_length chars."""
         if not self.page:
             return ""
-        limit = max_length or self.DOM_MAX_LENGTH
+        limit = max_length or AITrainerEngine.DOM_MAX_LENGTH
         try:
             html = self.page.evaluate("""(limit) => {
                 const clone = document.documentElement.cloneNode(true);

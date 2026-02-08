@@ -12,12 +12,24 @@ timeout /t 2 /nobreak >nul
 
 if exist SuperAgent_Pro_new.exe (
     echo Sostituzione eseguibile...
-    copy /Y SuperAgent_Pro_new.exe SuperAgent_Pro.exe
-    del SuperAgent_Pro_new.exe
-    echo Aggiornamento completato!
+    if exist SuperAgent_Pro.exe (
+        ren SuperAgent_Pro.exe SuperAgent_Pro.exe.bak
+    )
+    ren SuperAgent_Pro_new.exe SuperAgent_Pro.exe
+    
+    if errorlevel 1 (
+        echo ERRORE: Aggiornamento fallito. Ripristino backup...
+        if exist SuperAgent_Pro.exe.bak (
+            ren SuperAgent_Pro.exe.bak SuperAgent_Pro.exe
+        )
+    ) else (
+        echo Aggiornamento completato!
+        if exist SuperAgent_Pro.exe.bak (
+            del SuperAgent_Pro.exe.bak
+        )
+    )
 ) else (
     echo ERRORE: SuperAgent_Pro_new.exe non trovato.
-    echo Posiziona il nuovo exe come "SuperAgent_Pro_new.exe" e rilancia.
 )
 
 pause
