@@ -56,7 +56,7 @@ class CommandParser:
 
         teams = signal.get("teams", "").strip()
         market = signal.get("market", "").strip()
-        score = signal.get("score", "")
+        score = signal.get("score", "").strip()
         amount = signal.get("amount", self.config.get("default_bet_amount", ""))
 
         if not teams:
