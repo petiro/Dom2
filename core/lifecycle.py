@@ -56,7 +56,7 @@ class SystemWatchdog(QThread):
                         self.resource_warning.emit(
                             f"RAM alta: {mem.percent}% utilizzata")
                 except Exception:
-                    pass
+                    pass  # psutil read failure — non-critical, retry next cycle
 
                 # 2. Check if Chrome is still running
                 try:
@@ -67,7 +67,7 @@ class SystemWatchdog(QThread):
                     if not chrome_alive:
                         self.browser_died.emit()
                 except Exception:
-                    pass
+                    pass  # process enumeration failure — retry next cycle
 
             # 3. Process-level memory check (own process)
             if PSUTIL_AVAILABLE:
@@ -78,4 +78,4 @@ class SystemWatchdog(QThread):
                         self.resource_warning.emit(
                             f"Processo SuperAgent usa {own_mb:.0f} MB RAM")
                 except Exception:
-                    pass
+                    pass  # own process read failure — non-critical
