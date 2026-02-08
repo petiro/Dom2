@@ -63,6 +63,9 @@ class SuperAgentController(QObject):
         self.vision = None
         self.telegram_learner = None
         self.rpa_healer = None
+        self.watchdog = None  # SystemWatchdog (lifecycle)
+        self.command_parser = None  # CommandParser (signal → steps)
+        self._os_human = None  # HumanOS for desktop recovery
 
         # State machine
         self.state_manager = StateManager(logger, initial_state=AgentState.BOOT)
@@ -110,6 +113,29 @@ class SuperAgentController(QObject):
 
     def set_rpa_healer(self, rpa_healer):
         self.rpa_healer = rpa_healer
+
+    def set_command_parser(self, parser):
+        """Connect CommandParser for Telegram signal → TaskStep conversion."""
+        self.command_parser = parser
+        self._log("[Controller] CommandParser connected")
+
+    def set_watchdog(self, watchdog):
+        """Connect SystemWatchdog and wire its signals to Controller recovery."""
+        self.watchdog = watchdog
+        if watchdog:
+            watchdog.browser_died.connect(self.on_browser_died)
+            watchdog.resource_warning.connect(self._on_resource_warning)
+            self._log("[Controller] SystemWatchdog connected")
+
+    def _init_os_human(self):
+        """Lazy-init HumanOS for desktop-level recovery."""
+        if self._os_human is None:
+            try:
+                from core.os_human_interaction import HumanOS
+                self._os_human = HumanOS(self.logger)
+                self._log("[Controller] HumanOS initialized for desktop recovery")
+            except Exception as e:
+                self.logger.warning(f"[Controller] HumanOS not available: {e}")
 
     # ------------------------------------------------------------------
     #  Boot sequence (V4: with boot lock + async option)
@@ -168,7 +194,168 @@ class SuperAgentController(QObject):
         self._log("[Controller] CDP Watchdog started")
 
     # ------------------------------------------------------------------
-    #  Signal handling (from Telegram → UI → Controller)
+    #  Watchdog Slots (V4: browser death recovery)
+    # ------------------------------------------------------------------
+    @Slot()
+    def on_browser_died(self):
+        """Called when SystemWatchdog detects Chrome is dead.
+        Triggers full recovery: close executor → HumanOS reopen → CDP reconnect."""
+        if self._stop_event.is_set():
+            return
+        self._log("[Controller] Browser death detected by Watchdog — starting recovery")
+        self.state_manager.set_state(AgentState.RECOVERING)
+
+        def _recover():
+            try:
+                with self._executor_lock:
+                    # 1. Close any dead executor state
+                    if self.executor:
+                        try:
+                            self.executor.close()
+                        except Exception:
+                            pass
+
+                    # 2. Try HumanOS desktop relaunch (Win+D → find icon → doubleClick)
+                    self._init_os_human()
+                    if self._os_human and self._os_human.available:
+                        self._log("[Controller] Reopening Chrome via HumanOS desktop...")
+                        opened = self._os_human.open_browser_from_desktop()
+                        if opened:
+                            self._log("[Controller] Chrome reopened — connecting via CDP...")
+                            import time as _time
+                            _time.sleep(5)  # wait for Chrome to fully start
+                            if self.executor:
+                                success = self.executor.launch_browser_cdp()
+                                if success:
+                                    self._log("[Controller] CDP reconnect successful!")
+                                    if not self._stop_event.is_set():
+                                        self.state_manager.set_state(AgentState.IDLE)
+                                    return
+                                else:
+                                    self._log("[Controller] CDP reconnect failed")
+
+                    # 3. Fallback: standard executor recovery (persistent context)
+                    self._log("[Controller] Falling back to standard session recovery...")
+                    if self.executor:
+                        self.executor.recover_session()
+                        if not self._stop_event.is_set():
+                            self.state_manager.set_state(AgentState.IDLE)
+                        self._log("[Controller] Standard recovery successful")
+
+            except Exception as e:
+                self._log(f"[Controller] Full recovery failed: {e}")
+                self.state_manager.set_state(AgentState.ERROR)
+
+        t = threading.Thread(target=_recover, name="browser-recovery", daemon=True)
+        t.start()
+
+    @Slot(str)
+    def _on_resource_warning(self, msg: str):
+        """Handle resource warnings from SystemWatchdog."""
+        self._log(f"[Watchdog] {msg}")
+        # If executor supports memory_check, trigger it
+        if self.executor and hasattr(self.executor, 'memory_check'):
+            try:
+                with self._executor_lock:
+                    self.executor.memory_check()
+            except Exception as e:
+                self.logger.warning(f"[Controller] Memory check triggered by warning failed: {e}")
+
+    # ------------------------------------------------------------------
+    #  V4: Step-based execution (CommandParser pipeline)
+    # ------------------------------------------------------------------
+    def handle_signal_v4(self, signal_data: dict) -> bool:
+        """V4 signal handler: signal → CommandParser → TaskSteps → execute.
+        Falls back to legacy handle_signal if CommandParser not available."""
+        if not self.command_parser:
+            return self.handle_signal(signal_data)
+
+        steps = self.command_parser.parse(signal_data)
+        if not steps:
+            self._log("[Controller] CommandParser returned no steps — skipping")
+            return False
+
+        return self.execute_steps(steps)
+
+    def execute_steps(self, steps) -> bool:
+        """Execute an ordered list of TaskStep objects against the executor.
+        Returns True if all steps completed successfully."""
+        if self._stop_event.is_set() or not self.executor:
+            return False
+
+        if not self.state_manager.transition(AgentState.NAVIGATING):
+            self._log("[Controller] Cannot transition to NAVIGATING for step execution")
+            return False
+
+        if self.monitor:
+            self.monitor.heartbeat()
+
+        try:
+            with self._executor_lock:
+                selectors = self.executor._load_selectors()
+
+                for step in steps:
+                    self._log(f"[Controller] Step: {step.description or step.action}")
+                    success = False
+                    last_err = None
+
+                    for attempt in range(step.retries + 1):
+                        try:
+                            success = self._execute_single_step(step, selectors)
+                            if success:
+                                break
+                        except Exception as e:
+                            last_err = e
+                            self._log(f"[Controller] Step {step.action} attempt {attempt+1} failed: {e}")
+                            # Try AI healing if enabled
+                            if step.heal_on_fail and self.rpa_healer and attempt < step.retries:
+                                self._log("[Controller] Attempting AI selector healing...")
+                                self.state_manager.set_state(AgentState.HEALING)
+                                try:
+                                    self.rpa_healer.heal()
+                                    selectors = self.executor._load_selectors()
+                                except Exception:
+                                    pass
+                                self.state_manager.set_state(AgentState.NAVIGATING)
+
+                    if not success:
+                        self._log(f"[Controller] Step {step.action} failed after {step.retries+1} attempts: {last_err}")
+                        if not self._stop_event.is_set():
+                            self.state_manager.set_state(AgentState.IDLE)
+                        return False
+
+            if not self._stop_event.is_set():
+                self.state_manager.set_state(AgentState.IDLE)
+            return True
+
+        except Exception as e:
+            self._log(f"[Controller] Step execution error: {e}")
+            self.state_manager.set_state(AgentState.ERROR)
+            if not self._stop_event.is_set():
+                self.state_manager.set_state(AgentState.IDLE)
+            return False
+
+    def _execute_single_step(self, step, selectors) -> bool:
+        """Execute one TaskStep. Returns True on success."""
+        action = step.action
+        params = step.params
+
+        if action == "login":
+            return self.executor.ensure_login(selectors)
+        elif action == "navigate":
+            return self.executor.navigate_to_match(params.get("teams", ""), selectors)
+        elif action == "select_market":
+            self.state_manager.set_state(AgentState.NAVIGATING)
+            return self.executor.select_market(params.get("market", ""), selectors)
+        elif action == "place_bet":
+            self.state_manager.set_state(AgentState.BETTING)
+            return self.executor.place_bet(selectors)
+        else:
+            self._log(f"[Controller] Unknown step action: {action}")
+            return False
+
+    # ------------------------------------------------------------------
+    #  Signal handling (from Telegram → UI → Controller) [legacy]
     # ------------------------------------------------------------------
     def handle_signal(self, signal_data: dict) -> bool:
         """Process a Telegram signal end-to-end.

@@ -166,16 +166,26 @@ class SystemBootThread(QThread):
             controller.set_telegram_learner(telegram_learner)
             controller.set_rpa_healer(rpa_healer)
             controller.boot()
+            # Wire CommandParser
+            try:
+                from core.command_parser import CommandParser
+                cmd_parser = CommandParser(self.logger, self.config)
+                controller.set_command_parser(cmd_parser)
+            except Exception as e:
+                self.logger.warning(f"CommandParser init failed: {e}")
         except Exception as e:
             self.logger.error(f"Controller init failed: {e}")
         components["controller"] = controller
 
-        # 8. System Watchdog
+        # 8. System Watchdog (wired to controller for browser recovery)
         self.progress.emit("Starting system watchdog...")
         watchdog = None
         try:
             from core.lifecycle import SystemWatchdog
             watchdog = SystemWatchdog(check_interval=30)
+            # V4: Wire watchdog signals to controller
+            if controller:
+                controller.set_watchdog(watchdog)
             watchdog.start()
         except Exception as e:
             self.logger.error(f"SystemWatchdog init failed: {e}")

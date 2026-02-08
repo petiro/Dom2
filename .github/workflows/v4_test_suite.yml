@@ -1,0 +1,58 @@
+name: V4 Test Suite
+
+on:
+  push:
+    branches: [ main, master, 'claude/*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  lint-and-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install PySide6 requests pyyaml playwright telethon openai pyautogui
+
+      - name: Check syntax (py_compile)
+        run: |
+          python -m py_compile main.py
+          python -m py_compile core/controller.py
+          python -m py_compile core/state_machine.py
+          python -m py_compile core/ai_trainer.py
+          python -m py_compile core/dom_executor_playwright.py
+          python -m py_compile core/health.py
+          python -m py_compile core/lifecycle.py
+          python -m py_compile core/anti_detect.py
+          python -m py_compile core/human_behavior.py
+          python -m py_compile core/os_human_interaction.py
+          python -m py_compile core/command_parser.py
+          python -m py_compile core/utils.py
+          python -m py_compile gateway/telegram_parser_fixed.py
+          python -m py_compile gateway/pattern_memory.py
+          python -m py_compile gateway/telegram_listener_fixed.py
+          python -m py_compile ai/vision_learner.py
+          python -m py_compile ai/rpa_healer.py
+          python -m py_compile ai/telegram_learner.py
+          python -m py_compile ui/desktop_app.py
+          python -m py_compile ui/telegram_tab.py
+
+      - name: Verify V4 imports
+        run: |
+          python -c "
+          from core.state_machine import AgentState, StateManager
+          from core.controller import SuperAgentController
+          from core.command_parser import CommandParser, TaskStep
+          print('V4 core imports OK')
+          "
+
+      - name: Run V4 diagnostic
+        run: python tester_v4.py
