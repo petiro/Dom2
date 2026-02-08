@@ -3,10 +3,79 @@ import sys
 import time
 import random
 import math
+import base64
 import getpass
 import platform
 import subprocess
 from playwright.sync_api import sync_playwright
+
+# --- STEALTH MODE PROFILES ---
+STEALTH_PROFILES = {
+    "slow": {
+        "move_steps_min": 30, "move_steps_max": 60,
+        "jitter": 8, "delay_min": 1.0, "delay_max": 2.5,
+        "type_delay_min": 0.08, "type_delay_max": 0.25,
+        "click_hold_min": 0.08, "click_hold_max": 0.22,
+        "warmup_actions": 5,
+    },
+    "balanced": {
+        "move_steps_min": 15, "move_steps_max": 35,
+        "jitter": 5, "delay_min": 0.5, "delay_max": 1.5,
+        "type_delay_min": 0.04, "type_delay_max": 0.15,
+        "click_hold_min": 0.05, "click_hold_max": 0.18,
+        "warmup_actions": 3,
+    },
+    "pro": {
+        "move_steps_min": 8, "move_steps_max": 18,
+        "jitter": 3, "delay_min": 0.2, "delay_max": 0.6,
+        "type_delay_min": 0.02, "type_delay_max": 0.08,
+        "click_hold_min": 0.03, "click_hold_max": 0.10,
+        "warmup_actions": 1,
+    },
+}
+
+# --- HARDWARE SPOOFING JS ---
+HARDWARE_SPOOF_JS = """
+// Canvas fingerprint noise
+(function() {
+    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function(type) {
+        if (type === 'image/png' || type === undefined) {
+            const ctx = this.getContext('2d');
+            if (ctx) {
+                const imageData = ctx.getImageData(0, 0, this.width, this.height);
+                for (let i = 0; i < imageData.data.length; i += 4) {
+                    imageData.data[i] = imageData.data[i] ^ (Math.random() > 0.5 ? 1 : 0);
+                }
+                ctx.putImageData(imageData, 0, 0);
+            }
+        }
+        return origToDataURL.apply(this, arguments);
+    };
+})();
+
+// WebGL vendor spoofing
+(function() {
+    const getParam = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Google Inc. (Intel)';
+        if (param === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)';
+        return getParam.apply(this, arguments);
+    };
+})();
+
+// Font fingerprint spoofing — add random offset to measureText
+(function() {
+    const origMeasure = CanvasRenderingContext2D.prototype.measureText;
+    CanvasRenderingContext2D.prototype.measureText = function(text) {
+        const result = origMeasure.apply(this, arguments);
+        const noise = 0.00001 * (Math.random() - 0.5);
+        Object.defineProperty(result, 'width', { value: result.width + noise });
+        return result;
+    };
+})();
+"""
+
 
 # --- FUNZIONI HELPER PER IL COMPORTAMENTO UMANO ---
 
@@ -14,23 +83,60 @@ def human_delay(min_s=0.5, max_s=1.5):
     """Simula l'esitazione umana tra un'azione e l'altra."""
     time.sleep(random.uniform(min_s, max_s))
 
-def human_move_to_element(page, element):
-    """
-    Muove il mouse verso l'elemento con traiettoria fluida e jitter casuale.
-    Usa il parametro 'steps' di Playwright per simulare il movimento naturale.
+
+def _bezier_point(t, p0, p1, p2, p3):
+    """Cubic Bezier interpolation for a single axis."""
+    return ((1 - t)**3 * p0 +
+            3 * (1 - t)**2 * t * p1 +
+            3 * (1 - t) * t**2 * p2 +
+            t**3 * p3)
+
+
+def human_move_to_element(page, element, mode="balanced"):
+    """Move mouse to element with Bezier curve trajectory + jitter.
+
+    Modes: 'slow' (Umano Lento), 'balanced' (Bilanciato), 'pro' (Pro/Live).
     """
     box = element.bounding_box()
     if not box:
         return None, None
-    
-    # Calcola il centro dell'elemento con un leggero jitter casuale (offset)
-    # per evitare di cliccare sempre lo stesso pixel esatto.
-    target_x = box['x'] + box['width'] / 2 + random.uniform(-5, 5)
-    target_y = box['y'] + box['height'] / 2 + random.uniform(-5, 5)
-    
-    # Il parametro 'steps' scompone il movimento in micro-spostamenti simulando la mano umana
-    page.mouse.move(target_x, target_y, steps=random.randint(15, 35))
+
+    profile = STEALTH_PROFILES.get(mode, STEALTH_PROFILES["balanced"])
+    jitter = profile["jitter"]
+
+    target_x = box['x'] + box['width'] / 2 + random.uniform(-jitter, jitter)
+    target_y = box['y'] + box['height'] / 2 + random.uniform(-jitter, jitter)
+
+    # Get current mouse position (approximate from viewport center if unknown)
+    try:
+        vp = page.viewport_size
+        start_x = vp["width"] / 2 if vp else 683
+        start_y = vp["height"] / 2 if vp else 384
+    except Exception:
+        start_x, start_y = 683, 384
+
+    # Bezier control points with randomness
+    cp1_x = start_x + (target_x - start_x) * random.uniform(0.2, 0.5) + random.uniform(-50, 50)
+    cp1_y = start_y + (target_y - start_y) * random.uniform(0.0, 0.3) + random.uniform(-30, 30)
+    cp2_x = start_x + (target_x - start_x) * random.uniform(0.5, 0.8) + random.uniform(-30, 30)
+    cp2_y = start_y + (target_y - start_y) * random.uniform(0.7, 1.0) + random.uniform(-20, 20)
+
+    steps = random.randint(profile["move_steps_min"], profile["move_steps_max"])
+
+    for i in range(1, steps + 1):
+        t = i / steps
+        bx = _bezier_point(t, start_x, cp1_x, cp2_x, target_x)
+        by = _bezier_point(t, start_y, cp1_y, cp2_y, target_y)
+        # Add micro-jitter per step
+        bx += random.uniform(-1.5, 1.5)
+        by += random.uniform(-1.5, 1.5)
+        page.mouse.move(bx, by)
+        time.sleep(random.uniform(0.005, 0.02))
+
+    # Final precise position
+    page.mouse.move(target_x, target_y)
     return target_x, target_y
+
 
 def close_chrome():
     """Kill all Chrome processes to free the user profile for Playwright persistent context."""
@@ -79,7 +185,8 @@ def _detect_chrome_profile():
 class DomExecutorPlaywright:
     """
     DOM Executor using Playwright for browser automation.
-    Enterprise-grade Stealth version: Human movements, WebDriver bypass, Smart Waits.
+    Enterprise-grade Stealth version: Bezier movements, Hardware Spoofing,
+    Human warmup, Anti-HoneyPot, DOM snapshot, Screenshot capture.
     """
 
     MAX_RETRIES = 3
@@ -101,6 +208,26 @@ class DomExecutorPlaywright:
         self.last_login_time = 0
         self._initialized = False
         self.healer = None  # Set externally via set_healer()
+        self._stealth_mode = "balanced"  # slow | balanced | pro
+
+    # ------------------------------------------------------------------
+    #  Stealth mode property
+    # ------------------------------------------------------------------
+    @property
+    def stealth_mode(self) -> str:
+        return self._stealth_mode
+
+    @stealth_mode.setter
+    def stealth_mode(self, mode: str):
+        if mode in STEALTH_PROFILES:
+            self._stealth_mode = mode
+            self.logger.info(f"Stealth mode set to: {mode}")
+        else:
+            self.logger.warning(f"Invalid stealth mode: {mode}")
+
+    @property
+    def _profile(self) -> dict:
+        return STEALTH_PROFILES.get(self._stealth_mode, STEALTH_PROFILES["balanced"])
 
     def set_healer(self, healer):
         """Connect RPA healer for auto-recovery of broken selectors."""
@@ -123,7 +250,7 @@ class DomExecutorPlaywright:
                     pass
 
     def _ensure_browser(self):
-        """Initialize browser with Stealth arguments and WebDriver bypass."""
+        """Initialize browser with Stealth arguments, WebDriver bypass, and Hardware Spoofing."""
         if self._initialized:
             return True
 
@@ -164,10 +291,12 @@ class DomExecutorPlaywright:
                 else:
                     self.page = self.ctx.new_page()
 
-                # BYPASS navigator.webdriver (Iniezione JavaScript)
+                # BYPASS navigator.webdriver
                 self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                # HARDWARE SPOOFING (Canvas, WebGL, Font)
+                self.page.add_init_script(HARDWARE_SPOOF_JS)
 
-                self.logger.info("Real Chrome initialized with Stealth Patches")
+                self.logger.info("Real Chrome initialized with Stealth + Hardware Spoofing")
             else:
                 if self.use_real_chrome:
                     self.logger.warning("Chrome not found, falling back to standalone Chromium")
@@ -179,10 +308,12 @@ class DomExecutorPlaywright:
                     timezone_id="Europe/Rome",
                 )
                 self.page = self.ctx.new_page()
-                
+
                 # Bypass WebDriver anche su Chromium standalone
                 self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                self.logger.info("Standalone Chromium initialized with Stealth Patches")
+                # HARDWARE SPOOFING
+                self.page.add_init_script(HARDWARE_SPOOF_JS)
+                self.logger.info("Standalone Chromium initialized with Stealth + Hardware Spoofing")
 
             self._initialized = True
             return True
@@ -191,8 +322,206 @@ class DomExecutorPlaywright:
             self.logger.error(f"Failed to initialize browser: {e}")
             return False
 
+    # ------------------------------------------------------------------
+    #  Stealth: Human Warmup
+    # ------------------------------------------------------------------
+    def human_warmup(self):
+        """Simulate human warm-up after page load: scroll, move mouse, idle.
+        Makes the browser fingerprint look natural before any interaction."""
+        if not self.page:
+            return
+        profile = self._profile
+        actions = profile.get("warmup_actions", 3)
+
+        self.logger.info(f"[Stealth] Human warmup ({actions} actions, mode={self._stealth_mode})")
+
+        for _ in range(actions):
+            action = random.choice(["scroll", "move", "idle"])
+            try:
+                if action == "scroll":
+                    delta = random.randint(-200, 200)
+                    self.page.mouse.wheel(0, delta)
+                    time.sleep(random.uniform(0.3, 0.8))
+                elif action == "move":
+                    x = random.randint(100, 1200)
+                    y = random.randint(100, 600)
+                    self.page.mouse.move(x, y, steps=random.randint(5, 15))
+                    time.sleep(random.uniform(0.2, 0.6))
+                else:  # idle
+                    time.sleep(random.uniform(0.5, 1.5))
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    #  Stealth: Simulate Human Curiosity
+    # ------------------------------------------------------------------
+    def simulate_human_curiosity(self):
+        """Random scrolling, fake hovers, idle micro-movements.
+        Call before important actions to look like a real user exploring."""
+        if not self.page:
+            return
+        self.logger.info("[Stealth] Simulating human curiosity...")
+
+        num_actions = random.randint(2, 5)
+        for _ in range(num_actions):
+            action = random.choice(["scroll_down", "scroll_up", "hover_random", "micro_move", "pause"])
+            try:
+                if action == "scroll_down":
+                    self.page.mouse.wheel(0, random.randint(100, 400))
+                    time.sleep(random.uniform(0.4, 1.0))
+                elif action == "scroll_up":
+                    self.page.mouse.wheel(0, -random.randint(50, 200))
+                    time.sleep(random.uniform(0.3, 0.8))
+                elif action == "hover_random":
+                    # Hover over a random visible element
+                    x = random.randint(150, 1100)
+                    y = random.randint(100, 500)
+                    self.page.mouse.move(x, y, steps=random.randint(10, 25))
+                    time.sleep(random.uniform(0.5, 1.2))
+                elif action == "micro_move":
+                    # Tiny mouse movements (idle fidgeting)
+                    for _ in range(random.randint(3, 8)):
+                        dx = random.uniform(-5, 5)
+                        dy = random.uniform(-5, 5)
+                        try:
+                            self.page.mouse.move(
+                                random.randint(300, 800) + dx,
+                                random.randint(200, 500) + dy
+                            )
+                        except Exception:
+                            pass
+                        time.sleep(random.uniform(0.05, 0.15))
+                else:  # pause
+                    time.sleep(random.uniform(0.8, 2.0))
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    #  Stealth: Smart Human Wait
+    # ------------------------------------------------------------------
+    def human_wait_for(self, selector, timeout=10000):
+        """Wait for element with human reaction time delay added."""
+        if not self.page:
+            return None
+        try:
+            loc = self.page.locator(selector)
+            loc.first.wait_for(state="visible", timeout=timeout)
+            # Human reaction time: 150-400ms
+            time.sleep(random.uniform(0.15, 0.4))
+            return loc.first
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    #  Stealth: Human Typing (biological rhythm)
+    # ------------------------------------------------------------------
+    def human_type(self, text):
+        """Type text with per-character delay simulating biological rhythm."""
+        if not self.page:
+            return
+        profile = self._profile
+        for char in text:
+            self.page.keyboard.type(char)
+            delay = random.uniform(profile["type_delay_min"], profile["type_delay_max"])
+            # Occasional longer pause (thinking)
+            if random.random() < 0.05:
+                delay += random.uniform(0.3, 0.8)
+            time.sleep(delay)
+
+    # ------------------------------------------------------------------
+    #  Anti-HoneyPot: Vision-Validated Click
+    # ------------------------------------------------------------------
+    def vision_validated_click(self, selector, element_description="", vision_learner=None):
+        """Click only after AI vision confirms the element is safe (not a honeypot).
+        Falls back to normal click if vision is unavailable."""
+        if not self._ensure_browser():
+            return False
+
+        loc = self.page.locator(selector)
+        try:
+            loc.first.wait_for(state="visible", timeout=7000)
+        except Exception:
+            self.logger.warning(f"[AntiHoneyPot] Element not visible: {selector}")
+            return False
+
+        # If vision learner available, validate before clicking
+        if vision_learner and element_description:
+            try:
+                screenshot_b64 = self.take_screenshot_b64()
+                if screenshot_b64:
+                    prompt = (
+                        f"Analizza questo screenshot. L'elemento '{element_description}' "
+                        f"con selettore '{selector}' e' sicuro da cliccare? "
+                        f"Potrebbe essere un honeypot o un elemento nascosto/trappola? "
+                        f"Rispondi SOLO 'SAFE' o 'DANGER' seguito da una breve motivazione."
+                    )
+                    result = vision_learner.understand_image(screenshot_b64, prompt=prompt, context="anti-honeypot")
+                    response_text = str(result) if result else ""
+                    if "DANGER" in response_text.upper():
+                        self.logger.warning(f"[AntiHoneyPot] DANGER detected for {selector}: {response_text}")
+                        return False
+                    self.logger.info(f"[AntiHoneyPot] Element validated as SAFE: {selector}")
+            except Exception as e:
+                self.logger.warning(f"[AntiHoneyPot] Vision check failed, proceeding: {e}")
+
+        # Proceed with human click
+        profile = self._profile
+        human_delay(profile["delay_min"], profile["delay_max"])
+        x, y = human_move_to_element(self.page, loc.first, mode=self._stealth_mode)
+        if x and y:
+            human_delay(0.1, 0.3)
+            self.page.mouse.down()
+            time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
+            self.page.mouse.up()
+            return True
+        else:
+            loc.first.click()
+            return True
+
+    # ------------------------------------------------------------------
+    #  DOM Snapshot
+    # ------------------------------------------------------------------
+    def get_dom_snapshot(self) -> str:
+        """Get cleaned DOM snapshot: removes script/style/svg, max 20k chars."""
+        if not self.page:
+            return ""
+        try:
+            html = self.page.evaluate("""() => {
+                const clone = document.documentElement.cloneNode(true);
+                // Remove noisy elements
+                const remove = clone.querySelectorAll('script, style, svg, noscript, link[rel=stylesheet]');
+                remove.forEach(el => el.remove());
+                let html = clone.outerHTML;
+                // Truncate to 20000 chars
+                if (html.length > 20000) {
+                    html = html.substring(0, 20000) + '\\n<!-- TRONCATO -->';
+                }
+                return html;
+            }""")
+            return html
+        except Exception as e:
+            self.logger.error(f"DOM snapshot failed: {e}")
+            return ""
+
+    # ------------------------------------------------------------------
+    #  Screenshot to Base64
+    # ------------------------------------------------------------------
+    def take_screenshot_b64(self) -> str:
+        """Take a screenshot and return it as base64-encoded PNG string."""
+        if not self.page:
+            return ""
+        try:
+            screenshot_bytes = self.page.screenshot(type="png")
+            return base64.b64encode(screenshot_bytes).decode("utf-8")
+        except Exception as e:
+            self.logger.error(f"Screenshot failed: {e}")
+            return ""
+
+    # ------------------------------------------------------------------
+    #  Core: Place Bet
+    # ------------------------------------------------------------------
     def place_bet(self, selectors):
-        """Place a bet using Human-Style interaction (Mouse movements + Split Click)."""
+        """Place a bet using Human-Style interaction (Bezier + Split Click)."""
         if not self.allow_place:
             self.logger.warning("BETS ARE DISABLED (allow_place=False). Skipping.")
             return False
@@ -205,27 +534,31 @@ class DomExecutorPlaywright:
             btn = self.page.locator(btn_selector)
             btn.wait_for(state="visible", timeout=7000)
 
-            # --- LOGICA GHOST MODE ---
-            self.logger.info("Simulating human movement to bet button...")
-            
-            # 1. Delay di esitazione pre-movimento
-            human_delay(0.6, 1.3)
-            
-            # 2. Movimento fluido verso l'elemento
-            x, y = human_move_to_element(self.page, btn)
-            
+            profile = self._profile
+            self.logger.info(f"Simulating human movement to bet button (mode={self._stealth_mode})...")
+
+            # 1. Simulate curiosity before the big action
+            if self._stealth_mode == "slow":
+                self.simulate_human_curiosity()
+
+            # 2. Delay di esitazione pre-movimento
+            human_delay(profile["delay_min"], profile["delay_max"])
+
+            # 3. Bezier movement to element
+            x, y = human_move_to_element(self.page, btn, mode=self._stealth_mode)
+
             if x and y:
-                # 3. Micro-esitazione pre-click (occhi puntati sul tasto)
-                human_delay(0.2, 0.5)
-                
-                # 4. Click umano: down -> micro-pausa -> up
+                # 4. Micro-esitazione pre-click
+                human_delay(0.1, 0.3)
+
+                # 5. Click umano: down -> micro-pausa -> up
                 self.page.mouse.down()
-                time.sleep(random.uniform(0.06, 0.18)) # Tempo di pressione fisica
+                time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
                 self.page.mouse.up()
-                
+
                 self.logger.info("BET PLACED SUCCESSFULLY (Human Interaction)!")
                 return True
-            
+
             return False
         except Exception as e:
             self.logger.error(f"Failed to place bet: {e}")
@@ -244,12 +577,13 @@ class DomExecutorPlaywright:
         try:
             loc = self.page.locator(selector)
             loc.first.wait_for(state="visible", timeout=timeout)
-            human_delay(0.3, 0.8)
-            x, y = human_move_to_element(self.page, loc.first)
+            profile = self._profile
+            human_delay(profile["delay_min"] * 0.5, profile["delay_max"] * 0.5)
+            x, y = human_move_to_element(self.page, loc.first, mode=self._stealth_mode)
             if x and y:
                 human_delay(0.1, 0.3)
                 self.page.mouse.down()
-                time.sleep(random.uniform(0.05, 0.15))
+                time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
                 self.page.mouse.up()
             else:
                 loc.first.click()
@@ -262,12 +596,13 @@ class DomExecutorPlaywright:
         """Wait for locator to be visible, then click with human behavior."""
         try:
             locator.wait_for(state="visible", timeout=timeout)
-            human_delay(0.3, 0.8)
-            x, y = human_move_to_element(self.page, locator)
+            profile = self._profile
+            human_delay(profile["delay_min"] * 0.5, profile["delay_max"] * 0.5)
+            x, y = human_move_to_element(self.page, locator, mode=self._stealth_mode)
             if x and y:
                 human_delay(0.1, 0.3)
                 self.page.mouse.down()
-                time.sleep(random.uniform(0.05, 0.15))
+                time.sleep(random.uniform(profile["click_hold_min"], profile["click_hold_max"]))
                 self.page.mouse.up()
             else:
                 locator.click()
@@ -277,12 +612,14 @@ class DomExecutorPlaywright:
             return False
 
     def _safe_fill(self, selector, text, timeout=10000):
-        """Wait for input to be visible, then fill. Returns True on success."""
+        """Wait for input to be visible, then fill with human typing. Returns True on success."""
         try:
             loc = self.page.locator(selector)
             loc.first.wait_for(state="visible", timeout=timeout)
             human_delay(0.2, 0.5)
-            loc.first.fill(text)
+            # Use human_type for biological rhythm
+            loc.first.focus()
+            self.human_type(text)
             return True
         except Exception as e:
             self.logger.warning(f"Fill failed for '{selector}': {e}")
@@ -326,6 +663,7 @@ class DomExecutorPlaywright:
             try:
                 self.page = self.ctx.new_page()
                 self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                self.page.add_init_script(HARDWARE_SPOOF_JS)
                 self.page.goto("https://www.bet365.it/#/HO/", timeout=30000)
                 self._wait_for_page_ready()
                 self.logger.info("Page recovered successfully")
@@ -346,6 +684,9 @@ class DomExecutorPlaywright:
             self.logger.info("Navigating to site...")
             self.page.goto("https://www.bet365.it/#/HO/", timeout=30000)
             self._wait_for_page_ready()
+
+            # Warmup after page load
+            self.human_warmup()
 
             login_btn = self.page.locator("text=Login")
             if login_btn.count() == 0:
@@ -371,7 +712,8 @@ class DomExecutorPlaywright:
             if pin_input.count() > 0:
                 self.logger.info("PIN login detected. Entering PIN...")
                 for digit in self.pin:
-                    human_delay(0.1, 0.3)
+                    profile = self._profile
+                    time.sleep(random.uniform(profile["type_delay_min"], profile["type_delay_max"]))
                     self.page.keyboard.type(digit)
             elif accedi_btn.count() > 0:
                 self.logger.info("Credential login...")
@@ -433,6 +775,10 @@ class DomExecutorPlaywright:
 
         def _do_navigate():
             self.logger.info(f"Searching for match: {teams}")
+
+            # Simulate curiosity before searching
+            self.simulate_human_curiosity()
+
             search_btn_sel = selectors.get("search_button", ".s-SearchButton")
             search_input_sel = selectors.get("search_input", "input.s-SearchInput")
 

@@ -1,6 +1,7 @@
 """
-SuperAgent Desktop App - PySide6 Multi-Tab UI
-Production-grade: Signal routing, RPAWorker queue, ConfigValidator, Dark Theme.
+SuperAgent Desktop App V3 - PySide6 Multi-Tab UI
+Production-grade: Signal routing, RPAWorker queue, TrainerTab with memory,
+Stealth slider, ConfigValidator, Dark Theme, Controller integration.
 """
 import os
 import sys
@@ -75,6 +76,33 @@ class AIWorker(QThread):
                 self.response_ready.emit(json.dumps(result, indent=2, ensure_ascii=False))
             else:
                 self.response_ready.emit("No response from AI.")
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
+# ---------------------------------------------------------------------------
+#  Trainer Worker — AI with memory context (for TrainerTab)
+# ---------------------------------------------------------------------------
+class TrainerWorker(QThread):
+    """Runs AI trainer queries off the main thread with memory context."""
+    response_ready = Signal(str)
+    error_occurred = Signal(str)
+
+    def __init__(self, controller, question, include_dom=False, include_screenshot=False):
+        super().__init__()
+        self.controller = controller
+        self.question = question
+        self.include_dom = include_dom
+        self.include_screenshot = include_screenshot
+
+    def run(self):
+        try:
+            result = self.controller.ask_trainer(
+                self.question,
+                include_dom=self.include_dom,
+                include_screenshot=self.include_screenshot,
+            )
+            self.response_ready.emit(result or "Nessuna risposta.")
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -225,6 +253,116 @@ class ChatTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+#  Trainer Tab — AI Chat with Memory + DOM/Screenshot context
+# ---------------------------------------------------------------------------
+class TrainerTab(QWidget):
+    """AI Trainer with conversation memory and optional DOM/Screenshot context."""
+
+    def __init__(self, controller=None, logger=None, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self.logger = logger
+        self._workers = []
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        title = QLabel("AI Trainer")
+        title.setFont(QFont("Arial", 16, QFont.Bold))
+        layout.addWidget(title)
+
+        # Chat display
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.chat_display.setStyleSheet("QTextEdit { font-family: 'Consolas', monospace; }")
+        layout.addWidget(self.chat_display)
+
+        # Context options
+        ctx_layout = QHBoxLayout()
+        self.include_dom = QCheckBox("Includi DOM")
+        self.include_dom.setToolTip("Allega snapshot DOM della pagina corrente")
+        ctx_layout.addWidget(self.include_dom)
+
+        self.include_screenshot = QCheckBox("Includi Screenshot")
+        self.include_screenshot.setToolTip("Allega screenshot della pagina corrente")
+        ctx_layout.addWidget(self.include_screenshot)
+
+        self.clear_memory_btn = QPushButton("Cancella Memoria")
+        self.clear_memory_btn.clicked.connect(self._clear_memory)
+        ctx_layout.addWidget(self.clear_memory_btn)
+
+        ctx_layout.addStretch()
+        layout.addLayout(ctx_layout)
+
+        # Input
+        input_layout = QHBoxLayout()
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("Chiedi all'AI Trainer (con memoria)...")
+        self.chat_input.returnPressed.connect(self.send_message)
+        self.send_btn = QPushButton("Invia")
+        self.send_btn.clicked.connect(self.send_message)
+        input_layout.addWidget(self.chat_input)
+        input_layout.addWidget(self.send_btn)
+        layout.addLayout(input_layout)
+
+        # Memory indicator
+        self.memory_label = QLabel("Memoria: 0 messaggi")
+        self.memory_label.setStyleSheet("color: #888;")
+        layout.addWidget(self.memory_label)
+
+    def send_message(self):
+        text = self.chat_input.text().strip()
+        if not text:
+            return
+        self.chat_display.append(f"<b>Tu:</b> {text}")
+        self.chat_input.clear()
+
+        if not self.controller:
+            self.chat_display.append("<i>Controller non disponibile.</i>")
+            return
+
+        self.send_btn.setEnabled(False)
+        worker = TrainerWorker(
+            self.controller, text,
+            include_dom=self.include_dom.isChecked(),
+            include_screenshot=self.include_screenshot.isChecked(),
+        )
+        worker.response_ready.connect(self._on_response)
+        worker.error_occurred.connect(self._on_error)
+        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        self._workers.append(worker)
+        worker.start()
+
+    def _on_response(self, text):
+        self.chat_display.append(f"<b>AI Trainer:</b><pre>{text}</pre>")
+        self.send_btn.setEnabled(True)
+        self._update_memory_label()
+
+    def _on_error(self, err):
+        self.chat_display.append(f"<span style='color:red;'>Errore: {err}</span>")
+        self.send_btn.setEnabled(True)
+
+    def _cleanup_worker(self, w):
+        if w in self._workers:
+            self._workers.remove(w)
+        w.deleteLater()
+
+    def _clear_memory(self):
+        if self.controller:
+            self.controller.clear_trainer_memory()
+        self.chat_display.append("<i>--- Memoria conversazione cancellata ---</i>")
+        self._update_memory_label()
+
+    def _update_memory_label(self):
+        if self.controller and self.controller.trainer:
+            count = len(self.controller.trainer.memory)
+            self.memory_label.setText(f"Memoria: {count} messaggi")
+        else:
+            self.memory_label.setText("Memoria: N/A")
+
+
+# ---------------------------------------------------------------------------
 #  RPA Monitor Tab
 # ---------------------------------------------------------------------------
 class RPAMonitorTab(QWidget):
@@ -285,11 +423,13 @@ class RPAMonitorTab(QWidget):
 #  Statistics Tab
 # ---------------------------------------------------------------------------
 class StatsTab(QWidget):
-    def __init__(self, telegram_learner=None, logger=None, monitor=None, parent=None):
+    def __init__(self, telegram_learner=None, logger=None, monitor=None,
+                 controller=None, parent=None):
         super().__init__(parent)
         self.telegram_learner = telegram_learner
         self.logger = logger
         self.monitor = monitor
+        self.controller = controller
         self._init_ui()
 
     def _init_ui(self):
@@ -316,6 +456,18 @@ class StatsTab(QWidget):
         else:
             lines.append("Telegram learner not available.")
 
+        # Controller stats
+        if self.controller:
+            cstats = self.controller.get_stats()
+            lines.append(f"\n=== Controller V3 ===")
+            lines.append(f"  State: {cstats.get('state', 'N/A')}")
+            lines.append(f"  Signals received: {cstats.get('signals_received', 0)}")
+            lines.append(f"  Bets total: {cstats.get('bets_total', 0)}")
+            lines.append(f"  Bets placed: {cstats.get('bets_placed', 0)}")
+            lines.append(f"  Bets failed: {cstats.get('bets_failed', 0)}")
+            uptime_h = cstats.get('uptime_s', 0) / 3600
+            lines.append(f"  Uptime: {uptime_h:.1f}h")
+
         # HealthMonitor info
         if self.monitor:
             elapsed = time.time() - self.monitor.last_heartbeat
@@ -340,13 +492,16 @@ class StatsTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
-#  Settings Tab
+#  Settings Tab (with Stealth slider)
 # ---------------------------------------------------------------------------
 class SettingsTab(QWidget):
-    def __init__(self, config=None, logger=None, parent=None):
+    stealth_changed = Signal(str)  # emitted when stealth mode changes
+
+    def __init__(self, config=None, logger=None, controller=None, parent=None):
         super().__init__(parent)
         self.config = config or {}
         self.logger = logger
+        self.controller = controller
         self._init_ui()
 
     def _init_ui(self):
@@ -374,12 +529,32 @@ class SettingsTab(QWidget):
         self.theme_combo.setCurrentText(self.config.get("ui", {}).get("theme", "dark"))
         form.addRow("Theme:", self.theme_combo)
 
+        # --- Stealth Mode Slider ---
+        self.stealth_combo = QComboBox()
+        self.stealth_combo.addItems(["Umano Lento", "Bilanciato", "Pro (Live Mode)"])
+        # Map display names to internal keys
+        stealth_map = {"slow": 0, "balanced": 1, "pro": 2}
+        current_stealth = self.config.get("rpa", {}).get("stealth_mode", "balanced")
+        self.stealth_combo.setCurrentIndex(stealth_map.get(current_stealth, 1))
+        self.stealth_combo.currentIndexChanged.connect(self._on_stealth_changed)
+        form.addRow("Stealth Mode:", self.stealth_combo)
+
         layout.addLayout(form)
 
         save_btn = QPushButton("Save Settings")
         save_btn.clicked.connect(self.save_settings)
         layout.addWidget(save_btn)
         layout.addStretch()
+
+    def _stealth_key(self) -> str:
+        """Convert combo index to internal stealth key."""
+        return ["slow", "balanced", "pro"][self.stealth_combo.currentIndex()]
+
+    def _on_stealth_changed(self, index):
+        mode = ["slow", "balanced", "pro"][index]
+        self.stealth_changed.emit(mode)
+        if self.controller:
+            self.controller.set_stealth_mode(mode)
 
     def save_settings(self):
         import yaml
@@ -390,6 +565,7 @@ class SettingsTab(QWidget):
             cfg.setdefault("rpa", {})["enabled"] = self.rpa_enabled.isChecked()
             cfg["rpa"]["autobet"] = self.autobet.isChecked()
             cfg["rpa"]["pin"] = self.pin_input.text()
+            cfg["rpa"]["stealth_mode"] = self._stealth_key()
             cfg.setdefault("ui", {})["theme"] = self.theme_combo.currentText()
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(cfg, f, default_flow_style=False)
@@ -403,6 +579,7 @@ class SettingsTab(QWidget):
             "autobet": self.autobet.isChecked(),
             "pin": self.pin_input.text(),
             "theme": self.theme_combo.currentText(),
+            "stealth_mode": self._stealth_key(),
         }
 
 
@@ -413,7 +590,8 @@ class MainWindow(QMainWindow):
     """Central window — owns all tabs and coordinates signal routing."""
 
     def __init__(self, vision=None, telegram_learner=None, rpa_healer=None,
-                 logger=None, executor=None, config=None, monitor=None):
+                 logger=None, executor=None, config=None, monitor=None,
+                 controller=None):
         super().__init__()
         self.vision = vision
         self.telegram_learner = telegram_learner
@@ -422,8 +600,9 @@ class MainWindow(QMainWindow):
         self.executor = executor
         self.config = config or {}
         self.monitor = monitor  # HealthMonitor
+        self.controller = controller  # SuperAgentController V3
 
-        self.setWindowTitle("SuperAgent H24")
+        self.setWindowTitle("SuperAgent H24 V3")
         self.setMinimumSize(1100, 750)
 
         # --- RPA Worker (thread-safe bet queue) ---
@@ -442,11 +621,15 @@ class MainWindow(QMainWindow):
         self.chat_tab = ChatTab(vision_learner=vision, logger=logger)
         self.tabs.addTab(self.chat_tab, "Chat")
 
-        # 2. RPA Monitor
+        # 2. AI Trainer (with memory)
+        self.trainer_tab = TrainerTab(controller=self.controller, logger=logger)
+        self.tabs.addTab(self.trainer_tab, "AI Trainer")
+
+        # 3. RPA Monitor
         self.rpa_tab = RPAMonitorTab(executor=executor, rpa_worker=self.rpa_worker, logger=logger)
         self.tabs.addTab(self.rpa_tab, "RPA Monitor")
 
-        # 3. Telegram
+        # 4. Telegram
         from ui.telegram_tab import TelegramTab
         self.telegram_tab = TelegramTab(
             agent=vision,
@@ -457,22 +640,43 @@ class MainWindow(QMainWindow):
         )
         self.tabs.addTab(self.telegram_tab, "Telegram")
 
-        # Connect TelegramTab's widget-level signal_received → process_new_signal
-        # This is the clean, stable connection (no monkey-patching needed)
+        # Connect TelegramTab's widget-level signal_received -> process_new_signal
         self.telegram_tab.signal_received.connect(self.process_new_signal)
 
-        # 4. Statistics
-        self.stats_tab = StatsTab(telegram_learner=telegram_learner, logger=logger, monitor=self.monitor)
+        # 5. Statistics
+        self.stats_tab = StatsTab(
+            telegram_learner=telegram_learner, logger=logger,
+            monitor=self.monitor, controller=self.controller,
+        )
         self.tabs.addTab(self.stats_tab, "Statistics")
 
-        # 5. Settings
-        self.settings_tab = SettingsTab(config=self.config, logger=logger)
+        # 6. Settings (with stealth slider)
+        self.settings_tab = SettingsTab(
+            config=self.config, logger=logger, controller=self.controller,
+        )
         self.tabs.addTab(self.settings_tab, "Settings")
+
+        # Connect stealth mode changes to executor
+        self.settings_tab.stealth_changed.connect(self._on_stealth_changed)
 
         # --- Heartbeat timer (update UI with uptime) ---
         self._heartbeat_timer = QTimer(self)
         self._heartbeat_timer.timeout.connect(self._update_heartbeat)
         self._heartbeat_timer.start(10000)  # every 10 s
+
+        # --- State label in status bar ---
+        self._state_label = QLabel("State: BOOT")
+        self.statusBar().addPermanentWidget(self._state_label)
+        self._state_timer = QTimer(self)
+        self._state_timer.timeout.connect(self._update_state_label)
+        self._state_timer.start(2000)
+
+    @Slot(str)
+    def _on_stealth_changed(self, mode: str):
+        if self.executor and hasattr(self.executor, 'stealth_mode'):
+            self.executor.stealth_mode = mode
+        if self.logger:
+            self.logger.info(f"[UI] Stealth mode changed to: {mode}")
 
     @Slot(dict)
     def process_new_signal(self, data):
@@ -497,6 +701,12 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _update_state_label(self):
+        """Update status bar with current agent state."""
+        if self.controller:
+            state = self.controller.get_state()
+            self._state_label.setText(f"State: {state}")
+
     def closeEvent(self, event):
         """Graceful shutdown on window close."""
         if self.logger:
@@ -512,6 +722,13 @@ class MainWindow(QMainWindow):
         if hasattr(self.telegram_tab, 'disconnect_telegram'):
             try:
                 self.telegram_tab.disconnect_telegram()
+            except Exception:
+                pass
+
+        # Shutdown controller
+        if self.controller:
+            try:
+                self.controller.shutdown()
             except Exception:
                 pass
 
@@ -559,7 +776,8 @@ def apply_dark_theme(app: QApplication):
 #  run_app  — entry point called from main.py
 # ---------------------------------------------------------------------------
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
-            logger=None, executor=None, config=None, monitor=None):
+            logger=None, executor=None, config=None, monitor=None,
+            controller=None):
     """Create QApplication, apply theme, show MainWindow, exec."""
     app = QApplication(sys.argv)
     app.setApplicationName("SuperAgent")
@@ -575,6 +793,7 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
         executor=executor,
         config=config,
         monitor=monitor,
+        controller=controller,
     )
     window.show()
     return app.exec()
