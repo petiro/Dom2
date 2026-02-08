@@ -48,6 +48,7 @@ class AITrainerEngine:
     """
 
     MAX_MEMORY = 10  # last N conversation turns
+    DOM_MAX_LENGTH = 20000  # max chars for DOM snapshot truncation
 
     def __init__(self, vision_learner=None, logger=None):
         self.vision = vision_learner
@@ -101,8 +102,8 @@ class AITrainerEngine:
         # Add DOM snapshot if provided
         if dom_snapshot:
             # Truncate if too long
-            if len(dom_snapshot) > 20000:
-                dom_snapshot = dom_snapshot[:20000] + "\n... [TRONCATO]"
+            if len(dom_snapshot) > self.DOM_MAX_LENGTH:
+                dom_snapshot = dom_snapshot[:self.DOM_MAX_LENGTH] + "\n... [TRONCATO]"
             context_parts.append(f"--- DOM Snapshot ---\n{dom_snapshot}\n--- Fine DOM ---\n")
 
         # Add screenshot description if provided
@@ -268,12 +269,12 @@ class AITrainerEngine:
             if screenshot:
                 result = self.vision.understand_image(
                     screenshot,
-                    prompt=f"{self._system_prompt}\n\nDOM:\n{dom[:10000]}\n\n{prompt}",
+                    prompt=f"{self._system_prompt}\n\nDOM:\n{dom[:self.DOM_MAX_LENGTH // 2]}\n\n{prompt}",
                     context="selector-healing"
                 )
             else:
                 result = self.vision.understand_text(
-                    f"{self._system_prompt}\n\nDOM:\n{dom[:15000]}\n\n{prompt}",
+                    f"{self._system_prompt}\n\nDOM:\n{dom[:self.DOM_MAX_LENGTH]}\n\n{prompt}",
                     context="selector-healing"
                 )
 

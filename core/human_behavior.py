@@ -116,7 +116,7 @@ class HumanInput:
                 self.page.mouse.up()
                 return True
         except Exception:
-            pass
+            return False
         return False
 
     def click_locator(self, locator):
@@ -130,7 +130,7 @@ class HumanInput:
                 self.page.mouse.up()
                 return True
         except Exception:
-            pass
+            return False
         return False
 
     # ------------------------------------------------------------------

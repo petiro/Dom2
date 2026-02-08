@@ -248,8 +248,8 @@ class SuperAgentController(QObject):
                     self.state_manager.transition(AgentState.RECOVERING)
                     with self._executor_lock:
                         self.executor.recover_session()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._log(f"[Controller] Recovery during signal processing failed: {e}")
             if not self._stop_event.is_set():
                 self.state_manager.transition(AgentState.IDLE)
             return False

@@ -112,17 +112,19 @@ class TrainerWorker(QThread):
 # ---------------------------------------------------------------------------
 class RPAWorker(QThread):
     """Processes betting signals from a thread-safe queue.
+    V4: Routes ALL signals through Controller (single point of coordination).
     Runs in its own thread so the UI never blocks."""
     bet_placed = Signal(dict)   # emitted after a bet attempt
     bet_error = Signal(str)     # emitted on failure
 
-    def __init__(self, executor, logger=None, monitor=None):
+    def __init__(self, executor, logger=None, monitor=None, controller=None):
         super().__init__()
         self._queue = queue.Queue()
         self._running = True
         self.executor = executor
         self.logger = logger
         self.monitor = monitor  # HealthMonitor for heartbeat
+        self.controller = controller  # V4: Central orchestrator
 
     # --- public API (called from any thread) ---
     def enqueue_bet(self, signal_data: dict):
@@ -152,36 +154,39 @@ class RPAWorker(QThread):
                 self.bet_error.emit(str(e))
 
     def _process_signal(self, signal_data: dict):
-        if not self.executor:
-            self.bet_error.emit("Executor not available")
-            return
-        # Heartbeat: prove RPA thread is alive
-        if self.monitor:
-            self.monitor.heartbeat()
-
         teams = signal_data.get("teams", "")
         market = signal_data.get("market", "")
         if self.logger:
             self.logger.info(f"[RPAWorker] Processing: {teams} / {market}")
 
-        selectors = self.executor._load_selectors()
+        # V4: Route through Controller (single point of coordination)
+        if self.controller:
+            result = self.controller.handle_signal(signal_data)
+            signal_data["placed"] = result
+            signal_data["timestamp"] = datetime.now().isoformat()
+            if result:
+                self.bet_placed.emit(signal_data)
+            else:
+                self.bet_error.emit(f"Signal failed: {teams} / {market}")
+            return
 
-        # 1. Ensure login
+        # Fallback: direct executor (legacy compat, should not happen in V4)
+        if not self.executor:
+            self.bet_error.emit("Executor not available")
+            return
+        if self.monitor:
+            self.monitor.heartbeat()
+
+        selectors = self.executor._load_selectors()
         if not self.executor.ensure_login(selectors):
             self.bet_error.emit("Login failed")
             return
-
-        # 2. Navigate to match
         if teams and not self.executor.navigate_to_match(teams, selectors):
             self.bet_error.emit(f"Could not find match: {teams}")
             return
-
-        # 3. Select market
         if market and not self.executor.select_market(market, selectors):
             self.bet_error.emit(f"Could not select market: {market}")
             return
-
-        # 4. Place bet
         result = self.executor.place_bet(selectors)
         signal_data["placed"] = result
         signal_data["timestamp"] = datetime.now().isoformat()
@@ -625,11 +630,12 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SuperAgent H24 V4")
         self.setMinimumSize(1100, 750)
 
-        # --- RPA Worker (thread-safe bet queue) ---
+        # --- RPA Worker (thread-safe bet queue, routes through Controller) ---
         self.rpa_worker = None
-        if self.executor:
+        if self.executor or self.controller:
             self.rpa_worker = RPAWorker(
-                executor=self.executor, logger=self.logger, monitor=self.monitor
+                executor=self.executor, logger=self.logger,
+                monitor=self.monitor, controller=self.controller,
             )
             self.rpa_worker.start()
 

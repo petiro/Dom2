@@ -123,7 +123,7 @@ def close_chrome():
             subprocess.run(["pkill", "-f", "chrome"], capture_output=True, timeout=5)
         time.sleep(1)
     except Exception:
-        pass
+        pass  # Best-effort Chrome cleanup — errors are non-critical
 
 
 def _detect_chrome_path():
@@ -430,8 +430,8 @@ class DomExecutorPlaywright:
                     time.sleep(random.uniform(0.2, 0.6))
                 else:  # idle
                     time.sleep(random.uniform(0.5, 1.5))
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"[Stealth] Warmup action failed: {e}")
 
     # ------------------------------------------------------------------
     #  Stealth: Simulate Human Curiosity
@@ -470,12 +470,12 @@ class DomExecutorPlaywright:
                                 random.randint(200, 500) + dy
                             )
                         except Exception:
-                            pass
+                            break  # page likely dead, stop micro-moves
                         time.sleep(random.uniform(0.05, 0.15))
                 else:  # pause
                     time.sleep(random.uniform(0.8, 2.0))
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"[Stealth] Curiosity action failed: {e}")
 
     # ------------------------------------------------------------------
     #  Stealth: Smart Human Wait
@@ -628,8 +628,8 @@ class DomExecutorPlaywright:
                 try:
                     self._safe_click(new_selector)
                     return True
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.logger.warning(f"[SmartClick] Legacy healer click also failed: {e}")
 
         self.logger.error(f"[SmartClick] All attempts failed for: {selector}")
         return False
