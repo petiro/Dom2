@@ -63,6 +63,8 @@ class SuperAgentController(QObject):
         self.vision = None
         self.telegram_learner = None
         self.rpa_healer = None
+        self.watchdog = None  # SystemWatchdog (lifecycle)
+        self._os_human = None  # HumanOS for desktop recovery
 
         # State machine
         self.state_manager = StateManager(logger, initial_state=AgentState.BOOT)
@@ -110,6 +112,24 @@ class SuperAgentController(QObject):
 
     def set_rpa_healer(self, rpa_healer):
         self.rpa_healer = rpa_healer
+
+    def set_watchdog(self, watchdog):
+        """Connect SystemWatchdog and wire its signals to Controller recovery."""
+        self.watchdog = watchdog
+        if watchdog:
+            watchdog.browser_died.connect(self.on_browser_died)
+            watchdog.resource_warning.connect(self._on_resource_warning)
+            self._log("[Controller] SystemWatchdog connected")
+
+    def _init_os_human(self):
+        """Lazy-init HumanOS for desktop-level recovery."""
+        if self._os_human is None:
+            try:
+                from core.os_human_interaction import HumanOS
+                self._os_human = HumanOS(self.logger)
+                self._log("[Controller] HumanOS initialized for desktop recovery")
+            except Exception as e:
+                self.logger.warning(f"[Controller] HumanOS not available: {e}")
 
     # ------------------------------------------------------------------
     #  Boot sequence (V4: with boot lock + async option)
@@ -166,6 +186,74 @@ class SuperAgentController(QObject):
         t = threading.Thread(target=_watchdog, name="cdp-watchdog", daemon=True)
         t.start()
         self._log("[Controller] CDP Watchdog started")
+
+    # ------------------------------------------------------------------
+    #  Watchdog Slots (V4: browser death recovery)
+    # ------------------------------------------------------------------
+    @Slot()
+    def on_browser_died(self):
+        """Called when SystemWatchdog detects Chrome is dead.
+        Triggers full recovery: close executor → HumanOS reopen → CDP reconnect."""
+        if self._stop_event.is_set():
+            return
+        self._log("[Controller] Browser death detected by Watchdog — starting recovery")
+        self.state_manager.set_state(AgentState.RECOVERING)
+
+        def _recover():
+            try:
+                with self._executor_lock:
+                    # 1. Close any dead executor state
+                    if self.executor:
+                        try:
+                            self.executor.close()
+                        except Exception:
+                            pass
+
+                    # 2. Try HumanOS desktop relaunch (Win+D → find icon → doubleClick)
+                    self._init_os_human()
+                    if self._os_human and self._os_human.available:
+                        self._log("[Controller] Reopening Chrome via HumanOS desktop...")
+                        opened = self._os_human.open_browser_from_desktop()
+                        if opened:
+                            self._log("[Controller] Chrome reopened — connecting via CDP...")
+                            import time as _time
+                            _time.sleep(5)  # wait for Chrome to fully start
+                            if self.executor:
+                                success = self.executor.launch_browser_cdp()
+                                if success:
+                                    self._log("[Controller] CDP reconnect successful!")
+                                    if not self._stop_event.is_set():
+                                        self.state_manager.set_state(AgentState.IDLE)
+                                    return
+                                else:
+                                    self._log("[Controller] CDP reconnect failed")
+
+                    # 3. Fallback: standard executor recovery (persistent context)
+                    self._log("[Controller] Falling back to standard session recovery...")
+                    if self.executor:
+                        self.executor.recover_session()
+                        if not self._stop_event.is_set():
+                            self.state_manager.set_state(AgentState.IDLE)
+                        self._log("[Controller] Standard recovery successful")
+
+            except Exception as e:
+                self._log(f"[Controller] Full recovery failed: {e}")
+                self.state_manager.set_state(AgentState.ERROR)
+
+        t = threading.Thread(target=_recover, name="browser-recovery", daemon=True)
+        t.start()
+
+    @Slot(str)
+    def _on_resource_warning(self, msg: str):
+        """Handle resource warnings from SystemWatchdog."""
+        self._log(f"[Watchdog] {msg}")
+        # If executor supports memory_check, trigger it
+        if self.executor and hasattr(self.executor, 'memory_check'):
+            try:
+                with self._executor_lock:
+                    self.executor.memory_check()
+            except Exception as e:
+                self.logger.warning(f"[Controller] Memory check triggered by warning failed: {e}")
 
     # ------------------------------------------------------------------
     #  Signal handling (from Telegram → UI → Controller)
