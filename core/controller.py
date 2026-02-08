@@ -25,6 +25,9 @@ from typing import Optional
 from PySide6.QtCore import QObject, Signal, Slot
 
 from core.state_machine import AgentState, StateManager
+from core.signal_parser import TelegramSignalParser
+from core.money_management import RoserpinaTable
+from core.bet_worker import BetWorker
 
 
 class SuperAgentController(QObject):
@@ -79,6 +82,11 @@ class SuperAgentController(QObject):
         self._signal_lock = threading.Lock()
         self._signal_count = 0
         self._bet_results: list = []
+
+        # Roserpina / Blind Over
+        self.parser = TelegramSignalParser()
+        self.table = RoserpinaTable(table_id=1)  # Default Table 1
+        self.bet_worker = None
 
     # ------------------------------------------------------------------
     #  Internal logging (emits Qt Signal + logger)
@@ -556,6 +564,34 @@ class SuperAgentController(QObject):
         if self.executor and hasattr(self.executor, 'stealth_mode'):
             return self.executor.stealth_mode
         return "balanced"
+
+    # ------------------------------------------------------------------
+    #  Roserpina / Blind Over (Telegram signal → BetWorker)
+    # ------------------------------------------------------------------
+    def handle_telegram_signal(self, text):
+        # 1. Check Pendente
+        if self.table.is_pending:
+            self.log_message.emit("⚠️ Scommessa in corso, segnale ignorato.")
+            return
+
+        # 2. Parsing
+        data = self.parser.parse(text)
+        if not data['match']:
+            return
+
+        # 3. Avvio Thread Scommessa
+        self.table.is_pending = True
+        self.bet_worker = BetWorker(self.table, self.executor, data)
+        self.bet_worker.log.connect(lambda level, msg: self.log_message.emit(msg))
+        self.bet_worker.finished.connect(self.on_bet_complete)
+        self.bet_worker.start()
+
+    def on_bet_complete(self, result):
+        if result["status"] == "placed":
+            self.log_message.emit(f"✅ Bet Piazzata: €{result['stake']}")
+        else:
+            self.table.is_pending = False
+            self.log_message.emit(f"❌ Errore Bet: {result.get('msg')}")
 
     # ------------------------------------------------------------------
     #  Shutdown (V4: graceful with _stop_event)

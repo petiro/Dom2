@@ -29,16 +29,12 @@ jobs:
             --add-data "core;core" ^
             --add-data "ui;ui" ^
             --add-data "data;data" ^
+            --hidden-import core.money_management ^
+            --hidden-import core.bet_worker ^
+            --hidden-import core.signal_parser ^
             --hidden-import cryptography ^
             --hidden-import telethon ^
             --hidden-import pyautogui ^
-            --hidden-import cv2 ^
-            --hidden-import asyncio ^
-            --hidden-import playwright._impl._api_types ^
-            --hidden-import playwright._impl._connection ^
-            --hidden-import playwright._impl._transport ^
-            --hidden-import playwright._impl._dispatcher ^
-            --hidden-import playwright._impl._impl ^
             --collect-all playwright ^
             main.py
 

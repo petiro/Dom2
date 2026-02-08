@@ -12,11 +12,13 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTextEdit, QPushButton, QLabel, QLineEdit, QGroupBox, QTabWidget,
     QTableWidget, QTableWidgetItem, QCheckBox, QMessageBox, QSpinBox,
-    QProgressBar, QComboBox, QFormLayout, QSplitter
+    QProgressBar, QComboBox, QFormLayout, QSplitter, QDoubleSpinBox
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot
 from PySide6.QtGui import QFont, QColor, QPalette
 from datetime import datetime
+
+from core.money_management import RoserpinaTable
 
 # Absolute base dir (EXE-safe)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -609,6 +611,39 @@ class SettingsTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+#  Money Management Tab (Roserpina)
+# ---------------------------------------------------------------------------
+class MoneyTab(QWidget):
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+        layout = QFormLayout()
+
+        self.bankroll = QDoubleSpinBox()
+        self.bankroll.setValue(100.0)
+        self.bankroll.setRange(0, 10000)
+
+        self.target = QDoubleSpinBox()
+        self.target.setValue(3.0)
+
+        btn_save = QPushButton("💾 Aggiorna Roserpina")
+        btn_save.clicked.connect(self.update_config)
+
+        layout.addRow("Bankroll (€):", self.bankroll)
+        layout.addRow("Target (%):", self.target)
+        layout.addRow(btn_save)
+        self.setLayout(layout)
+
+    def update_config(self):
+        # Reinizzializza la tabella con i nuovi parametri
+        self.controller.table = RoserpinaTable(
+            bankroll=self.bankroll.value(),
+            target_pct=self.target.value()
+        )
+        self.controller.log_message.emit("💰 Parametri Roserpina Aggiornati")
+
+
+# ---------------------------------------------------------------------------
 #  Main Window
 # ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -681,6 +716,11 @@ class MainWindow(QMainWindow):
             config=self.config, logger=logger, controller=self.controller,
         )
         self.tabs.addTab(self.settings_tab, "Settings")
+
+        # 7. Money Management (Roserpina)
+        if self.controller:
+            self.money_tab = MoneyTab(self.controller)
+            self.tabs.addTab(self.money_tab, "Money Management")
 
         # Connect stealth mode changes to executor
         self.settings_tab.stealth_changed.connect(self._on_stealth_changed)
