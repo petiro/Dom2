@@ -212,8 +212,8 @@ class SuperAgentController(QObject):
                     if self.executor:
                         try:
                             self.executor.close()
-                        except Exception:
-                            pass
+                        except Exception as close_e:
+                            self.logger.warning(f"[Controller] Error closing dead executor (expected during recovery): {close_e}")
 
                     # 2. Try HumanOS desktop relaunch (Win+D → find icon → doubleClick)
                     self._init_os_human()
@@ -223,9 +223,16 @@ class SuperAgentController(QObject):
                         if opened:
                             self._log("[Controller] Chrome reopened — connecting via CDP...")
                             import time as _time
-                            _time.sleep(5)  # wait for Chrome to fully start
+                            # Poll for CDP connection (up to 10 seconds)
+                            success = False
                             if self.executor:
-                                success = self.executor.launch_browser_cdp()
+                                for _ in range(10):
+                                    if self._stop_event.is_set():
+                                        break
+                                    if self.executor.launch_browser_cdp():
+                                        success = True
+                                        break
+                                    _time.sleep(1)
                                 if success:
                                     self._log("[Controller] CDP reconnect successful!")
                                     if not self._stop_event.is_set():
@@ -314,8 +321,8 @@ class SuperAgentController(QObject):
                                 try:
                                     self.rpa_healer.heal()
                                     selectors = self.executor._load_selectors()
-                                except Exception:
-                                    pass
+                                except Exception as heal_e:
+                                    self.logger.warning(f"[Controller] AI healing attempt failed: {heal_e}")
                                 self.state_manager.set_state(AgentState.NAVIGATING)
 
                     if not success:
