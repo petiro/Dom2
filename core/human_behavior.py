@@ -20,8 +20,9 @@ class HumanInput:
     Must be initialized with a Playwright page object.
     """
 
-    def __init__(self, page):
+    def __init__(self, page, logger=None):
         self.page = page
+        self.logger = logger
         # V4: Persistent mouse state (start near center)
         self.current_x = random.randint(500, 1000)
         self.current_y = random.randint(300, 600)
@@ -115,7 +116,9 @@ class HumanInput:
                 time.sleep(random.uniform(0.05, 0.15))  # Physical press duration
                 self.page.mouse.up()
                 return True
-        except Exception:
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"[HumanInput] click failed for '{selector_str}': {e}")
             return False
         return False
 
@@ -129,7 +132,9 @@ class HumanInput:
                 time.sleep(random.uniform(0.05, 0.15))
                 self.page.mouse.up()
                 return True
-        except Exception:
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"[HumanInput] click_locator failed: {e}")
             return False
         return False
 

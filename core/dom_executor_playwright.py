@@ -637,23 +637,25 @@ class DomExecutorPlaywright:
     # ------------------------------------------------------------------
     #  DOM Snapshot
     # ------------------------------------------------------------------
-    def get_dom_snapshot(self) -> str:
-        """Get cleaned DOM snapshot: removes script/style/svg, max 20k chars."""
+    DOM_MAX_LENGTH = 20000  # max chars for DOM snapshot truncation
+
+    def get_dom_snapshot(self, max_length: int = None) -> str:
+        """Get cleaned DOM snapshot: removes script/style/svg, truncated to max_length chars."""
         if not self.page:
             return ""
+        limit = max_length or self.DOM_MAX_LENGTH
         try:
-            html = self.page.evaluate("""() => {
+            html = self.page.evaluate("""(limit) => {
                 const clone = document.documentElement.cloneNode(true);
                 // Remove noisy elements
                 const remove = clone.querySelectorAll('script, style, svg, noscript, link[rel=stylesheet]');
                 remove.forEach(el => el.remove());
                 let html = clone.outerHTML;
-                // Truncate to 20000 chars
-                if (html.length > 20000) {
-                    html = html.substring(0, 20000) + '\\n<!-- TRONCATO -->';
+                if (html.length > limit) {
+                    html = html.substring(0, limit) + '\\n<!-- TRONCATO -->';
                 }
                 return html;
-            }""")
+            }""", limit)
             return html
         except Exception as e:
             self.logger.error(f"DOM snapshot failed: {e}")
