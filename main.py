@@ -1,6 +1,7 @@
 """
-SuperAgent MERGED - Main Entry Point (Immortality & Singleton Edition)
-Central orchestrator: creates executor singleton, HealthMonitor, injects into UI.
+SuperAgent V3 - Main Entry Point (Immortality + Controller + AI Trainer)
+Central orchestrator: creates executor singleton, HealthMonitor, StateManager,
+AITrainerEngine, SuperAgentController, injects everything into UI.
 """
 import os
 import sys
@@ -15,6 +16,8 @@ sys.path.insert(0, BASE_DIR)
 from ui.desktop_app import run_app, ConfigValidator
 from core.dom_executor_playwright import DomExecutorPlaywright, close_chrome
 from core.health import HealthMonitor
+from core.ai_trainer import AITrainerEngine
+from core.controller import SuperAgentController
 
 # --- MONITORAGGIO HEARTBEAT (global, for backward compat) ---
 last_heartbeat = time.time()
@@ -62,6 +65,10 @@ def create_executor(config, logger, rpa_healer=None):
         use_real_chrome=rpa_cfg.get("use_real_chrome", True),
         chrome_profile=rpa_cfg.get("chrome_profile", "Default"),
     )
+    # Set stealth mode from config
+    stealth = rpa_cfg.get("stealth_mode", "balanced")
+    executor.stealth_mode = stealth
+
     if rpa_healer:
         executor.set_healer(rpa_healer)
     return executor
@@ -72,7 +79,7 @@ def main():
     close_chrome()
 
     logger = setup_logger()
-    logger.info("SUPERAGENT STARTUP (H24 MODE)")
+    logger.info("SUPERAGENT V3 STARTUP (H24 MODE)")
 
     config = load_config()
 
@@ -111,14 +118,35 @@ def main():
     monitor = HealthMonitor(logger, executor)
     monitor.run_forever()   # starts freeze detector, memory guard, maintenance restart
 
-    # 6. AVVIO UI CON INIEZIONE SINGLETON + MONITOR
-    logger.info("Iniezione executor + monitor nella UI...")
+    # 6. AI TRAINER ENGINE — Memory-based conversation + DOM/Screenshot analysis
+    trainer = AITrainerEngine(vision_learner=vision, logger=logger)
+    logger.info("AITrainerEngine initialized")
+
+    # 7. V3 CONTROLLER — Central orchestrator
+    controller = SuperAgentController(logger, config)
+    controller.set_executor(executor)
+    controller.set_trainer(trainer)
+    controller.set_monitor(monitor)
+    controller.set_vision(vision)
+    controller.set_telegram_learner(telegram_learner)
+    controller.set_rpa_healer(rpa_healer)
+    controller.boot()
+    logger.info("SuperAgentController V3 booted — state: IDLE")
+
+    # 8. AVVIO UI CON INIEZIONE SINGLETON + MONITOR + CONTROLLER
+    logger.info("Iniezione executor + monitor + controller nella UI...")
     try:
         sys.exit(run_app(
             vision, telegram_learner, rpa_healer,
-            logger, executor, config, monitor
+            logger, executor, config, monitor,
+            controller,
         ))
     finally:
+        if controller:
+            try:
+                controller.shutdown()
+            except Exception:
+                pass
         if executor:
             try:
                 executor.close()
