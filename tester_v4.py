@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - TEST - %(message)s
 logger = logging.getLogger("CI_RUNNER")
 
 def run_tests():
-    print("🚀 AVVIO TEST AUTOMATICO V4 (CI MODE)...")
+    print(">>> AVVIO TEST AUTOMATICO V4 (CI MODE)...")
     
     try:
         # 1. TEST IMPORTAZIONI

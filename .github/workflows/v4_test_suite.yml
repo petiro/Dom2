@@ -41,4 +41,7 @@ jobs:
         run: python -m playwright install chromium
 
       - name: Run Tester V4
+        env:
+          PYTHONUTF8: 1
+          PYTHONIOENCODING: utf-8
         run: python tester_v4.py
