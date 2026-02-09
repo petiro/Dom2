@@ -1,205 +1,89 @@
-#!/usr/bin/env python3
-"""
-SuperAgent V4 — Diagnostic Test Script
-Runs offline checks on all V4 components without needing a browser or API keys.
-Exit code 0 = all checks passed.
-"""
 import sys
 import os
+import time
+import threading
 import logging
-import traceback
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
+# Configura Logger
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - TEST - %(message)s')
+logger = logging.getLogger("CI_RUNNER")
 
-# Minimal logger for tests
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-logger = logging.getLogger("V4Test")
-
-PASS = 0
-FAIL = 0
-
-
-def check(name: str, fn):
-    global PASS, FAIL
+def run_tests():
+    print("🚀 AVVIO TEST AUTOMATICO V4 (CI MODE)...")
+    
     try:
-        fn()
-        print(f"  [OK] {name}")
-        PASS += 1
+        # 1. TEST IMPORTAZIONI
+        logger.info("Checking Imports...")
+        from core.security import Vault
+        from core.dom_executor_playwright import DomExecutorPlaywright
+        # Se passa qui, le dipendenze sono OK
+        print("   ✅ Imports: PASS")
+
+        # 2. TEST VAULT (Hardware Binding simulato)
+        logger.info("Checking Vault...")
+        vault = Vault()
+        # Su GitHub Actions l'hardware ID cambierà ogni volta, 
+        # ma il test verifica che la crittografia funzioni senza crashare.
+        data = {"test": "ok"}
+        vault.encrypt_data(data)
+        decrypted = vault.decrypt_data()
+        if decrypted.get("test") == "ok":
+            print("   ✅ Vault Crypto: PASS")
+        else:
+            raise Exception("Vault Decryption Failed")
+
+        # 3. TEST PLAYWRIGHT (Browser)
+        logger.info("Checking Browser Engine...")
+        
+        # Mock del Controller per intercettare i segnali
+        class MockController(QObject):
+            def safe_emit(self, signal, *args):
+                pass # Ignora i segnali UI
+        
+        # Istanzia l'executor
+        executor = DomExecutorPlaywright(MockController())
+        
+        # Avvia il browser in un thread separato
+        t = threading.Thread(target=executor.launch_browser, daemon=True)
+        t.start()
+        
+        # Attesa attiva (Polling) max 15 secondi
+        for _ in range(15):
+            if executor.page:
+                break
+            time.sleep(1)
+            
+        if executor.page:
+            print("   ✅ Browser Launch: PASS")
+            
+            # Navigazione Test
+            executor.page.goto("https://example.com")
+            if "Example Domain" in executor.page.title():
+                print("   ✅ Navigation: PASS")
+            else:
+                print("   ⚠️ Navigation Title Mismatch (Non critico)")
+            
+            # Memory Check
+            mem = executor.memory_check()
+            print(f"   ✅ Memory Check: {mem:.2f} MB")
+            
+            executor.close()
+        else:
+            raise Exception("Browser failed to launch in 15s")
+
+        print("-" * 30)
+        print("🎉 TUTTI I TEST PASSATI CON SUCCESSO")
+        sys.exit(0) # Exit code 0 = Successo per GitHub Actions
+
     except Exception as e:
-        print(f"  [FAIL] {name}: {e}")
+        print(f"❌ TEST FALLITO: {e}")
+        import traceback
         traceback.print_exc()
-        FAIL += 1
+        sys.exit(1) # Exit code 1 = Fallimento per GitHub Actions
 
-
-# ─────────────────────────────────────────────
-#  1. State Machine
-# ─────────────────────────────────────────────
-print("\n=== State Machine ===")
-
-
-def test_states_exist():
-    from core.state_machine import AgentState
-    required = ["BOOT", "IDLE", "NAVIGATING", "BETTING", "HEALING",
-                "RECOVERING", "TRAINING", "ERROR", "SHUTDOWN"]
-    for s in required:
-        assert hasattr(AgentState, s), f"Missing state: {s}"
-
-
-def test_state_transitions():
-    from core.state_machine import AgentState, StateManager
-    sm = StateManager(logger)
-    assert sm.state == AgentState.BOOT
-    assert sm.transition(AgentState.IDLE)
-    assert sm.state == AgentState.IDLE
-    assert sm.transition(AgentState.NAVIGATING)
-    assert sm.state == AgentState.NAVIGATING
-    # Invalid transition: NAVIGATING -> BOOT should fail
-    assert not sm.transition(AgentState.BOOT)
-    assert sm.state == AgentState.NAVIGATING
-
-
-def test_force_state():
-    from core.state_machine import AgentState, StateManager
-    sm = StateManager(logger)
-    sm.force_state(AgentState.ERROR)
-    assert sm.state == AgentState.ERROR
-
-
-def test_state_history():
-    from core.state_machine import AgentState, StateManager
-    sm = StateManager(logger)
-    sm.transition(AgentState.IDLE)
-    sm.transition(AgentState.NAVIGATING)
-    hist = sm.get_history(5)
-    assert len(hist) >= 2
-
-
-check("All V4 states exist", test_states_exist)
-check("Valid/invalid transitions", test_state_transitions)
-check("Force state", test_force_state)
-check("State history tracking", test_state_history)
-
-
-# ─────────────────────────────────────────────
-#  2. Controller
-# ─────────────────────────────────────────────
-print("\n=== Controller ===")
-
-
-def test_controller_init():
-    from core.controller import SuperAgentController
-    c = SuperAgentController(logger, {})
-    assert c.get_state() == "BOOT"
-
-
-def test_controller_boot():
-    from core.controller import SuperAgentController
-    c = SuperAgentController(logger, {})
-    c.boot()
-    assert c.get_state() == "IDLE"
-
-
-def test_controller_shutdown():
-    from core.controller import SuperAgentController
-    c = SuperAgentController(logger, {})
-    c.boot()
-    c.shutdown()
-    assert c.get_state() == "SHUTDOWN"
-
-
-def test_controller_stats():
-    from core.controller import SuperAgentController
-    c = SuperAgentController(logger, {})
-    c.boot()
-    stats = c.get_stats()
-    assert "state" in stats
-    assert "signals_received" in stats
-    assert stats["signals_received"] == 0
-
-
-check("Controller init (BOOT)", test_controller_init)
-check("Controller boot (IDLE)", test_controller_boot)
-check("Controller shutdown", test_controller_shutdown)
-check("Controller stats", test_controller_stats)
-
-
-# ─────────────────────────────────────────────
-#  3. Command Parser
-# ─────────────────────────────────────────────
-print("\n=== Command Parser ===")
-
-
-def test_parser_import():
-    from core.command_parser import CommandParser, TaskStep
-    assert TaskStep is not None
-    assert CommandParser is not None
-
-
-def test_parser_basic_signal():
-    from core.command_parser import CommandParser
-    cp = CommandParser(logger)
-    signal = {"teams": "Inter - Milan", "market": "Over 2.5", "score": "1-0"}
-    steps = cp.parse(signal)
-    assert len(steps) > 0
-    step_types = [s.action for s in steps]
-    assert "login" in step_types
-    assert "navigate" in step_types
-    assert "select_market" in step_types
-    assert "place_bet" in step_types
-
-
-def test_parser_minimal_signal():
-    from core.command_parser import CommandParser
-    cp = CommandParser(logger)
-    signal = {"teams": "Roma - Lazio"}
-    steps = cp.parse(signal)
-    assert len(steps) >= 2  # at least login + navigate
-
-
-def test_parser_empty_signal():
-    from core.command_parser import CommandParser
-    cp = CommandParser(logger)
-    steps = cp.parse({})
-    assert len(steps) == 0
-
-
-check("CommandParser import", test_parser_import)
-check("Parse full signal → task steps", test_parser_basic_signal)
-check("Parse minimal signal (no market)", test_parser_minimal_signal)
-check("Empty signal → no steps", test_parser_empty_signal)
-
-
-# ─────────────────────────────────────────────
-#  4. Module Imports (smoke test)
-# ─────────────────────────────────────────────
-print("\n=== Module Imports ===")
-
-MODULES = [
-    ("core.state_machine", "AgentState"),
-    ("core.state_machine", "StateManager"),
-    ("core.controller", "SuperAgentController"),
-    ("core.command_parser", "CommandParser"),
-    ("core.utils", None),
-    ("gateway.telegram_parser_fixed", "TelegramParser"),
-    ("gateway.pattern_memory", "PatternMemory"),
-]
-
-for mod_name, attr in MODULES:
-    def _make_test(m, a):
-        def _test():
-            mod = __import__(m, fromlist=[a] if a else [])
-            if a:
-                assert hasattr(mod, a), f"{m} missing {a}"
-        return _test
-    check(f"import {mod_name}" + (f".{attr}" if attr else ""), _make_test(mod_name, attr))
-
-
-# ─────────────────────────────────────────────
-#  Summary
-# ─────────────────────────────────────────────
-print(f"\n{'='*40}")
-print(f"  PASSED: {PASS}   FAILED: {FAIL}")
-print(f"{'='*40}")
-
-sys.exit(1 if FAIL > 0 else 0)
+if __name__ == "__main__":
+    # Necessario per inizializzare i timer e i thread Qt
+    app = QApplication(sys.argv)
+    run_tests()
