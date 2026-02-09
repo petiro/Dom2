@@ -4,11 +4,13 @@ on:
   push:
     branches: [ "main" ]
 
+permissions:
+  contents: write  # Necessario per commentare sui commit
+  pull-requests: write
+
 jobs:
   ai_review:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     
     steps:
       - name: Checkout code
@@ -28,13 +30,16 @@ jobs:
         run: |
           BEFORE_SHA="${{ github.event.before }}"
           AFTER_SHA="${{ github.event.after }}"
+          
+          # Gestione primo commit o force push
           if [ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]; then
-            git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 $AFTER_SHA > commit_diff.txt
+             git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 $AFTER_SHA > commit_diff.txt
           else
-            git diff $BEFORE_SHA $AFTER_SHA > commit_diff.txt
+             git diff $BEFORE_SHA $AFTER_SHA > commit_diff.txt
           fi
 
       - name: OpenRouter Analysis
+        id: ai_analysis
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -43,12 +48,10 @@ jobs:
           import requests
           import json
 
+          # Modello Free (cambia se vuoi Llama)
           MODEL = "google/gemini-2.0-flash-exp:free"
           
           api_key = os.environ.get("OPENROUTER_API_KEY")
-          if not api_key:
-              print("❌ OPENROUTER_API_KEY mancante.")
-              exit(1)
           
           try:
               with open("commit_diff.txt", "r", encoding="utf-8", errors="replace") as f:
@@ -57,33 +60,66 @@ jobs:
               diff_content = ""
 
           if len(diff_content.strip()) < 10:
+              print("Diff vuoto")
               exit(0)
 
-          # Tronca per sicurezza (max 30k caratteri)
-          diff_content = diff_content[:30000]
+          # Tronca a 25k caratteri per sicurezza
+          diff_content = diff_content[:25000]
 
-          prompt = f"Analizza questo git diff di un agente AI e segnala bug o chiavi API esposte. Rispondi in Italiano:\\n\\n{diff_content}"
+          prompt = f"""
+          Sei un Code Reviewer esperto. Analizza questo commit.
+          Sii BREVE e DIRETTO. Usa elenchi puntati.
+          
+          Se trovi:
+          1. Chiavi API in chiaro -> SCRIVILO SUBITO IN GRASSETTO CON EMOJI 🚨.
+          2. Bug logici evidenti -> Segnalali.
+          3. Codice pulito -> Scrivi solo "✅ Codice approvato."
+          
+          DIFF:
+          {diff_content}
+          """
 
-          response = requests.post(
-              url="https://openrouter.ai/api/v1/chat/completions",
-              headers={
-                  "Authorization": f"Bearer {api_key}",
-                  "HTTP-Referer": "https://github.com/v4-agent", 
-                  "Content-Type": "application/json"
-              },
-              data=json.dumps({
-                  "model": MODEL,
-                  "messages": [{"role": "user", "content": prompt}]
-              })
-          )
-
-          if response.status_code == 200:
-              try:
-                  report = response.json()["choices"][0]["message"]["content"]
-                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                      f.write(f"# 🤖 OpenRouter Audit ({MODEL})\\n\\n" + report)
-              except Exception as e:
-                  print(f"Errore parsing JSON: {e}")
-          else:
-              print(f"Errore API: {response.text}")
+          try:
+              response = requests.post(
+                  url="https://openrouter.ai/api/v1/chat/completions",
+                  headers={
+                      "Authorization": f"Bearer {api_key}",
+                      "HTTP-Referer": "https://github.com/v4-agent", 
+                      "Content-Type": "application/json"
+                  },
+                  data=json.dumps({
+                      "model": MODEL,
+                      "messages": [{"role": "user", "content": prompt}]
+                  })
+              )
+              
+              if response.status_code == 200:
+                  content = response.json()["choices"][0]["message"]["content"]
+                  
+                  # Salva il report per il prossimo step
+                  with open("ai_report.md", "w", encoding="utf-8") as f:
+                      f.write(f"### 🤖 AI Review ({MODEL})\n\n" + content)
+                  
+                  print("Report generato con successo.")
+              else:
+                  print(f"Errore API: {response.text}")
+          except Exception as e:
+              print(f"Errore Python: {e}")
           '
+
+      - name: Post Comment on Commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f ai_report.md ]; then
+            echo "Postando commento sul commit ${{ github.sha }}..."
+            
+            # Usa le API di GitHub per commentare direttamente sul commit
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              /repos/${{ github.repository }}/commits/${{ github.sha }}/comments \
+              -f body="$(cat ai_report.md)"
+          else
+            echo "Nessun report da pubblicare."
+          fi
