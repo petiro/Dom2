@@ -1,0 +1,89 @@
+name: OpenRouter AI Auditor
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  ai_review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Extract Commit Diff
+        run: |
+          BEFORE_SHA="${{ github.event.before }}"
+          AFTER_SHA="${{ github.event.after }}"
+          if [ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]; then
+            git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 $AFTER_SHA > commit_diff.txt
+          else
+            git diff $BEFORE_SHA $AFTER_SHA > commit_diff.txt
+          fi
+
+      - name: OpenRouter Analysis
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          python -c '
+          import os
+          import requests
+          import json
+
+          MODEL = "google/gemini-2.0-flash-exp:free"
+          
+          api_key = os.environ.get("OPENROUTER_API_KEY")
+          if not api_key:
+              print("❌ OPENROUTER_API_KEY mancante.")
+              exit(1)
+          
+          try:
+              with open("commit_diff.txt", "r", encoding="utf-8", errors="replace") as f:
+                  diff_content = f.read()
+          except:
+              diff_content = ""
+
+          if len(diff_content.strip()) < 10:
+              exit(0)
+
+          # Tronca per sicurezza (max 30k caratteri)
+          diff_content = diff_content[:30000]
+
+          prompt = f"Analizza questo git diff di un agente AI e segnala bug o chiavi API esposte. Rispondi in Italiano:\\n\\n{diff_content}"
+
+          response = requests.post(
+              url="https://openrouter.ai/api/v1/chat/completions",
+              headers={
+                  "Authorization": f"Bearer {api_key}",
+                  "HTTP-Referer": "https://github.com/v4-agent", 
+                  "Content-Type": "application/json"
+              },
+              data=json.dumps({
+                  "model": MODEL,
+                  "messages": [{"role": "user", "content": prompt}]
+              })
+          )
+
+          if response.status_code == 200:
+              try:
+                  report = response.json()["choices"][0]["message"]["content"]
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                      f.write(f"# 🤖 OpenRouter Audit ({MODEL})\\n\\n" + report)
+              except Exception as e:
+                  print(f"Errore parsing JSON: {e}")
+          else:
+              print(f"Errore API: {response.text}")
+          '
