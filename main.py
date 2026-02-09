@@ -9,6 +9,37 @@ import sys
 import time
 import logging
 import threading
+import ctypes
+
+# --- SISTEMA AUTO-LOG (Scatola Nera) ---
+def setup_logging():
+    # Determina dove salvare il log (nella stessa cartella dell'EXE)
+    log_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "debug_log.txt")
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_path, encoding='utf-8'), # Scrive su file
+            logging.StreamHandler(sys.stdout)               # Scrive anche in console
+        ]
+    )
+    logging.info("--- AVVIO SUPERAGENT V4 ---")
+    logging.info(f"Cartella di esecuzione: {os.getcwd()}")
+    logging.info(f"Sistema Operativo: {sys.platform}")
+
+# Esegui il setup immediatamente
+setup_logging()
+# ---------------------------------------
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except Exception:
+        return False
+
+if not is_admin():
+    logging.warning("ATTENZIONE: Il programma NON è avviato come Amministratore. Alcune funzioni potrebbero fallire.")
 
 # PATCH 1 — Path stabile (before any local imports)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,12 +66,8 @@ def setup_logger():
         encoding='utf-8',
     )
     file_handler.setFormatter(fmt)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(fmt)
-    logging.basicConfig(
-        level=logging.INFO,
-        handlers=[file_handler, console_handler]
-    )
+    root = logging.getLogger()
+    root.addHandler(file_handler)
     return logging.getLogger("SuperAgent")
 
 
