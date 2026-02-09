@@ -46,23 +46,28 @@ class AutoMapperWorker(QThread):
         Nessun testo introduttivo, solo codice YAML.
         """
 
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "anthropic/claude-3.5-sonnet",
-                "messages": [{"role": "user", "content": prompt}]
-            },
-            timeout=60
-        )
-        
-        if response.status_code != 200:
-            raise Exception(f"OpenRouter Error: {response.text}")
+        try:
+            response = requests.post(
+                url="https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "HTTP-Referer": "http://localhost",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "anthropic/claude-3.5-sonnet",
+                    "messages": [{"role": "user", "content": prompt}]
+                },
+                timeout=45
+            )
+            response.raise_for_status()
 
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        # Pulisci eventuali markdown ```yaml
-        return content.replace("```yaml", "").replace("```", "").strip()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            # Pulisci eventuali markdown ```yaml
+            return content.replace("```yaml", "").replace("```", "").strip()
+
+        except requests.exceptions.Timeout:
+            raise Exception("Timeout API OpenRouter (45s)")
+        except requests.exceptions.HTTPError as e:
+            raise Exception(f"OpenRouter HTTP Error: {e}")

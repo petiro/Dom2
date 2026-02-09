@@ -100,7 +100,14 @@ class SuperAgentController(QObject):
     # ------------------------------------------------------------------
     def _log(self, msg: str):
         self.logger.info(msg)
-        self.log_message.emit(msg)
+        self.safe_emit(self.log_message, msg)
+
+    def safe_emit(self, signal, *args):
+        """Emit a Qt signal, ignoring RuntimeError if UI is already destroyed."""
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            pass
 
     # ------------------------------------------------------------------
     #  Dependency injection
@@ -511,7 +518,7 @@ class SuperAgentController(QObject):
         """Run a full training step in a background thread.
         Emits training_complete Signal when done."""
         if not self.trainer:
-            self.training_complete.emit("Trainer non disponibile.")
+            self.safe_emit(self.training_complete, "Trainer non disponibile.")
             return
 
         def _train():
@@ -520,10 +527,10 @@ class SuperAgentController(QObject):
             try:
                 result = self.trainer.train_step()
                 self._log(f"[Controller] Training completed — {len(result)} chars")
-                self.training_complete.emit(result)
+                self.safe_emit(self.training_complete, result)
             except Exception as e:
                 self._log(f"[Controller] Training error: {e}")
-                self.training_complete.emit(f"Errore training: {e}")
+                self.safe_emit(self.training_complete, f"Errore training: {e}")
             finally:
                 # V4: Race condition guard
                 if not self._stop_event.is_set():
@@ -584,32 +591,32 @@ class SuperAgentController(QObject):
         api_key = self.vault.decrypt_data().get("openrouter_api_key")
 
         if not api_key:
-            self.log_message.emit("API Key OpenRouter mancante nel Vault")
+            self.safe_emit(self.log_message, "API Key OpenRouter mancante nel Vault")
             return
 
         from core.auto_mapper_worker import AutoMapperWorker
         self.mapper_worker = AutoMapperWorker(url, api_key, self.executor)
         self.mapper_worker.finished.connect(self.on_mapping_success)
-        self.mapper_worker.error.connect(lambda e: self.log_message.emit(f"Mapping fallito: {e}"))
+        self.mapper_worker.error.connect(lambda e: self.safe_emit(self.log_message, f"Mapping fallito: {e}"))
         self.mapper_worker.start()
 
     def on_mapping_success(self, yaml_code):
-        self.mapping_ready.emit(yaml_code)
-        self.log_message.emit("Mappatura AI completata!")
+        self.safe_emit(self.mapping_ready, yaml_code)
+        self.safe_emit(self.log_message, "Mappatura AI completata!")
 
     def test_mapping_visual(self, yaml_code):
         if self.executor and self.executor.highlight_selectors(yaml_code):
-            self.log_message.emit("Highlight attivato sul browser")
+            self.safe_emit(self.log_message, "Highlight attivato sul browser")
         else:
-            self.log_message.emit("Errore nell'highlight dei selettori")
+            self.safe_emit(self.log_message, "Errore nell'highlight dei selettori")
 
     def save_selectors_yaml(self, yaml_code):
         try:
             with open("config/selectors.yaml", "w", encoding="utf-8") as f:
                 f.write(yaml_code)
-            self.log_message.emit("selectors.yaml salvato correttamente")
+            self.safe_emit(self.log_message, "selectors.yaml salvato correttamente")
         except Exception as e:
-            self.log_message.emit(f"Errore salvataggio YAML: {e}")
+            self.safe_emit(self.log_message, f"Errore salvataggio YAML: {e}")
 
     # ------------------------------------------------------------------
     #  Telegram Secure Connection
@@ -635,7 +642,7 @@ class SuperAgentController(QObject):
     def handle_telegram_signal(self, text):
         # 1. Check Pendente
         if self.table.is_pending:
-            self.log_message.emit("⚠️ Scommessa in corso, segnale ignorato.")
+            self.safe_emit(self.log_message, "⚠️ Scommessa in corso, segnale ignorato.")
             return
 
         # 2. Parsing
@@ -646,16 +653,16 @@ class SuperAgentController(QObject):
         # 3. Avvio Thread Scommessa
         self.table.is_pending = True
         self.bet_worker = BetWorker(self.table, self.executor, data)
-        self.bet_worker.log.connect(lambda level, msg: self.log_message.emit(msg))
+        self.bet_worker.log.connect(lambda level, msg: self.safe_emit(self.log_message, msg))
         self.bet_worker.finished.connect(self.on_bet_complete)
         self.bet_worker.start()
 
     def on_bet_complete(self, result):
         if result["status"] == "placed":
-            self.log_message.emit(f"✅ Bet Piazzata: €{result['stake']}")
+            self.safe_emit(self.log_message, f"✅ Bet Piazzata: €{result['stake']}")
         else:
             self.table.is_pending = False
-            self.log_message.emit(f"❌ Errore Bet: {result.get('msg')}")
+            self.safe_emit(self.log_message, f"❌ Errore Bet: {result.get('msg')}")
 
     # ------------------------------------------------------------------
     #  Shutdown (V4: graceful with _stop_event)
@@ -665,8 +672,9 @@ class SuperAgentController(QObject):
         self._log("[Controller] Shutdown initiated")
         self._stop_event.set()
         self.state_manager.force_state(AgentState.SHUTDOWN)
-        if self.executor:
-            try:
-                self.executor.close()
-            except Exception as recovery_exc:
-                self.logger.error(f"[Controller] Session recovery failed: {recovery_exc}")
+        with self._executor_lock:
+            if self.executor:
+                try:
+                    self.executor.close()
+                except Exception as recovery_exc:
+                    self.logger.error(f"[Controller] Session recovery failed: {recovery_exc}")

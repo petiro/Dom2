@@ -15,18 +15,32 @@ class TelegramWorker(QThread):
         self.selected_chats = config.get('selected_chats', [])
         self.client = None
         self._running = True
+        self.loop = asyncio.new_event_loop()
 
     def run(self):
-        asyncio.run(self._start_client())
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_until_complete(self._main())
 
-    async def _start_client(self):
+    async def _main(self):
         self.client = TelegramClient('session_v4', self.api_id, self.api_hash)
-        await self.client.start()  # User client start
+        await self.client.start()
 
         @self.client.on(events.NewMessage(chats=self.selected_chats))
         async def handler(event):
             self.message_received.emit(event.raw_text)
 
+        # Keep-alive task to prevent silent disconnections
+        async def keep_alive():
+            while True:
+                try:
+                    if not self.client.is_connected():
+                        await self.client.connect()
+                    await self.client.get_me()  # Ping
+                except Exception:
+                    pass
+                await asyncio.sleep(60)
+
+        self.loop.create_task(keep_alive())
         await self.client.run_until_disconnected()
 
     def stop(self):

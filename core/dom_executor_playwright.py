@@ -683,6 +683,33 @@ class DomExecutorPlaywright:
             return False
 
     # ------------------------------------------------------------------
+    #  Memory Check & Browser Recycle
+    # ------------------------------------------------------------------
+    def memory_check(self):
+        """Return Chrome child process memory usage in MB."""
+        import psutil
+        try:
+            parent = psutil.Process(os.getpid())
+            mem = 0
+            for child in parent.children(recursive=True):
+                if "chrome" in child.name().lower():
+                    mem += child.memory_info().rss
+            return mem / (1024 * 1024)
+        except Exception:
+            return 0
+
+    def recycle_browser(self):
+        """Close and reopen browser to free RAM."""
+        self.logger.info("Recycling Browser (Memory Cleanup)...")
+        try:
+            self.context.close()
+            self.browser.close()
+        except Exception:
+            pass
+        time.sleep(2)
+        self.launch_browser()
+
+    # ------------------------------------------------------------------
     #  Screenshot to Base64
     # ------------------------------------------------------------------
     def take_screenshot_b64(self) -> str:

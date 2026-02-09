@@ -31,10 +31,12 @@ class SystemWatchdog(QThread):
     resource_warning = Signal(str)
     browser_died = Signal()
 
-    def __init__(self, check_interval: int = 30):
+    def __init__(self, check_interval: int = 30, executor=None, logger=None):
         super().__init__()
         self._running = True
         self._check_interval = check_interval
+        self.executor = executor
+        self.logger = logger
 
     def stop(self):
         self._running = False
@@ -82,3 +84,15 @@ class SystemWatchdog(QThread):
                 except Exception as e:
                     if hasattr(self, 'logger') and self.logger:
                         self.logger.warning(f"[Watchdog] Check failed: {e}")
+
+            # 4. Browser memory recycle trigger
+            if self.executor and hasattr(self.executor, 'memory_check'):
+                try:
+                    browser_mb = self.executor.memory_check()
+                    if browser_mb > 1500:  # 1.5GB
+                        if self.logger:
+                            self.logger.warning(f"[Watchdog] High Browser Memory ({browser_mb:.0f} MB) - Triggering Recycle")
+                        self.executor.recycle_browser()
+                except Exception as e:
+                    if hasattr(self, 'logger') and self.logger:
+                        self.logger.warning(f"[Watchdog] Browser memory check failed: {e}")
