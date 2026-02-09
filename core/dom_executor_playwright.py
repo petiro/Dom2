@@ -700,12 +700,12 @@ class DomExecutorPlaywright:
         """Close and reopen browser to free RAM."""
         self.logger.info("Recycling Browser (Memory Cleanup)...")
         try:
-            self.context.close()
+            self.ctx.close()
             self.browser.close()
         except Exception:
             pass
         time.sleep(2)
-        self.launch_browser()
+        self._ensure_browser()
 
     # ------------------------------------------------------------------
     #  Screenshot to Base64

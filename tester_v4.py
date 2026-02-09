@@ -46,7 +46,7 @@ def run_tests():
         executor = DomExecutorPlaywright(MockController())
         
         # Avvia il browser in un thread separato
-        t = threading.Thread(target=executor.launch_browser, daemon=True)
+        t = threading.Thread(target=executor._ensure_browser, daemon=True)
         t.start()
         
         # Attesa attiva (Polling) max 15 secondi
