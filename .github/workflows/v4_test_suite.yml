@@ -25,6 +25,18 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      - name: Static Code Analysis (Pylint)
+        run: |
+          pip install pylint
+          
+          echo "Avvio scansione integrita codice..."
+          
+          pylint --errors-only `
+            --disable=E0401 `
+            --generated-members=cv2.*,PySide6.*,playwright.* `
+            --msg-template="{path}:{line}: [{msg_id} {symbol}] {msg}" `
+            core/ ui/ main.py
+
       - name: Install Playwright Browsers
         run: python -m playwright install chromium
 
