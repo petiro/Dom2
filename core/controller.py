@@ -595,13 +595,30 @@ class SuperAgentController(QObject):
             return
 
         with self._executor_lock:
+            # Navigate if needed and extract DOM
+            if self.executor and self.executor.page:
+                if self.executor.page.url != url:
+                    self.executor.go_to_url(url)
+                dom_data = self.executor.get_dom_snapshot()
+            else:
+                self.safe_emit(self.log_message, "Browser non inizializzato")
+                return
+
             from core.auto_mapper_worker import AutoMapperWorker
-            self.mapper_worker = AutoMapperWorker(url, api_key, self.executor)
+            from PySide6.QtCore import QThread
+            self.mapper_worker = AutoMapperWorker(api_key, dom_data)
+            self._mapper_thread = QThread()
+            self.mapper_worker.moveToThread(self._mapper_thread)
+            self._mapper_thread.started.connect(self.mapper_worker.run)
             self.mapper_worker.finished.connect(self.on_mapping_success)
             self.mapper_worker.error.connect(lambda e: self.safe_emit(self.log_message, e))
-            self.mapper_worker.start()
+            self.mapper_worker.finished.connect(self._mapper_thread.quit)
+            self.mapper_worker.error.connect(self._mapper_thread.quit)
+            self._mapper_thread.start()
 
-    def on_mapping_success(self, yaml_code):
+    def on_mapping_success(self, result_dict):
+        import yaml
+        yaml_code = yaml.dump(result_dict, default_flow_style=False)
         self.safe_emit(self.mapping_ready, yaml_code)
 
     def test_mapping_visual(self, yaml_code):
