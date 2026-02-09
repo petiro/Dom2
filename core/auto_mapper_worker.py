@@ -14,36 +14,34 @@ class AutoMapperWorker(QThread):
 
     def run(self):
         try:
-            # Naviga se necessario (opzionale se già sulla pagina)
+            # 1. Navigazione
             if self.executor.page.url != self.url:
                 self.executor.page.goto(self.url, wait_until="networkidle")
 
-            # Estrai DOM leggero
+            # 2. Estrazione DOM Leggero
             dom_data = self.executor.page.evaluate("""() => {
                 const elements = document.querySelectorAll('button, input, a, select, [role="button"]');
                 return Array.from(elements).map(el => ({
                     tag: el.tagName,
                     id: el.id,
                     class: el.className,
-                    text: el.innerText || el.placeholder || el.value,
+                    text: (el.innerText || el.value || '').substring(0, 50),
                     type: el.type
-                })).slice(0, 100);
+                })).slice(0, 80);
             }""")
 
-            # Chiama AI
-            yaml_code = self._call_openrouter(dom_data)
-            self.finished.emit(yaml_code)
+            # 3. Chiamata OpenRouter
+            self._call_ai(dom_data)
 
         except Exception as e:
             self.error.emit(str(e))
 
-    def _call_openrouter(self, dom_data):
+    def _call_ai(self, dom_data):
         prompt = f"""
         Analizza questi elementi del sito {self.url}:
         {json.dumps(dom_data)}
 
         Genera YAML puro con chiavi: search_bar, login_button, match_row, price_element, confirm_button.
-        Nessun testo introduttivo, solo codice YAML.
         """
 
         try:
@@ -58,16 +56,14 @@ class AutoMapperWorker(QThread):
                     "model": "anthropic/claude-3.5-sonnet",
                     "messages": [{"role": "user", "content": prompt}]
                 },
-                timeout=45
+                timeout=45 
             )
             response.raise_for_status()
-
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            # Pulisci eventuali markdown ```yaml
-            return content.replace("```yaml", "").replace("```", "").strip()
-
+            content = response.json()["choices"][0]["message"]["content"]
+            clean_yaml = content.replace("```yaml", "").replace("```", "").strip()
+            self.finished.emit(clean_yaml)
+            
         except requests.exceptions.Timeout:
-            raise Exception("Timeout API OpenRouter (45s)")
-        except requests.exceptions.HTTPError as e:
-            raise Exception(f"OpenRouter HTTP Error: {e}")
+            self.error.emit("Timeout API AI (45s)")
+        except Exception as e:
+            self.error.emit(f"Errore AI: {e}")

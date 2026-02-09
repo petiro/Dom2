@@ -1,141 +1,46 @@
-name: Build SuperAgent
+name: Build V4 Release
 
 on:
   push:
-    branches: [ main, master, 'claude/*' ]
-    tags: [ 'v*' ]
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v3
+      
+      - uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
           pip install pyinstaller
-          pip install PySide6 requests pyyaml playwright telethon openai
 
-      - name: Build with PyInstaller
+      - name: Playwright
+        run: python -m playwright install chromium
+
+      - name: Build EXE
         run: |
           python -m PyInstaller --noconfirm --onefile --windowed `
             --name SuperAgent_Pro_V4 `
             --add-data "core;core" `
             --add-data "ui;ui" `
             --add-data "data;data" `
-            --hidden-import core.security `
             --hidden-import cryptography `
             --hidden-import telethon `
-            --hidden-import pyautogui `
-            --hidden-import cv2 `
-            --hidden-import asyncio `
-            --hidden-import playwright._impl._api_types `
-            --hidden-import playwright._impl._connection `
-            --hidden-import playwright._impl._transport `
-            --hidden-import playwright._impl._dispatcher `
-            --hidden-import playwright._impl._impl `
+            --hidden-import core.security `
+            --hidden-import core.auto_mapper_worker `
+            --hidden-import ui.mapping_tab `
             --collect-all playwright `
             main.py
 
-      - name: Verify
-        run: |
-          if (Test-Path dist\SuperAgent_Pro_V4.exe) { Write-Host "BUILD OK" } else { exit 1 }
-
-      - name: Upload EXE
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: SuperAgent-Windows
+          name: SuperAgent_Pro_V4
           path: dist/SuperAgent_Pro_V4.exe
           retention-days: 1
-
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libxcb-cursor0 libxcb-image0 libxcb-shape0 libxkbcommon0
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install pyinstaller
-          pip install PySide6 requests pyyaml playwright telethon openai
-
-      - name: Build executable
-        run: |
-          pyinstaller main.py \
-            --onefile \
-            --name SuperAgent \
-            --hidden-import PySide6.QtWidgets \
-            --hidden-import PySide6.QtCore \
-            --hidden-import PySide6.QtGui \
-            --hidden-import yaml \
-            --hidden-import requests \
-            --hidden-import playwright \
-            --hidden-import playwright.sync_api \
-            --hidden-import playwright._impl._api_types \
-            --hidden-import ui.desktop_app \
-            --hidden-import ui.telegram_tab \
-            --hidden-import ai.vision_learner \
-            --hidden-import ai.rpa_healer \
-            --hidden-import ai.telegram_learner \
-            --hidden-import core.utils \
-            --hidden-import core.dom_executor_playwright \
-            --hidden-import core.dom_scanner \
-            --hidden-import gateway.telegram_parser_fixed \
-            --hidden-import gateway.pattern_memory \
-            --hidden-import gateway.telegram_listener_fixed \
-            --add-data "config:config" \
-            --add-data "ai:ai" \
-            --add-data "core:core" \
-            --add-data "ui:ui" \
-            --add-data "gateway:gateway" \
-            --exclude-module cryptography \
-            --strip \
-            --noconfirm \
-            --clean
-
-      - name: Verify
-        run: file dist/SuperAgent
-
-      - name: Upload executable
-        uses: actions/upload-artifact@v4
-        with:
-          name: SuperAgent-Linux
-          path: dist/SuperAgent
-          retention-days: 1
-
-  release:
-    needs: [ build-windows, build-linux ]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Prepare
-        run: |
-          mv artifacts/SuperAgent-Linux/SuperAgent artifacts/SuperAgent-Linux.bin
-          mv artifacts/SuperAgent-Windows/SuperAgent_Pro_V4.exe artifacts/SuperAgent-Windows.exe
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            artifacts/SuperAgent-Linux.bin
-            artifacts/SuperAgent-Windows.exe

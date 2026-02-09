@@ -591,24 +591,23 @@ class SuperAgentController(QObject):
         api_key = self.vault.decrypt_data().get("openrouter_api_key")
 
         if not api_key:
-            self.safe_emit(self.log_message, "API Key OpenRouter mancante nel Vault")
+            self.safe_emit(self.log_message, "API Key mancante")
             return
 
-        from core.auto_mapper_worker import AutoMapperWorker
-        self.mapper_worker = AutoMapperWorker(url, api_key, self.executor)
-        self.mapper_worker.finished.connect(self.on_mapping_success)
-        self.mapper_worker.error.connect(lambda e: self.safe_emit(self.log_message, f"Mapping fallito: {e}"))
-        self.mapper_worker.start()
+        with self._executor_lock:
+            from core.auto_mapper_worker import AutoMapperWorker
+            self.mapper_worker = AutoMapperWorker(url, api_key, self.executor)
+            self.mapper_worker.finished.connect(self.on_mapping_success)
+            self.mapper_worker.error.connect(lambda e: self.safe_emit(self.log_message, e))
+            self.mapper_worker.start()
 
     def on_mapping_success(self, yaml_code):
         self.safe_emit(self.mapping_ready, yaml_code)
-        self.safe_emit(self.log_message, "Mappatura AI completata!")
 
     def test_mapping_visual(self, yaml_code):
-        if self.executor and self.executor.highlight_selectors(yaml_code):
-            self.safe_emit(self.log_message, "Highlight attivato sul browser")
-        else:
-            self.safe_emit(self.log_message, "Errore nell'highlight dei selettori")
+        with self._executor_lock:
+            if self.executor:
+                self.executor.highlight_selectors(yaml_code)
 
     def save_selectors_yaml(self, yaml_code):
         try:
@@ -621,18 +620,16 @@ class SuperAgentController(QObject):
     # ------------------------------------------------------------------
     #  Telegram Secure Connection
     # ------------------------------------------------------------------
-    def connect_telegram(self, ui_config):
+    def connect_telegram(self, config):
         """Save credentials to vault and (re)start Telegram worker."""
-        self.vault.encrypt_data(ui_config)
-        self.current_config = ui_config
+        self.vault.encrypt_data(config)
+        self.current_config = config
 
-        # Restart worker with new credentials
         if self.telegram_worker:
             self.telegram_worker.stop()
-            self.telegram_worker.wait()
 
         from core.telegram_worker import TelegramWorker
-        self.telegram_worker = TelegramWorker(ui_config)
+        self.telegram_worker = TelegramWorker(config)
         self.telegram_worker.message_received.connect(self.handle_telegram_signal)
         self.telegram_worker.start()
 

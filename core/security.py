@@ -13,12 +13,15 @@ class Vault:
 
     def _generate_machine_key(self):
         try:
+            # Comando Windows per ID Scheda Madre
             cmd = 'wmic baseboard get serialnumber'
             output = subprocess.check_output(cmd, shell=True).decode().splitlines()
-            serial = output[1].strip() if len(output) > 1 else "DEFAULT_MACHINE"
+            # Prende la seconda riga o usa un fallback se fallisce
+            serial = output[1].strip() if len(output) > 1 else "DEFAULT_MACHINE_FALLBACK"
         except Exception:
-            serial = "DEFAULT_MACHINE"
+            serial = "DEFAULT_MACHINE_FALLBACK"
             
+        # Crea chiave a 32 byte
         hash_key = hashlib.sha256(serial.encode()).digest()
         return base64.urlsafe_b64encode(hash_key[:32])
 

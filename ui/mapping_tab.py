@@ -4,47 +4,42 @@ class MappingTab(QWidget):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
-
+        
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("🔗 Inserisci il link del sito da mappare:"))
-
-        nav_layout = QHBoxLayout()
-        self.url_input = QLineEdit()
-        self.btn_map = QPushButton("🚀 Genera Mappatura AI")
-        self.btn_map.clicked.connect(self.start_mapping)
-        nav_layout.addWidget(self.url_input)
-        nav_layout.addWidget(self.btn_map)
-        layout.addLayout(nav_layout)
-
-        layout.addWidget(QLabel("📝 YAML Generato:"))
-        self.yaml_display = QTextEdit()
-        layout.addWidget(self.yaml_display)
-
-        self.btn_test = QPushButton("👁️ Testa Mappatura sul Browser")
-        self.btn_test.clicked.connect(self.test_mapping)
-        layout.addWidget(self.btn_test)
-
-        self.btn_save = QPushButton("💾 Salva in selectors.yaml")
-        self.btn_save.clicked.connect(self.save_mapping)
-        layout.addWidget(self.btn_save)
-
+        
+        # Input
+        h_layout = QHBoxLayout()
+        self.url_in = QLineEdit()
+        self.url_in.setPlaceholderText("https://sito...")
+        btn_map = QPushButton("🤖 Mappa con AI")
+        btn_map.clicked.connect(self.start_map)
+        h_layout.addWidget(self.url_in)
+        h_layout.addWidget(btn_map)
+        layout.addLayout(h_layout)
+        
+        # Output
+        self.yaml_out = QTextEdit()
+        layout.addWidget(self.yaml_out)
+        
+        # Actions
+        btn_test = QPushButton("👁️ Highlight (Test)")
+        btn_test.clicked.connect(self.do_test)
+        btn_save = QPushButton("💾 Salva Selectors")
+        btn_save.clicked.connect(self.do_save)
+        
+        layout.addWidget(btn_test)
+        layout.addWidget(btn_save)
         self.setLayout(layout)
         
-        # Connessione segnale dal controller
-        self.controller.mapping_ready.connect(self.yaml_display.setText)
+        # Signals
+        self.controller.mapping_ready.connect(self.yaml_out.setText)
 
-    def start_mapping(self):
-        url = self.url_input.text().strip()
-        if url:
-            self.yaml_display.setText("⏳ Analisi del sito...")
-            self.controller.request_auto_mapping(url)
+    def start_map(self):
+        self.yaml_out.setText("⏳ Analisi in corso...")
+        self.controller.request_auto_mapping(self.url_in.text())
 
-    def test_mapping(self):
-        yaml_code = self.yaml_display.toPlainText()
-        if yaml_code:
-            self.controller.test_mapping_visual(yaml_code)
+    def do_test(self):
+        self.controller.test_mapping_visual(self.yaml_out.toPlainText())
 
-    def save_mapping(self):
-        yaml_code = self.yaml_display.toPlainText()
-        if yaml_code:
-            self.controller.save_selectors_yaml(yaml_code)
+    def do_save(self):
+        self.controller.save_selectors_yaml(self.yaml_out.toPlainText())
