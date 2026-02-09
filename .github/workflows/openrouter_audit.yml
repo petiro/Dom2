@@ -51,120 +51,78 @@ jobs:
             echo "REVIEW_SHA=$AFTER" >> $GITHUB_ENV
           fi
 
-      - name: AI Analysis (2026 Free Models)
+      - name: AI Analysis (2026 Free Models Only)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python -c '
           import os
           import requests
-          import json
           import time
 
-          # LISTA MODELLI AGGIORNATA (Febbraio 2026 - Basata sul tuo dump)
-          # Ho scelto quelli specifici per Coding e Reasoning
+          # LISTA AGGIORNATA FEBBRAIO 2026 (Nomi esatti dal database OpenRouter)
           MODELS = [
-              "openai/gpt-oss-120b:free",                 # NUOVO! Ottimo per reasoning e production
-              "qwen/qwen-3-coder-480b-a35b-instruct:free", # BEST IN CLASS per il codice (480B MoE)
-              "arcee-ai/trinity-large-preview:free",       # Il più usato al momento (400B MoE)
-              "meta-llama/llama-3.3-70b-instruct:free",    # Classico fallback (spesso 429)
-              "stepfun/step-3.5-flash:free"                # Velocissimo se gli altri falliscono
+              "openai/gpt-oss-120b:free",                 # Il nuovo standard gratuito di OpenAI
+              "qwen/qwen-3-coder-480b-a35b-instruct:free", # Migliore per il codice (480B)
+              "arcee-ai/trinity-large-preview:free",       # Altamente disponibile
+              "meta-llama/llama-3.3-70b-instruct:free",    # Ottimo ma spesso 429
+              "stepfun/step-3.5-flash:free"                # Fallback ultra-veloce
           ]
           
           api_key = os.environ.get("OPENROUTER_API_KEY")
 
           try:
               with open("commit_diff.txt", "r", encoding="utf-8", errors="replace") as f:
-                  diff_content = f.read()
+                  diff_content = f.read()[:25000] # Limite per evitare payload troppo grandi
           except:
               diff_content = ""
 
-          if len(diff_content.strip()) < 5:
-              print("Diff vuoto.")
-              with open("ai_report.md", "w") as f: f.write("Nessuna modifica rilevante.")
+          if not diff_content.strip():
+              print("Diff vuoto o errore lettura.")
               exit(0)
 
-          # Tronca a 30k caratteri (Questi modelli gestiscono contesti ampi, ma stiamo sicuri)
-          diff_content = diff_content[:30000]
-
-          prompt = f"""
-          Sei un Senior Code Reviewer.
-          Analizza il seguente git diff.
-          
-          DIFF:
-          {diff_content}
-          
-          OUTPUT: Markdown.
-          Usa 🚨 per errori critici (password, bug logici).
-          Usa ✅ per codice pulito.
-          Sii BREVE e professionale.
-          """
-
+          prompt = f"Review questo git diff. Sii tecnico e breve. Usa Markdown.\n\n{diff_content}"
           success = False
           
           for model in MODELS:
-              print(f"🔄 Tentativo con modello: {model}...")
-              
-              # Tenta fino a 2 volte per lo stesso modello se c è errore 429
-              for attempt in range(2):
-                  try:
-                      response = requests.post(
-                          url="https://openrouter.ai/api/v1/chat/completions",
-                          headers={
-                              "Authorization": f"Bearer {api_key}",
-                              "HTTP-Referer": "https://github.com/v4-agent",
-                              "Content-Type": "application/json"
-                          },
-                          json={
-                              "model": model,
-                              "messages": [{"role": "user", "content": prompt}],
-                              "temperature": 0.2
-                          },
-                          timeout=50
-                      )
+              print(f"🔄 Tentativo con {model}...")
+              try:
+                  response = requests.post(
+                      url="https://openrouter.ai/api/v1/chat/completions",
+                      headers={
+                          "Authorization": f"Bearer {api_key}",
+                          "HTTP-Referer": "https://github.com/v4-agent",
+                          "Content-Type": "application/json"
+                      },
+                      json={
+                          "model": model,
+                          "messages": [{"role": "user", "content": prompt}]
+                      },
+                      timeout=40
+                  )
+                  
+                  if response.status_code == 200:
+                      report = response.json()["choices"][0]["message"]["content"]
+                      with open("ai_report.md", "w", encoding="utf-8") as f:
+                          f.write(f"### 🤖 AI Review ({model})\n\n{report}")
                       
-                      if response.status_code == 200:
-                          data = response.json()
-                          if "choices" in data and len(data["choices"]) > 0:
-                              report = data["choices"][0]["message"]["content"]
-                              
-                              header = f"### 🤖 AI Review ({model})\n\n"
-                              with open("ai_report.md", "w", encoding="utf-8") as f:
-                                  f.write(header + report)
-                              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                                  f.write(header + report)
-                              
-                              print("✅ Successo!")
-                              success = True
-                              break # Esce dal loop tentativi
-                          else:
-                              print(f"⚠️ Risposta vuota da {model}")
-                              break
+                      # Scrittura nel Riepilogo di GitHub
+                      with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+                          f.write(f"### 🤖 AI Review ({model})\n\n{report}")
                       
-                      elif response.status_code == 429:
-                          print(f"⏳ Rate Limit (429) con {model}. Attendo 5s...")
-                          time.sleep(5)
-                          continue # Riprova lo stesso modello
-                          
-                      elif response.status_code == 404:
-                          print(f"❌ Modello non trovato (404): {model}. Passo al prossimo.")
-                          break # Cambia modello subito
-                          
-                      else:
-                          print(f"⚠️ Errore {response.status_code} con {model}: {response.text}")
-                          break # Cambia modello
-                          
-                  except Exception as e:
-                      print(f"⚠️ Eccezione con {model}: {e}")
+                      print("✅ Successo!")
+                      success = True
                       break
-
-              if success:
-                  break # Esce dal loop modelli (abbiamo finito)
+                  elif response.status_code == 429:
+                      print("⏳ Modello intasato (429), provo il prossimo...")
+                      time.sleep(2)
+                  else:
+                      print(f"❌ Errore {response.status_code}: {response.text}")
+              except Exception as e:
+                  print(f"⚠️ Eccezione: {e}")
 
           if not success:
-              err_msg = "❌ Tutti i modelli AI sono falliti. Verifica i log per dettagli."
-              print(err_msg)
-              with open("ai_report.md", "w", encoding="utf-8") as f: f.write(err_msg)
+              with open("ai_report.md", "w") as f: f.write("### ❌ Errore\nTutti i modelli gratuiti sono offline.")
           '
 
       - name: Post Comment
