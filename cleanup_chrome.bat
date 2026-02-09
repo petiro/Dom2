@@ -23,28 +23,14 @@ timeout /t 2 /nobreak >nul
 
 REM 4. Remove Chrome lock files (prevents "profile in use" errors)
 set "CHROME_DIR=%LOCALAPPDATA%\Google\Chrome\User Data"
-if exist "%CHROME_DIR%\SingletonLock" (
-    del /f /q "%CHROME_DIR%\SingletonLock" >nul 2>&1
-    if not exist "%CHROME_DIR%\SingletonLock" (
-        echo [OK] Removed SingletonLock
-    ) else (
-        echo [ERROR] Failed to remove SingletonLock.
-    )
-)
-if exist "%CHROME_DIR%\SingletonSocket" (
-    del /f /q "%CHROME_DIR%\SingletonSocket" >nul 2>&1
-    if not exist "%CHROME_DIR%\SingletonSocket" (
-        echo [OK] Removed SingletonSocket
-    ) else (
-        echo [ERROR] Failed to remove SingletonSocket.
-    )
-)
-if exist "%CHROME_DIR%\SingletonCookie" (
-    del /f /q "%CHROME_DIR%\SingletonCookie" >nul 2>&1
-    if not exist "%CHROME_DIR%\SingletonCookie" (
-        echo [OK] Removed SingletonCookie
-    ) else (
-        echo [ERROR] Failed to remove SingletonCookie.
+for %%F in (SingletonLock SingletonSocket SingletonCookie) do (
+    if exist "%CHROME_DIR%\%%F" (
+        del /f /q "%CHROME_DIR%\%%F" >nul 2>&1
+        if not exist "%CHROME_DIR%\%%F" (
+            echo [OK] Removed %%F
+        ) else (
+            echo [ERROR] Failed to remove %%F.
+        )
     )
 )
 

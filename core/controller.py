@@ -237,17 +237,21 @@ class SuperAgentController(QObject):
                         opened = self._os_human.open_browser_from_desktop()
                         if opened:
                             self._log("[Controller] Chrome reopened — connecting via CDP...")
-                            import time as _time
-                            # Poll for CDP connection (up to 10 seconds)
+                            time.sleep(5)  # wait for Chrome to fully start
+
+                            # Poll for CDP connection
+                            CDP_RECONNECT_ATTEMPTS = 10
+                            CDP_RECONNECT_INTERVAL = 1
+
                             success = False
                             if self.executor:
-                                for _ in range(10):
+                                for _ in range(CDP_RECONNECT_ATTEMPTS):
                                     if self._stop_event.is_set():
                                         break
                                     if self.executor.launch_browser_cdp():
                                         success = True
                                         break
-                                    _time.sleep(1)
+                                    time.sleep(CDP_RECONNECT_INTERVAL)
                                 if success:
                                     self._log("[Controller] CDP reconnect successful!")
                                     if not self._stop_event.is_set():
