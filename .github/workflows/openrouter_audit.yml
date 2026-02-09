@@ -36,11 +36,11 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             TARGET_SHA="${{ inputs.commit_sha }}"
-            echo "Manual Mode: $TARGET_SHA"
+            echo "🔧 Manual Mode: $TARGET_SHA"
             git diff $TARGET_SHA^ $TARGET_SHA > commit_diff.txt
             echo "REVIEW_SHA=$TARGET_SHA" >> $GITHUB_ENV
           else
-            echo "Push Mode"
+            echo "🚀 Push Mode"
             BEFORE="${{ github.event.before }}"
             AFTER="${{ github.event.after }}"
             if [ -z "$BEFORE" ] || [ "$BEFORE" == "0000000000000000000000000000000000000000" ]; then
@@ -51,7 +51,7 @@ jobs:
             echo "REVIEW_SHA=$AFTER" >> $GITHUB_ENV
           fi
 
-      - name: AI Analysis (Smart Fallback)
+      - name: AI Analysis (2026 Free Models)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -61,12 +61,14 @@ jobs:
           import json
           import time
 
-          # Fallback list: if first model is busy (429), try next
+          # LISTA MODELLI AGGIORNATA (Febbraio 2026 - Basata sul tuo dump)
+          # Ho scelto quelli specifici per Coding e Reasoning
           MODELS = [
-              "google/gemini-2.0-flash-lite-preview-02-05:free",
-              "meta-llama/llama-3.3-70b-instruct:free",
-              "deepseek/deepseek-r1-distill-llama-70b:free",
-              "microsoft/phi-3-mini-128k-instruct:free"
+              "openai/gpt-oss-120b:free",                 # NUOVO! Ottimo per reasoning e production
+              "qwen/qwen-3-coder-480b-a35b-instruct:free", # BEST IN CLASS per il codice (480B MoE)
+              "arcee-ai/trinity-large-preview:free",       # Il più usato al momento (400B MoE)
+              "meta-llama/llama-3.3-70b-instruct:free",    # Classico fallback (spesso 429)
+              "stepfun/step-3.5-flash:free"                # Velocissimo se gli altri falliscono
           ]
           
           api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -82,6 +84,7 @@ jobs:
               with open("ai_report.md", "w") as f: f.write("Nessuna modifica rilevante.")
               exit(0)
 
+          # Tronca a 30k caratteri (Questi modelli gestiscono contesti ampi, ma stiamo sicuri)
           diff_content = diff_content[:30000]
 
           prompt = f"""
@@ -92,52 +95,74 @@ jobs:
           {diff_content}
           
           OUTPUT: Markdown.
-          Usa 🚨 per errori critici.
+          Usa 🚨 per errori critici (password, bug logici).
           Usa ✅ per codice pulito.
-          Sii BREVE.
+          Sii BREVE e professionale.
           """
 
           success = False
           
           for model in MODELS:
-              print(f"Tentativo con modello: {model}...")
-              try:
-                  response = requests.post(
-                      url="https://openrouter.ai/api/v1/chat/completions",
-                      headers={
-                          "Authorization": f"Bearer {api_key}",
-                          "HTTP-Referer": "https://github.com/v4-agent",
-                          "Content-Type": "application/json"
-                      },
-                      json={
-                          "model": model,
-                          "messages": [{"role": "user", "content": prompt}]
-                      },
-                      timeout=45
-                  )
-                  
-                  if response.status_code == 200:
-                      report = response.json()["choices"][0]["message"]["content"]
+              print(f"🔄 Tentativo con modello: {model}...")
+              
+              # Tenta fino a 2 volte per lo stesso modello se c è errore 429
+              for attempt in range(2):
+                  try:
+                      response = requests.post(
+                          url="https://openrouter.ai/api/v1/chat/completions",
+                          headers={
+                              "Authorization": f"Bearer {api_key}",
+                              "HTTP-Referer": "https://github.com/v4-agent",
+                              "Content-Type": "application/json"
+                          },
+                          json={
+                              "model": model,
+                              "messages": [{"role": "user", "content": prompt}],
+                              "temperature": 0.2
+                          },
+                          timeout=50
+                      )
                       
-                      header = f"### 🤖 AI Review ({model})\n\n"
-                      with open("ai_report.md", "w", encoding="utf-8") as f:
-                          f.write(header + report)
-                      with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                          f.write(header + report)
+                      if response.status_code == 200:
+                          data = response.json()
+                          if "choices" in data and len(data["choices"]) > 0:
+                              report = data["choices"][0]["message"]["content"]
+                              
+                              header = f"### 🤖 AI Review ({model})\n\n"
+                              with open("ai_report.md", "w", encoding="utf-8") as f:
+                                  f.write(header + report)
+                              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                                  f.write(header + report)
+                              
+                              print("✅ Successo!")
+                              success = True
+                              break # Esce dal loop tentativi
+                          else:
+                              print(f"⚠️ Risposta vuota da {model}")
+                              break
                       
-                      print("Successo!")
-                      success = True
+                      elif response.status_code == 429:
+                          print(f"⏳ Rate Limit (429) con {model}. Attendo 5s...")
+                          time.sleep(5)
+                          continue # Riprova lo stesso modello
+                          
+                      elif response.status_code == 404:
+                          print(f"❌ Modello non trovato (404): {model}. Passo al prossimo.")
+                          break # Cambia modello subito
+                          
+                      else:
+                          print(f"⚠️ Errore {response.status_code} con {model}: {response.text}")
+                          break # Cambia modello
+                          
+                  except Exception as e:
+                      print(f"⚠️ Eccezione con {model}: {e}")
                       break
-                  else:
-                      print(f"Errore {response.status_code} con {model}: {response.text}")
-                      time.sleep(1)
-                      
-              except Exception as e:
-                  print(f"Eccezione con {model}: {e}")
-                  continue
+
+              if success:
+                  break # Esce dal loop modelli (abbiamo finito)
 
           if not success:
-              err_msg = "Tutti i modelli AI sono attualmente non disponibili."
+              err_msg = "❌ Tutti i modelli AI sono falliti. Verifica i log per dettagli."
               print(err_msg)
               with open("ai_report.md", "w", encoding="utf-8") as f: f.write(err_msg)
           '
@@ -151,5 +176,5 @@ jobs:
             gh api --method POST \
               -H "Accept: application/vnd.github+json" \
               /repos/${{ github.repository }}/commits/$SHA/comments \
-              -F body=@ai_report.md || echo "Commento fallito (SHA non trovato?)"
+              -F body=@ai_report.md || echo "Impossibile commentare (SHA non valido?)"
           fi
