@@ -3,10 +3,10 @@ name: OpenRouter AI Auditor
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
-  contents: write  # Necessario per commentare sui commit
-  pull-requests: write
+  contents: read
 
 jobs:
   ai_review:
@@ -23,23 +23,22 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install Requests
         run: pip install requests
 
-      - name: Extract Commit Diff
+      - name: Extract Diff
         run: |
           BEFORE_SHA="${{ github.event.before }}"
           AFTER_SHA="${{ github.event.after }}"
           
-          # Gestione primo commit o force push
-          if [ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]; then
+          # Gestione primo commit
+          if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]; then
              git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 $AFTER_SHA > commit_diff.txt
           else
              git diff $BEFORE_SHA $AFTER_SHA > commit_diff.txt
           fi
 
-      - name: OpenRouter Analysis
-        id: ai_analysis
+      - name: AI Analysis & Summary
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -48,78 +47,78 @@ jobs:
           import requests
           import json
 
-          # Modello Free (cambia se vuoi Llama)
           MODEL = "google/gemini-2.0-flash-exp:free"
-          
           api_key = os.environ.get("OPENROUTER_API_KEY")
-          
+
+          # 1. Leggi Diff
           try:
               with open("commit_diff.txt", "r", encoding="utf-8", errors="replace") as f:
                   diff_content = f.read()
           except:
               diff_content = ""
 
-          if len(diff_content.strip()) < 10:
-              print("Diff vuoto")
+          if len(diff_content.strip()) < 5:
+              print("Diff vuoto o inesistente.")
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                  f.write("### ℹ️ Nessuna modifica al codice rilevata.")
               exit(0)
 
-          # Tronca a 25k caratteri per sicurezza
-          diff_content = diff_content[:25000]
+          # 2. Tronca (max 15k char per sicurezza)
+          diff_content = diff_content[:15000]
 
+          # 3. Chiamata AI
           prompt = f"""
-          Sei un Code Reviewer esperto. Analizza questo commit.
-          Sii BREVE e DIRETTO. Usa elenchi puntati.
+          Sei un Senior Code Reviewer. Analizza questo commit diff.
+          Rispondi in Markdown.
           
-          Se trovi:
-          1. Chiavi API in chiaro -> SCRIVILO SUBITO IN GRASSETTO CON EMOJI 🚨.
-          2. Bug logici evidenti -> Segnalali.
-          3. Codice pulito -> Scrivi solo "✅ Codice approvato."
+          Struttura la risposta così:
+          ### 📊 Analisi Commit
+          * **Stato:** [APPROVATO / ATTENZIONE / PERICOLO]
+          * **Sintesi:** (Cosa è cambiato in 1 frase)
           
+          ### 🔍 Dettagli
+          (Elenca bug, chiavi esposte o miglioramenti)
+
           DIFF:
           {diff_content}
           """
 
           try:
+              print("Invio richiesta a OpenRouter...")
               response = requests.post(
                   url="https://openrouter.ai/api/v1/chat/completions",
                   headers={
                       "Authorization": f"Bearer {api_key}",
-                      "HTTP-Referer": "https://github.com/v4-agent", 
+                      "HTTP-Referer": "https://github.com/v4-agent",
                       "Content-Type": "application/json"
                   },
-                  data=json.dumps({
+                  json={
                       "model": MODEL,
                       "messages": [{"role": "user", "content": prompt}]
-                  })
+                  },
+                  timeout=60
               )
               
               if response.status_code == 200:
-                  content = response.json()["choices"][0]["message"]["content"]
+                  report = response.json()["choices"][0]["message"]["content"]
                   
-                  # Salva il report per il prossimo step
-                  with open("ai_report.md", "w", encoding="utf-8") as f:
-                      f.write(f"### 🤖 AI Review ({MODEL})\n\n" + content)
+                  # 4. SCRITTURA NEL RIEPILOGO (GARANTITO VISIBILE)
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                      f.write(f"# 🤖 Report AI ({MODEL})\n\n")
+                      f.write(report)
                   
-                  print("Report generato con successo.")
+                  # Stampa anche nei log per debug
+                  print("-" * 20)
+                  print(report)
+                  print("-" * 20)
               else:
-                  print(f"Errore API: {response.text}")
-          except Exception as e:
-              print(f"Errore Python: {e}")
-          '
+                  error_msg = f"❌ Errore API OpenRouter: {response.status_code} - {response.text}"
+                  print(error_msg)
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                      f.write(error_msg)
 
-      - name: Post Comment on Commit
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -f ai_report.md ]; then
-            echo "Postando commento sul commit ${{ github.sha }}..."
-            
-            # Usa le API di GitHub per commentare direttamente sul commit
-            gh api \
-              --method POST \
-              -H "Accept: application/vnd.github+json" \
-              /repos/${{ github.repository }}/commits/${{ github.sha }}/comments \
-              -f body="$(cat ai_report.md)"
-          else
-            echo "Nessun report da pubblicare."
-          fi
+          except Exception as e:
+              print(f"Errore critico: {e}")
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                  f.write(f"### ❌ Errore Script: {e}")
+          '
