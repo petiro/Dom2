@@ -4,9 +4,14 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Incolla qui l SHA del vecchio commit da revisionare'
+        required: true
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 jobs:
   ai_review:
@@ -26,19 +31,37 @@ jobs:
       - name: Install Requests
         run: pip install requests
 
-      - name: Extract Diff
+      - name: Extract Diff (Smart Logic)
+        id: extract
         run: |
-          BEFORE_SHA="${{ github.event.before }}"
-          AFTER_SHA="${{ github.event.after }}"
+          # LOGICA: Se è manuale usa l'input, se è push usa l'evento
           
-          # Gestione primo commit
-          if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]; then
-             git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 $AFTER_SHA > commit_diff.txt
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TARGET_SHA="${{ inputs.commit_sha }}"
+            echo "MODALITA MANUALE: Revisione commit $TARGET_SHA"
+            
+            # Diff tra il commit scelto e il suo genitore (^)
+            git diff $TARGET_SHA^ $TARGET_SHA > commit_diff.txt
+            
+            # Salviamo lo SHA per dopo
+            echo "REVIEW_SHA=$TARGET_SHA" >> $GITHUB_ENV
+            
           else
-             git diff $BEFORE_SHA $AFTER_SHA > commit_diff.txt
+            echo "MODALITA PUSH: Revisione automatica"
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.event.after }}"
+            
+            if [ -z "$BEFORE" ] || [ "$BEFORE" == "0000000000000000000000000000000000000000" ]; then
+               git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 $AFTER > commit_diff.txt
+            else
+               git diff $BEFORE $AFTER > commit_diff.txt
+            fi
+            
+            # Salviamo lo SHA corrente
+            echo "REVIEW_SHA=$AFTER" >> $GITHUB_ENV
           fi
 
-      - name: AI Analysis & Summary
+      - name: AI Analysis
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -50,7 +73,6 @@ jobs:
           MODEL = "google/gemini-2.0-flash-exp:free"
           api_key = os.environ.get("OPENROUTER_API_KEY")
 
-          # 1. Leggi Diff
           try:
               with open("commit_diff.txt", "r", encoding="utf-8", errors="replace") as f:
                   diff_content = f.read()
@@ -58,33 +80,26 @@ jobs:
               diff_content = ""
 
           if len(diff_content.strip()) < 5:
-              print("Diff vuoto o inesistente.")
+              print("Diff vuoto.")
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                  f.write("### ℹ️ Nessuna modifica al codice rilevata.")
+                  f.write("### ℹ️ Nessuna modifica rilevante.")
               exit(0)
 
-          # 2. Tronca (max 15k char per sicurezza)
-          diff_content = diff_content[:15000]
+          # Tronca a 20k per sicurezza
+          diff_content = diff_content[:20000]
 
-          # 3. Chiamata AI
           prompt = f"""
-          Sei un Senior Code Reviewer. Analizza questo commit diff.
-          Rispondi in Markdown.
+          Sei un Code Reviewer. Analizza questo commit.
+          Formatta la risposta in Markdown pulito.
           
-          Struttura la risposta così:
-          ### 📊 Analisi Commit
-          * **Stato:** [APPROVATO / ATTENZIONE / PERICOLO]
-          * **Sintesi:** (Cosa è cambiato in 1 frase)
+          Se trovi ERRORI GRAVI (chiavi API, crash), inizia la riga con "🚨".
+          Se è tutto ok, inizia con "✅".
           
-          ### 🔍 Dettagli
-          (Elenca bug, chiavi esposte o miglioramenti)
-
           DIFF:
           {diff_content}
           """
 
           try:
-              print("Invio richiesta a OpenRouter...")
               response = requests.post(
                   url="https://openrouter.ai/api/v1/chat/completions",
                   headers={
@@ -102,23 +117,37 @@ jobs:
               if response.status_code == 200:
                   report = response.json()["choices"][0]["message"]["content"]
                   
-                  # 4. SCRITTURA NEL RIEPILOGO (GARANTITO VISIBILE)
+                  # 1. Salva per il commento
+                  with open("ai_report.md", "w", encoding="utf-8") as f:
+                      f.write(f"### 🤖 AI Review ({MODEL})\n\n{report}")
+
+                  # 2. Scrivi nel Job Summary
                   with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                      f.write(f"# 🤖 Report AI ({MODEL})\n\n")
-                      f.write(report)
+                      f.write(f"### 🤖 AI Review ({MODEL})\n\n{report}")
                   
-                  # Stampa anche nei log per debug
-                  print("-" * 20)
-                  print(report)
-                  print("-" * 20)
+                  # 3. Stampa Notice per i log
+                  print(f"::notice title=AI Review Completata::Report generato! Controlla il Job Summary o i commenti del commit.")
+                  
               else:
-                  error_msg = f"❌ Errore API OpenRouter: {response.status_code} - {response.text}"
-                  print(error_msg)
-                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                      f.write(error_msg)
+                  print(f"::error::Errore API OpenRouter: {response.text}")
 
           except Exception as e:
-              print(f"Errore critico: {e}")
-              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                  f.write(f"### ❌ Errore Script: {e}")
+              print(f"::error::Errore script Python: {e}")
           '
+
+      - name: Post Comment on Commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f ai_report.md ]; then
+            SHA_TO_COMMENT="${{ env.REVIEW_SHA }}"
+            echo "Postando commento sul commit: $SHA_TO_COMMENT"
+            
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              /repos/${{ github.repository }}/commits/$SHA_TO_COMMENT/comments \
+              -F body=@ai_report.md
+              
+            echo "Commento postato con successo!"
+          fi
