@@ -259,6 +259,10 @@ class DomExecutorPlaywright:
                 except Exception:
                     pass
 
+    def launch_browser(self):
+        """Public entry-point: initialize the browser (delegates to _ensure_browser)."""
+        return self._ensure_browser()
+
     def _ensure_browser(self):
         """Initialize browser with Stealth arguments, V4 Anti-Detection, and Hardware Spoofing."""
         if self._initialized:
