@@ -274,8 +274,13 @@ class DomExecutorPlaywright:
 
             self.pw = sync_playwright().start()
 
-            chrome_path = _detect_chrome_path() if self.use_real_chrome else None
-            chrome_profile_dir = _detect_chrome_profile() if self.use_real_chrome else None
+            # Se siamo su GitHub Actions, NON usare il Chrome di sistema
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                chrome_path = None
+                chrome_profile_dir = None
+            else:
+                chrome_path = _detect_chrome_path() if self.use_real_chrome else None
+                chrome_profile_dir = _detect_chrome_profile() if self.use_real_chrome else None
 
             # Argomenti Stealth Avanzati
             stealth_args = [
