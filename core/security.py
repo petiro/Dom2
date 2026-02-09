@@ -12,14 +12,18 @@ class Vault:
         self.vault_path = "config/vault.bin"
 
     def _generate_machine_key(self):
-        try:
-            # Comando Windows per ID Scheda Madre
-            cmd = 'wmic baseboard get serialnumber'
-            output = subprocess.check_output(cmd, shell=True).decode().splitlines()
-            # Prende la seconda riga o usa un fallback se fallisce
-            serial = output[1].strip() if len(output) > 1 else "DEFAULT_MACHINE_FALLBACK"
-        except Exception:
-            serial = "DEFAULT_MACHINE_FALLBACK"
+        if os.environ.get("CI_MODE") == "1":
+            serial = "GITHUB_ACTIONS_TEST_ID"
+        else:
+            try:
+                # Comando Windows per ID Scheda Madre
+                cmd = 'wmic baseboard get serialnumber'
+                output = subprocess.check_output(cmd, shell=True).decode().splitlines()
+                # Prende la seconda riga o usa un fallback se fallisce
+                serial = output[1].strip() if len(output) > 1 else "DEFAULT_MACHINE_FALLBACK"
+            except Exception:
+                # Fallback universale se WMIC fallisce (Windows 11/Server 2022)
+                serial = os.environ.get('COMPUTERNAME', 'UNKNOWN_HOST')
             
         # Crea chiave a 32 byte
         hash_key = hashlib.sha256(serial.encode()).digest()
