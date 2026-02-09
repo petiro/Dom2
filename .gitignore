@@ -1,7 +1,10 @@
 build/
+dist/
 __pycache__/
 *.pyc
 *.pyo
 logs/*.log
 *.egg-info/
 .env
+config/vault.bin
+*.spec
