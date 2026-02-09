@@ -286,11 +286,11 @@ class SuperAgentController(QObject):
     def _on_resource_warning(self, msg: str):
         """Handle resource warnings from SystemWatchdog."""
         self._log(f"[Watchdog] {msg}")
-        # If executor supports memory_check, trigger it
-        if self.executor and hasattr(self.executor, 'memory_check'):
+        # If executor supports check_and_recycle, trigger it
+        if self.executor and hasattr(self.executor, 'check_and_recycle'):
             try:
                 with self._executor_lock:
-                    self.executor.memory_check()
+                    self.executor.check_and_recycle()
             except Exception as e:
                 self.logger.warning(f"[Controller] Memory check triggered by warning failed: {e}")
 

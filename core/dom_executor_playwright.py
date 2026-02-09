@@ -374,12 +374,10 @@ class DomExecutorPlaywright:
             return False
 
     # ------------------------------------------------------------------
-    #  V4: Memory Check (browser recycling)
+    #  V4: Page Count Recycling
     # ------------------------------------------------------------------
-    def memory_check(self, max_pages: int = 50, max_interval: int = 3600):
-        """Check if browser needs recycling to prevent memory leaks.
-        Closes and reopens browser context after too many page loads
-        or after a time interval."""
+    def check_and_recycle(self, max_pages: int = 50, max_interval: int = 3600):
+        """Check if browser needs recycling based on page count or time interval."""
         should_recycle = False
 
         if self._page_count > max_pages:
