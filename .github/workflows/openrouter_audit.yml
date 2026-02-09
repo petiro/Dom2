@@ -51,7 +51,7 @@ jobs:
             echo "REVIEW_SHA=$AFTER" >> $GITHUB_ENV
           fi
 
-      - name: AI Analysis
+      - name: AI Analysis (Smart Fallback)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -59,9 +59,15 @@ jobs:
           import os
           import requests
           import json
+          import time
 
-          # Llama 3.3 70B: stable, free, good at code review
-          MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+          # Fallback list: if first model is busy (429), try next
+          MODELS = [
+              "google/gemini-2.0-flash-lite-preview-02-05:free",
+              "meta-llama/llama-3.3-70b-instruct:free",
+              "deepseek/deepseek-r1-distill-llama-70b:free",
+              "microsoft/phi-3-mini-128k-instruct:free"
+          ]
           
           api_key = os.environ.get("OPENROUTER_API_KEY")
 
@@ -73,7 +79,7 @@ jobs:
 
           if len(diff_content.strip()) < 5:
               print("Diff vuoto.")
-              with open("ai_report.md", "w") as f: f.write("Nessuna modifica.")
+              with open("ai_report.md", "w") as f: f.write("Nessuna modifica rilevante.")
               exit(0)
 
           diff_content = diff_content[:30000]
@@ -91,37 +97,49 @@ jobs:
           Sii BREVE.
           """
 
-          try:
-              response = requests.post(
-                  url="https://openrouter.ai/api/v1/chat/completions",
-                  headers={
-                      "Authorization": f"Bearer {api_key}",
-                      "HTTP-Referer": "https://github.com/v4-agent",
-                      "Content-Type": "application/json"
-                  },
-                  json={
-                      "model": MODEL,
-                      "messages": [{"role": "user", "content": prompt}]
-                  },
-                  timeout=60
-              )
-              
-              if response.status_code == 200:
-                  report = response.json()["choices"][0]["message"]["content"]
+          success = False
+          
+          for model in MODELS:
+              print(f"Tentativo con modello: {model}...")
+              try:
+                  response = requests.post(
+                      url="https://openrouter.ai/api/v1/chat/completions",
+                      headers={
+                          "Authorization": f"Bearer {api_key}",
+                          "HTTP-Referer": "https://github.com/v4-agent",
+                          "Content-Type": "application/json"
+                      },
+                      json={
+                          "model": model,
+                          "messages": [{"role": "user", "content": prompt}]
+                      },
+                      timeout=45
+                  )
                   
-                  with open("ai_report.md", "w", encoding="utf-8") as f:
-                      f.write(f"### 🦙 Llama Review ({MODEL})\n\n{report}")
+                  if response.status_code == 200:
+                      report = response.json()["choices"][0]["message"]["content"]
                       
-                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-                      f.write(f"### 🦙 Llama Review ({MODEL})\n\n{report}")
-                  
-              else:
-                  err = f"Errore API {response.status_code}: {response.text}"
-                  print(err)
-                  with open("ai_report.md", "w") as f: f.write(err)
+                      header = f"### 🤖 AI Review ({model})\n\n"
+                      with open("ai_report.md", "w", encoding="utf-8") as f:
+                          f.write(header + report)
+                      with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                          f.write(header + report)
+                      
+                      print("Successo!")
+                      success = True
+                      break
+                  else:
+                      print(f"Errore {response.status_code} con {model}: {response.text}")
+                      time.sleep(1)
+                      
+              except Exception as e:
+                  print(f"Eccezione con {model}: {e}")
+                  continue
 
-          except Exception as e:
-              print(f"Errore Script: {e}")
+          if not success:
+              err_msg = "Tutti i modelli AI sono attualmente non disponibili."
+              print(err_msg)
+              with open("ai_report.md", "w", encoding="utf-8") as f: f.write(err_msg)
           '
 
       - name: Post Comment
