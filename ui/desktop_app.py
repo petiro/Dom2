@@ -117,7 +117,7 @@ class OpenRouterWorker(QThread):
                            "temperature": 0.7, "max_tokens": 1000}
                 response = session.post(
                     "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers, json=payload, timeout=15)
+                    headers=headers, json=payload, timeout=10)
                 if response.status_code == 200:
                     data = response.json()
                     if "choices" in data and len(data["choices"]) > 0:
@@ -348,9 +348,12 @@ class RobotFactoryTab(QWidget):
 
     def delete_robot(self):
         name = self.current_robot_name
+        if not name or name not in self.robots_data:
+            return
         confirm = QMessageBox.question(self, "Elimina", f"Cancellare {name}?", QMessageBox.Yes | QMessageBox.No)
         if confirm == QMessageBox.Yes:
             del self.robots_data[name]
+            self.current_robot_name = None
             self.save_data()
             self.right_panel.setVisible(False)
             self.refresh_list()
@@ -382,6 +385,8 @@ class RobotFactoryTab(QWidget):
             return
 
         name = self.current_robot_name
+        if not name or name not in self.robots_data:
+            return
         self.set_ui_busy(True)
         self.append_chat_visual("user", text)
         self.robots_data[name]["chat_history"].append({"role": "user", "content": text})
@@ -402,12 +407,14 @@ class RobotFactoryTab(QWidget):
         self.chat_display.moveCursor(QTextCursor.End)
 
     def on_ai_response(self, text):
+        name = self.current_robot_name
         self.append_chat_visual("assistant", text)
-        self.robots_data[self.current_robot_name]["chat_history"].append({"role": "assistant", "content": text})
-        self.save_data()
+        if name and name in self.robots_data:
+            self.robots_data[name]["chat_history"].append({"role": "assistant", "content": text})
+            self.save_data()
         main_win = self.window()
-        if hasattr(main_win, "supervisor"):
-            main_win.supervisor.report_activity(self.current_robot_name, success=True)
+        if name and hasattr(main_win, "supervisor"):
+            main_win.supervisor.report_activity(name, success=True)
 
     def append_chat_visual(self, role, text):
         if role == "system":
@@ -498,13 +505,14 @@ class SupervisorTab(QWidget):
             row += 1
 
     def report_activity(self, robot_name, success):
-        if robot_name not in self.stats:
+        if not robot_name or robot_name not in self.stats:
             return
         self.stats[robot_name]["calls"] += 1
         if not success:
             self.stats[robot_name]["errors"] += 1
         else:
-            self.stats[robot_name]["errors"] = 0
+            # Decrement instead of reset so threshold remains reachable
+            self.stats[robot_name]["errors"] = max(0, self.stats[robot_name]["errors"] - 1)
 
     def force_stop_agent(self, name, reason):
         if name in self.factory.robots_data and self.factory.robots_data[name]["active"]:

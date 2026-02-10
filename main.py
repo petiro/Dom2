@@ -13,7 +13,6 @@ import ctypes
 
 # --- SISTEMA AUTO-LOG (Scatola Nera) ---
 def setup_logging():
-    log_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "debug_log.txt")
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
 
@@ -21,15 +20,10 @@ def setup_logging():
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # File Handler con encoding corretto
-    file_handler = logging.FileHandler(log_path, encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
-    # Stream Handler per la console
+    # Stream Handler per la console (file logging handled by RotatingFileHandler in setup_logger)
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 
-    root_logger.addHandler(file_handler)
     root_logger.addHandler(stream_handler)
 
     logging.info("--- LOGGING INIZIALIZZATO CORRETTAMENTE ---")
