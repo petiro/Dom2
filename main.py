@@ -9,7 +9,6 @@ import sys
 import time
 import logging
 import threading
-import ctypes
 
 # --- SISTEMA AUTO-LOG (Scatola Nera) ---
 def setup_logging():
@@ -28,15 +27,14 @@ def setup_logging():
     logging.info(f"Cartella di esecuzione: {os.getcwd()}")
     logging.info(f"Sistema Operativo: {sys.platform}")
 
-# Esegui il setup immediatamente
-setup_logging()
 # ---------------------------------------
 
 def is_admin():
-    if sys.platform != 'win32':
-        return True  # UAC check only relevant on Windows
+    if sys.platform != "win32":
+        return True
     try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except Exception:
         return False
 
@@ -50,10 +48,6 @@ sys.path.insert(0, BASE_DIR)
 from PySide6.QtWidgets import QApplication, QSplashScreen, QLabel
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QFont, QColor
-
-# --- MONITORAGGIO HEARTBEAT (global, for backward compat) ---
-last_heartbeat = time.time()
-
 
 def setup_logger():
     from logging.handlers import RotatingFileHandler

@@ -32,7 +32,6 @@ class ConfigValidator:
     """Validate config.yaml at startup and report missing/invalid fields."""
 
     REQUIRED = {
-        "openrouter.api_key": str,
         "rpa.pin": str,
     }
 

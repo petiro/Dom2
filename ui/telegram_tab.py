@@ -12,6 +12,11 @@ from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QFont
 from datetime import datetime
 
+try:
+    from gateway.telegram_parser_fixed import TelegramParser
+except Exception:
+    TelegramParser = None
+
 
 class TelegramParseWorker(QThread):
     """Worker thread for parsing a single message with AI (avoids blocking UI)"""
@@ -307,7 +312,8 @@ class TelegramTab(QWidget):
         self.disconnect_btn.setEnabled(True)
 
         # Create parser
-        from core.signal_parser import TelegramSignalParser as TelegramParser
+        if TelegramParser is None:
+            return
         parser = TelegramParser(self.logger, api_key=None)
 
         # Start listener thread

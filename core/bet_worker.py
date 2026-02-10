@@ -27,7 +27,7 @@ class BetWorker(QThread):
                 return
 
             # 2. Find odds on page
-            odds = self.executor.find_odds(self.match, self.market)
+            odds = self.executor.get_current_odds()
             if not odds or odds <= 1.0:
                 self.finished.emit({"status": "error", "msg": "Quota non trovata o <= 1.0"})
                 return
@@ -40,7 +40,11 @@ class BetWorker(QThread):
             self.log.emit("info", f"Stake Roserpina: EUR {stake} @ {odds}")
 
             # 4. Place bet (takes selectors dict)
-            if self.executor.place_bet(selectors):
+            if self.executor.place_bet({
+                "match": self.match,
+                "market": self.market,
+                "stake": stake
+            }):
                 self.finished.emit({"status": "placed", "stake": stake, "odds": odds})
             else:
                 self.finished.emit({"status": "error", "msg": "Piazzamento fallito"})
