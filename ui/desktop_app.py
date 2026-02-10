@@ -189,7 +189,7 @@ class RPAWorker(QThread):
         if market and not self.executor.select_market(market, selectors):
             self.bet_error.emit(f"Could not select market: {market}")
             return
-        result = self.executor.place_bet(selectors)
+        result = self.executor.place_bet(teams, market, None)
         signal_data["placed"] = result
         signal_data["timestamp"] = datetime.now().isoformat()
         self.bet_placed.emit(signal_data)

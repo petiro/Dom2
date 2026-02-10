@@ -463,19 +463,6 @@ Confidence: HIGH
         else:
             QMessageBox.warning(self, "Parser Test", "Failed to parse test message")
 
-    def _on_signal_for_executor(self, signal_data):
-        """Handle parsed signal via Qt Signal/Slot — thread-safe executor access.
-        This runs on the main thread, so calling executor methods is safe."""
-        if self.executor and signal_data:
-            try:
-                if self.logger:
-                    self.logger.info(f"Dispatching signal to executor: {signal_data}")
-                if hasattr(self.executor, 'handle_signal'):
-                    self.executor.handle_signal(signal_data)
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"Executor signal handling failed: {e}")
-
     def get_settings(self):
         """Get Telegram settings"""
         return {

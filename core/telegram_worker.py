@@ -1,6 +1,11 @@
-from telethon import TelegramClient, events
 from PySide6.QtCore import QThread, Signal
 import asyncio
+
+try:
+    from telethon import TelegramClient, events
+    TELETHON_AVAILABLE = True
+except ImportError:
+    TELETHON_AVAILABLE = False
 
 class TelegramWorker(QThread):
     chats_loaded = Signal(list)
@@ -15,6 +20,8 @@ class TelegramWorker(QThread):
         self.loop = asyncio.new_event_loop()
 
     def run(self):
+        if not TELETHON_AVAILABLE:
+            return
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self._main())
 

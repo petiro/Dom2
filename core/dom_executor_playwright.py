@@ -707,16 +707,26 @@ class DomExecutorPlaywright:
 
     def recycle_browser(self):
         try:
+            if self.page:
+                try:
+                    self.page.close()
+                except Exception:
+                    pass
+
             if self.ctx:
                 self.ctx.close()
 
             if self.browser and hasattr(self.browser, "close"):
                 self.browser.close()
 
+            if self.pw:
+                self.pw.stop()
+
         except Exception as e:
             self.logger.error(f"Recycle error: {e}")
 
         finally:
+            self.pw = None
             self.browser = None
             self.ctx = None
             self.page = None
@@ -1164,7 +1174,7 @@ class DomExecutorPlaywright:
             self.logger.error(f"handle_signal: could not select market {market}")
             return False
 
-        return self.place_bet(selectors_or_match=selectors, market=None, stake=None)
+        return self.place_bet(teams, market, None)
 
     def close(self):
         """Clean up browser resources (page, context, browser, playwright)."""

@@ -393,7 +393,10 @@ class SuperAgentController(QObject):
             return self.executor.select_market(params.get("market", ""), selectors)
         elif action == "place_bet":
             self.state_manager.set_state(AgentState.BETTING)
-            return self.executor.place_bet(selectors)
+            return self.executor.place_bet(
+                params.get("teams", ""), params.get("market", ""),
+                params.get("amount")
+            )
         else:
             self._log(f"[Controller] Unknown step action: {action}")
             return False
@@ -455,7 +458,7 @@ class SuperAgentController(QObject):
 
                 # State: BETTING
                 self.state_manager.transition(AgentState.BETTING)
-                result = self.executor.place_bet(selectors)
+                result = self.executor.place_bet(teams, market, None)
 
             # Record result
             self._bet_results.append({
@@ -675,7 +678,8 @@ class SuperAgentController(QObject):
         if not data['match']:
             return
 
-        # 3. Avvio Thread Scommessa (is_pending gestito da BetWorker.run)
+        # 3. Avvio Thread Scommessa
+        self.table.is_pending = True
         self.bet_worker = BetWorker(self.table, self.executor, data)
 
         self.bet_worker.finished.connect(self.on_bet_complete)

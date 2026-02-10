@@ -91,7 +91,7 @@ class CommandParser:
             ))
 
         # Step 4: Place bet
-        bet_params = {}
+        bet_params = {"teams": teams, "market": market}
         if amount:
             bet_params["amount"] = amount
         steps.append(TaskStep(
