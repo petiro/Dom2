@@ -744,13 +744,21 @@ class DomExecutorPlaywright:
     # ------------------------------------------------------------------
     #  Core: Place Bet
     # ------------------------------------------------------------------
-    def place_bet(self, match, market, stake):
-        self.logger.info(f"Piazzamento: {match} | {market} | {stake}")
-        selectors = {
-            "match": match,
-            "market": market,
-            "stake": stake
-        }
+    def place_bet(self, selectors_or_match, market=None, stake=None):
+        if isinstance(selectors_or_match, dict):
+            s = selectors_or_match
+        else:
+            s = {
+                "match": selectors_or_match,
+                "market": market,
+                "stake": stake
+            }
+
+        self.logger.info(
+            f"Piazzamento scommessa: {s.get('match')} | "
+            f"{s.get('market')} | {s.get('stake')}"
+        )
+
         return True
 
     def _wait_for_page_ready(self, timeout=15000):
@@ -1100,7 +1108,7 @@ class DomExecutorPlaywright:
             self.logger.error(f"handle_signal: could not select market {market}")
             return False
 
-        return self.place_bet(selectors)
+        return self.place_bet(selectors_or_match=selectors)
 
     def close(self):
         """Clean up browser resources (page, context, browser, playwright)."""

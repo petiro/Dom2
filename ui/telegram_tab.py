@@ -310,12 +310,12 @@ class TelegramTab(QWidget):
 
         # Create parser
         try:
-            from core.signal_parser import SignalParser as TelegramParser
+            from core.signal_parser import TelegramSignalParser as SignalParser
         except ImportError:
-            class TelegramParser:
+            class SignalParser:
                 def parse(self, text):
                     return None
-        parser = TelegramParser()
+        parser = SignalParser()
 
         # Start listener thread
         self.listener_thread = TelegramListenerThread(

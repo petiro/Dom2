@@ -35,7 +35,7 @@ def is_admin():
         return True
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+    except Exception:
         return False
 
 if not is_admin():
@@ -48,6 +48,8 @@ sys.path.insert(0, BASE_DIR)
 from PySide6.QtWidgets import QApplication, QSplashScreen, QLabel
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QFont, QColor
+
+last_heartbeat = 0
 
 def setup_logger():
     from logging.handlers import RotatingFileHandler
@@ -209,6 +211,7 @@ class SystemBootThread(QThread):
 
 def main():
     logger = setup_logger()
+    setup_logging()
     logger.info("SUPERAGENT V4 STARTUP (H24 MODE)")
 
     config = load_config()

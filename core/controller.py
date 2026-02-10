@@ -676,16 +676,16 @@ class SuperAgentController(QObject):
         # 3. Avvio Thread Scommessa
         self.table.is_pending = True
         self.bet_worker = BetWorker(self.table, self.executor, data)
-        self.bet_worker.log.connect(lambda level, msg: self.safe_emit(self.log_message, msg))
+
         self.bet_worker.finished.connect(self.on_bet_complete)
         self.bet_worker.start()
 
     def on_bet_complete(self, result):
-        if result["status"] == "placed":
-            self.safe_emit(self.log_message, f"✅ Bet Piazzata: €{result['stake']}")
+        if result:
+            self.safe_emit(self.log_message, "Bet Piazzata")
         else:
             self.table.is_pending = False
-            self.safe_emit(self.log_message, f"❌ Errore Bet: {result.get('msg')}")
+            self.safe_emit(self.log_message, "Errore Bet")
 
     # ------------------------------------------------------------------
     #  Shutdown (V4: graceful with _stop_event)
