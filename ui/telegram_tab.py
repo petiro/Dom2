@@ -307,7 +307,7 @@ class TelegramTab(QWidget):
         self.disconnect_btn.setEnabled(True)
 
         # Create parser
-        from gateway.telegram_parser_fixed import TelegramParser
+        from core.signal_parser import TelegramSignalParser as TelegramParser
         parser = TelegramParser(self.logger, api_key=None)
 
         # Start listener thread

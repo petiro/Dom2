@@ -709,10 +709,17 @@ class DomExecutorPlaywright:
         """Close and reopen browser to free RAM."""
         self.logger.info("Recycling Browser (Memory Cleanup)...")
         try:
-            self.ctx.close()
-            self.browser.close()
-        except Exception:
-            pass
+            if self.ctx:
+                self.ctx.close()
+            if self.browser and hasattr(self.browser, 'close'):
+                self.browser.close()
+        except Exception as e:
+            self.logger.warning(f"Error during browser recycle cleanup: {e}")
+        self._initialized = False
+        self.ctx = None
+        self.browser = None
+        self.page = None
+        self._human_input = None
         time.sleep(2)
         self._ensure_browser()
 
@@ -729,6 +736,26 @@ class DomExecutorPlaywright:
         except Exception as e:
             self.logger.error(f"Screenshot failed: {e}")
             return ""
+
+    # ------------------------------------------------------------------
+    #  Core: Find Odds (for BetWorker)
+    # ------------------------------------------------------------------
+    def find_odds(self, match, market):
+        """Extract odds value for a given match/market from the current page.
+        Returns float odds or None if not found."""
+        if not self._ensure_browser():
+            return None
+        try:
+            # Look for odds element near the market text
+            odds_loc = self.page.locator(f"text={market}").first
+            odds_loc.wait_for(state="visible", timeout=5000)
+            # Try to find the adjacent odds value
+            parent = odds_loc.locator("xpath=..")
+            odds_text = parent.locator(".odds, .price, [class*='odds'], [class*='price']").first.inner_text()
+            return float(odds_text.replace(",", ".").strip())
+        except Exception as e:
+            self.logger.warning(f"find_odds failed for {match}/{market}: {e}")
+            return None
 
     # ------------------------------------------------------------------
     #  Core: Place Bet

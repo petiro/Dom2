@@ -13,20 +13,34 @@ class BetWorker(QThread):
 
     def run(self):
         try:
-            self.log.emit("info", f"🕵️ Scouting: {self.match} | {self.market}")
-            
-            # 1. Trova Quota (Bloccante)
-            odds = self.executor.find_odds(self.match, self.market)
-            if not odds or odds <= 1.0:
-                self.finished.emit({"status": "error", "msg": "Quota non trovata"})
+            self.log.emit("info", f"Scouting: {self.match} | {self.market}")
+
+            # 1. Navigate to match and select market
+            selectors = self.executor._load_selectors()
+
+            if not self.executor.navigate_to_match(self.match, selectors):
+                self.finished.emit({"status": "error", "msg": "Match non trovato"})
                 return
 
-            # 2. Calcola Stake
-            stake = self.table.calculate_stake(odds)
-            self.log.emit("info", f"💰 Stake Roserpina: €{stake} @ {odds}")
+            if not self.executor.select_market(self.market, selectors):
+                self.finished.emit({"status": "error", "msg": "Mercato non trovato"})
+                return
 
-            # 3. Piazza Scommessa
-            if self.executor.place_bet(self.match, self.market, stake):
+            # 2. Find odds on page
+            odds = self.executor.find_odds(self.match, self.market)
+            if not odds or odds <= 1.0:
+                self.finished.emit({"status": "error", "msg": "Quota non trovata o <= 1.0"})
+                return
+
+            # 3. Calculate stake via Roserpina
+            stake = self.table.calculate_stake(odds)
+            if stake <= 0:
+                self.finished.emit({"status": "error", "msg": "Stake calcolato a 0"})
+                return
+            self.log.emit("info", f"Stake Roserpina: EUR {stake} @ {odds}")
+
+            # 4. Place bet (takes selectors dict)
+            if self.executor.place_bet(selectors):
                 self.finished.emit({"status": "placed", "stake": stake, "odds": odds})
             else:
                 self.finished.emit({"status": "error", "msg": "Piazzamento fallito"})

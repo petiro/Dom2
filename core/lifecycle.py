@@ -30,6 +30,7 @@ class SystemWatchdog(QThread):
     request_restart = Signal()
     resource_warning = Signal(str)
     browser_died = Signal()
+    request_recycle = Signal()
 
     def __init__(self, check_interval: int = 30, executor=None, logger=None):
         super().__init__()
@@ -85,14 +86,14 @@ class SystemWatchdog(QThread):
                     if hasattr(self, 'logger') and self.logger:
                         self.logger.warning(f"[Watchdog] Check failed: {e}")
 
-            # 4. Browser memory recycle trigger
+            # 4. Browser memory recycle trigger (emit signal, never touch Playwright directly)
             if self.executor and hasattr(self.executor, 'memory_check'):
                 try:
                     browser_mb = self.executor.memory_check()
                     if browser_mb > 1500:  # 1.5GB
                         if self.logger:
-                            self.logger.warning(f"[Watchdog] High Browser Memory ({browser_mb:.0f} MB) - Triggering Recycle")
-                        self.executor.recycle_browser()
+                            self.logger.warning(f"[Watchdog] High Browser Memory ({browser_mb:.0f} MB) - Requesting Recycle")
+                        self.request_recycle.emit()
                 except Exception as e:
                     if hasattr(self, 'logger') and self.logger:
                         self.logger.warning(f"[Watchdog] Browser memory check failed: {e}")

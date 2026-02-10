@@ -33,6 +33,8 @@ setup_logging()
 # ---------------------------------------
 
 def is_admin():
+    if sys.platform != 'win32':
+        return True  # UAC check only relevant on Windows
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception:
@@ -108,28 +110,16 @@ class SystemBootThread(QThread):
         except Exception as e:
             self.logger.error(f"Config validation failed: {e}")
 
-        # 2. AI initialization
+        # 2. AI initialization (ai/ modules removed — placeholders for future re-integration)
         self.progress.emit("Initializing AI engines...")
         vision = None
         telegram_learner = None
-        try:
-            from ai.vision_learner import VisionLearner
-            from ai.telegram_learner import TelegramLearner
-            vision = VisionLearner(api_key=self.config.get("openrouter", {}).get("api_key"), logger=self.logger)
-            telegram_learner = TelegramLearner(vision_learner=vision, logger=self.logger)
-        except Exception as e:
-            self.logger.error(f"AI init failed: {e}")
+        self.logger.info("AI modules not available (ai/ removed) — skipping")
         components["vision"] = vision
         components["telegram_learner"] = telegram_learner
 
-        # 3. RPA Healer
-        self.progress.emit("Loading RPA Healer...")
+        # 3. RPA Healer (ai/ modules removed)
         rpa_healer = None
-        try:
-            from ai.rpa_healer import RPAHealer
-            rpa_healer = RPAHealer(vision_learner=vision, logger=self.logger)
-        except Exception as e:
-            self.logger.error(f"Healer init failed: {e}")
         components["rpa_healer"] = rpa_healer
 
         # 4. Kill Chrome + Executor

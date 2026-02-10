@@ -147,7 +147,19 @@ class SuperAgentController(QObject):
         if watchdog:
             watchdog.browser_died.connect(self.on_browser_died)
             watchdog.resource_warning.connect(self._on_resource_warning)
+            if hasattr(watchdog, 'request_recycle'):
+                watchdog.request_recycle.connect(self._on_recycle_request)
             self._log("[Controller] SystemWatchdog connected")
+
+    @Slot()
+    def _on_recycle_request(self):
+        """Handle browser recycle request from watchdog (thread-safe)."""
+        if self.executor:
+            try:
+                with self._executor_lock:
+                    self.executor.recycle_browser()
+            except Exception as e:
+                self.logger.warning(f"[Controller] Browser recycle failed: {e}")
 
     def _init_os_human(self):
         """Lazy-init HumanOS for desktop-level recovery."""
