@@ -269,6 +269,13 @@ class DomExecutorPlaywright:
             return True
 
         try:
+            # PyInstaller frozen EXE: set Playwright browsers path
+            if getattr(sys, "frozen", False):
+                from pathlib import Path
+                pw_browsers = Path(sys._MEIPASS) / "ms-playwright"
+                if pw_browsers.exists():
+                    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(pw_browsers)
+
             # Remove stale lock files from previous crash (critical for H24)
             self._ensure_profile_unlocked()
 
@@ -348,6 +355,12 @@ class DomExecutorPlaywright:
         Use this when Chrome is opened from desktop (HumanOS).
         """
         try:
+            if getattr(sys, "frozen", False):
+                from pathlib import Path
+                pw_browsers = Path(sys._MEIPASS) / "ms-playwright"
+                if pw_browsers.exists():
+                    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(pw_browsers)
+
             self.pw = sync_playwright().start()
             self.browser = self.pw.chromium.connect_over_cdp(cdp_url)
             self.ctx = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
@@ -1152,33 +1165,6 @@ class DomExecutorPlaywright:
         except Exception as e:
             self.logger.critical(f"Sessione irrecuperabile: {e}. Richiesta chiusura controllata.")
             sys.exit(1)
-
-    def handle_signal(self, signal_data: dict):
-        """Handle a parsed Telegram signal — navigate, select market, place bet.
-        Called from the main thread via Qt Signal/Slot."""
-        teams = signal_data.get("teams", "")
-        market = signal_data.get("market", "")
-        self.logger.info(f"handle_signal: {teams} / {market}")
-
-        if not self._ensure_browser():
-            self.logger.error("handle_signal: browser not available")
-            return False
-
-        selectors = self._load_selectors()
-
-        if not self.ensure_login(selectors):
-            self.logger.error("handle_signal: login failed")
-            return False
-
-        if teams and not self.navigate_to_match(teams, selectors):
-            self.logger.error(f"handle_signal: could not find match {teams}")
-            return False
-
-        if market and not self.select_market(market, selectors):
-            self.logger.error(f"handle_signal: could not select market {market}")
-            return False
-
-        return self.place_bet(teams, market, None)
 
     def close(self):
         """Clean up browser resources (page, context, browser, playwright)."""

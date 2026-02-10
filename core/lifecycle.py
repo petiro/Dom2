@@ -86,10 +86,15 @@ class SystemWatchdog(QThread):
                     if hasattr(self, 'logger') and self.logger:
                         self.logger.warning(f"[Watchdog] Check failed: {e}")
 
-            # 4. Browser memory recycle trigger (emit signal, never touch Playwright directly)
-            if self.executor and hasattr(self.executor, 'memory_check'):
+            # 4. Browser memory recycle trigger (pure psutil, no executor dependency)
+            if PSUTIL_AVAILABLE:
                 try:
-                    browser_mb = self.executor.memory_check()
+                    parent = psutil.Process()
+                    browser_mem = 0
+                    for child in parent.children(recursive=True):
+                        if "chrome" in child.name().lower():
+                            browser_mem += child.memory_info().rss
+                    browser_mb = browser_mem / (1024 * 1024)
                     if browser_mb > 1500:  # 1.5GB
                         if self.logger:
                             self.logger.warning(f"[Watchdog] High Browser Memory ({browser_mb:.0f} MB) - Requesting Recycle")
