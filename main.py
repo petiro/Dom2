@@ -28,6 +28,8 @@ def setup_logging():
     logging.info(f"Cartella di esecuzione: {os.getcwd()}")
     logging.info(f"Sistema Operativo: {sys.platform}")
 
+# Esegui il setup immediatamente (prima del controllo admin)
+setup_logging()
 # ---------------------------------------
 
 def is_admin():
@@ -211,7 +213,6 @@ class SystemBootThread(QThread):
 
 def main():
     logger = setup_logger()
-    setup_logging()
     logger.info("SUPERAGENT V4 STARTUP (H24 MODE)")
 
     config = load_config()
