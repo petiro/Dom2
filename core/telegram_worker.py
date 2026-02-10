@@ -19,10 +19,17 @@ class TelegramWorker(QThread):
         self.loop.run_until_complete(self._main())
 
     def stop(self):
-        if self.client:
-            self.loop.call_soon_threadsafe(self.client.disconnect)
+        if self.client and self.loop and not self.loop.is_closed():
+            try:
+                import asyncio
+                future = asyncio.run_coroutine_threadsafe(
+                    self.client.disconnect(), self.loop
+                )
+                future.result(timeout=5)
+            except Exception:
+                pass
         self.quit()
-        self.wait()
+        self.wait(5000)
 
     async def _main(self):
         self.client = TelegramClient('session_v4', self.api_id, self.api_hash)

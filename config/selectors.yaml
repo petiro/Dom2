@@ -22,10 +22,11 @@ score:
   - ".sip-MarketScoreContainer"
 
 # Bet placement
-bet_button: 'button:has-text("Piazza")'
+bet_button: ".btn-PlaceBet"
 bet_slip: ".bs-BetslipContent"
-stake_input: ".bs-StakeBox input"
+stake_input: ".stb-StakeBox_Input"
 
 # Odds display
-odds_value: ".sac-ParticipantOddsOnly80_Odds"
+odds_value: ".gl-ParticipantOddsOnly_Odds"
+market_group: ".gl-MarketGroup"
 event_name: ".rcl-ParticipantFixtureDetails_TeamNames"

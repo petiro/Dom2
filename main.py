@@ -67,9 +67,10 @@ def setup_logger():
         encoding='utf-8',
     )
     file_handler.setFormatter(fmt)
-    root = logging.getLogger()
-    root.addHandler(file_handler)
-    return logging.getLogger("SuperAgent")
+    # Add rotating handler to named logger only (root already has handlers from setup_logging)
+    sa_logger = logging.getLogger("SuperAgent")
+    sa_logger.addHandler(file_handler)
+    return sa_logger
 
 
 def load_config():

@@ -1,3 +1,5 @@
 system:
-  stealth_mode: "pro"
   debug_level: "info"
+
+rpa:
+  stealth_mode: "pro"

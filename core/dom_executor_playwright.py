@@ -720,6 +720,8 @@ class DomExecutorPlaywright:
             self.browser = None
             self.ctx = None
             self.page = None
+            self._initialized = False
+            self._human_input = None
 
     # ------------------------------------------------------------------
     #  Screenshot to Base64
@@ -739,7 +741,12 @@ class DomExecutorPlaywright:
     #  Core: Find Odds (for BetWorker)
     # ------------------------------------------------------------------
     def find_odds(self, match_name, market_name):
-        """Ricerca reale della quota su Bet365."""
+        """Ricerca reale della quota su Bet365.
+
+        Returns:
+            tuple: (odds_value: float, odds_locator) on success,
+                   (0.0, None) on failure.
+        """
         try:
             self.logger.info(f"Ricerca quota reale per: {match_name} -> {market_name}")
             # 1. Attende che la pagina sia carica
@@ -754,12 +761,12 @@ class DomExecutorPlaywright:
             if odds_element.is_visible():
                 str_odds = odds_element.inner_text().strip()
                 self.logger.info(f"Quota trovata: {str_odds}")
-                return float(str_odds)
+                return float(str_odds), odds_element
 
-            return 0.0
+            return 0.0, None
         except Exception as e:
             self.logger.error(f"Errore ricerca quota Bet365: {e}")
-            return 0.0
+            return 0.0, None
 
     # ------------------------------------------------------------------
     #  Core: Place Bet
@@ -783,8 +790,11 @@ class DomExecutorPlaywright:
             self.logger.info(f"Avvio piazzamento: {bet_stake} su {match}")
 
             # 1. Clicca sulla quota per aggiungerla alla schedina
-            self.find_odds(match, market_name)
-            self.page.locator(".gl-ParticipantOddsOnly_Odds").first.click()
+            odds_value, odds_locator = self.find_odds(match, market_name)
+            if not odds_locator:
+                self.logger.error("Quota non trovata, impossibile piazzare")
+                return False
+            odds_locator.click()
 
             # 2. Gestione Schedina (Bet Slip)
             stake_input = self.page.locator(".stb-StakeBox_Input")

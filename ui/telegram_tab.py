@@ -83,7 +83,7 @@ class TelegramListenerThread(QThread):
 
                     # Parse in this background thread (does NOT block UI)
                     try:
-                        result = parser_ref.parse_signal(text)
+                        result = parser_ref.parse(text)
                         if result:
                             if logger_ref:
                                 logger_ref.info(f"Parsed signal: {result}")
@@ -330,11 +330,8 @@ class TelegramTab(QWidget):
         self.listener_thread.status_changed.connect(self.on_status_changed)
         self.listener_thread.error_occurred.connect(self.on_error)
 
-        # Connect parsed signals to executor via Qt Signal/Slot (thread-safe)
-        if self.executor and hasattr(self.executor, 'handle_signal'):
-            self.listener_thread.signal_parsed.connect(self._on_signal_for_executor)
-
-        # Re-emit parsed signals as widget-level signal_received for MainWindow routing
+        # Emit parsed signals as widget-level signal_received for MainWindow routing
+        # (routed through Controller via RPAWorker — single path, no duplication)
         self.listener_thread.signal_parsed.connect(
             lambda data: self.signal_received.emit(data) if isinstance(data, dict) else None
         )

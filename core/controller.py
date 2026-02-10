@@ -682,10 +682,10 @@ class SuperAgentController(QObject):
         self.bet_worker.start()
 
     def on_bet_complete(self, result):
+        self.table.is_pending = False
         if result:
             self.safe_emit(self.log_message, "Bet Piazzata")
         else:
-            self.table.is_pending = False
             self.safe_emit(self.log_message, "Errore Bet")
 
     # ------------------------------------------------------------------

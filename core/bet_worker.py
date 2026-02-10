@@ -15,7 +15,7 @@ class BetWorker(QThread):
 
     def run(self):
         try:
-            odds = self.executor.find_odds(self.match, self.market)
+            odds, _locator = self.executor.find_odds(self.match, self.market)
 
             if not odds or odds <= 1.0:
                 self.logger.error(f"Quote non valide: {odds}")
