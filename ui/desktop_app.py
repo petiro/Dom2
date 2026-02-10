@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5 Sentinel - Enterprise Edition
+SuperAgent Desktop App V5.1 - SENTINEL EDITION
 """
 import os
 import sys
@@ -38,21 +38,20 @@ except ImportError:
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-# ---------------------------------------------------------------------------
-#  V5 SENTINEL LAYER (AI FIREWALL)
-# ---------------------------------------------------------------------------
+# ============================================================================
+#  1. SENTINEL FIREWALL
+# ============================================================================
 class SafetySentinel:
-    FORBIDDEN_PATTERNS = [
-        "import os", "import sys", "sys.exit", "os.system", "os.remove",
-        "rm -rf", "format c:", "drop table", "alter user",
-        "shutdown", "reboot", "wget ", "curl "
+    FORBIDDEN = [
+        "import os", "sys.exit", "os.system", "rm -rf", "format c:",
+        "drop table", "alter user", "shutdown", "reboot", "wget ", "curl "
     ]
 
     @staticmethod
     def scan_input(text: str) -> bool:
         text_lower = text.lower()
-        for pattern in SafetySentinel.FORBIDDEN_PATTERNS:
-            if pattern in text_lower:
+        for p in SafetySentinel.FORBIDDEN:
+            if p in text_lower:
                 return False
         return True
 
@@ -60,19 +59,20 @@ class SafetySentinel:
     def sanitize_log(text: str) -> str:
         if not text:
             return ""
-        return re.sub(r"(sk-[a-zA-Z0-9\-\_]{10,})", "sk-***HIDDEN***", text)
+        return re.sub(r'(sk-or-[a-zA-Z0-9\-\_]{5,})', r'sk-***HIDDEN***', text)
 
     @staticmethod
-    def get_security_warning() -> str:
-        return "SECURITY ALERT: Messaggio bloccato dal Sentinel Layer."
+    def warning() -> str:
+        return "SECURITY ALERT: Comando bloccato dal Sentinel System."
 
 
-# ---------------------------------------------------------------------------
-#  WORKER OPENROUTER (SENTINEL HARDENED)
-# ---------------------------------------------------------------------------
+# ============================================================================
+#  2. OPENROUTER WORKER (RETRY + FALLBACK + SENTINEL)
+# ============================================================================
 class OpenRouterWorker(QThread):
     response_received = Signal(str)
     log_received = Signal(str)
+    finished_task = Signal(bool)
 
     def __init__(self, api_key, history, system_prompt):
         super().__init__()
@@ -90,67 +90,71 @@ class OpenRouterWorker(QThread):
     def run(self):
         for msg in self.history:
             if not SafetySentinel.scan_input(msg.get("content", "")):
-                self.log_received.emit("Sentinel: Input bloccato.")
-                self.response_received.emit(SafetySentinel.get_security_warning())
+                self.log_received.emit("Sentinel: Input storico infetto.")
+                self.response_received.emit(SafetySentinel.warning())
+                self.finished_task.emit(False)
                 return
 
         messages = [{"role": "system", "content": self.system_prompt}] + self.history
+
+        session = requests.Session()
+        retry = Retry(total=2, backoff_factor=0.5,
+                      status_forcelist=[429, 500, 502, 503],
+                      allowed_methods=["POST"])
+        session.mount("https://", HTTPAdapter(max_retries=retry))
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://superagent.app",
-            "X-Title": "SuperAgent V5 Sentinel"
+            "X-Title": "SuperAgent V5"
         }
-        self.log_received.emit("Connessione sicura inizializzata.")
-
-        session = requests.Session()
-        retry = Retry(total=2, backoff_factor=0.5,
-                      status_forcelist=[429, 500, 502, 503, 504],
-                      allowed_methods=["POST"])
-        session.mount("https://", HTTPAdapter(max_retries=retry))
 
         success = False
         for model in self.fallback_models:
-            self.log_received.emit(f"Tentativo modello: {model}")
+            self.log_received.emit(f"Connessione a {model}...")
             try:
                 payload = {"model": model, "messages": messages,
-                           "temperature": 0.7, "max_tokens": 1000}
-                response = session.post(
+                           "temperature": 0.7, "max_tokens": 800}
+                resp = session.post(
                     "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers, json=payload, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    if "choices" in data and len(data["choices"]) > 0:
-                        content = data["choices"][0]["message"]["content"]
-                        if not SafetySentinel.scan_input(content):
-                            content = SafetySentinel.get_security_warning()
-                        content = SafetySentinel.sanitize_log(content)
-                        self.log_received.emit(f"Risposta valida da {model}")
-                        self.response_received.emit(content)
-                        success = True
-                        break
-                    else:
-                        self.log_received.emit("API Risposta Vuota")
-                elif response.status_code == 401:
+                    headers=headers, json=payload, timeout=12)
+
+                if resp.status_code == 200:
+                    content = resp.json()['choices'][0]['message']['content']
+                    if not SafetySentinel.scan_input(content):
+                        self.log_received.emit("Sentinel: Risposta AI bloccata.")
+                        self.response_received.emit(SafetySentinel.warning())
+                        self.finished_task.emit(False)
+                        return
+                    self.log_received.emit("Risposta ricevuta.")
+                    self.response_received.emit(content)
+                    success = True
+                    break
+                elif resp.status_code == 401:
                     self.log_received.emit("Errore Auth: Controlla la API Key")
                     break
                 else:
-                    self.log_received.emit(f"Errore HTTP {response.status_code}")
+                    self.log_received.emit(f"Errore HTTP {resp.status_code}")
             except requests.exceptions.Timeout:
                 self.log_received.emit(f"Timeout su {model}")
             except requests.exceptions.ConnectionError:
                 self.log_received.emit(f"Connessione fallita su {model}")
             except Exception as e:
                 self.log_received.emit(SafetySentinel.sanitize_log(str(e))[:60])
-            time.sleep(0.5)
+            time.sleep(0.3)
 
         if not success:
-            self.response_received.emit("Tutti i modelli fallback falliti.")
+            self.response_received.emit("Tutti i server fallback hanno fallito.")
+            self.finished_task.emit(False)
+        else:
+            self.finished_task.emit(True)
 
 
-# ---------------------------------------------------------------------------
-#  TAB: ROBOT FACTORY (WITH UI LOCKING + SENTINEL)
-# ---------------------------------------------------------------------------
+
+# ============================================================================
+#  3. ROBOT FACTORY (MULTI-AGENT UI)
+# ============================================================================
 class RobotFactoryTab(QWidget):
     def __init__(self, controller):
         super().__init__()
@@ -158,433 +162,400 @@ class RobotFactoryTab(QWidget):
         self.robots_file = "my_robots.json"
         self.api_file = "api_config.json"
         self.current_robot_name = None
-        self.ai_busy = False
         self.robots_data = self.load_data()
         self.api_key = self.load_api_key()
         self.init_ui()
 
     def init_ui(self):
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main = QHBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(0)
 
-        sidebar = QWidget()
-        sidebar.setFixedWidth(280)
-        sidebar.setStyleSheet("background-color: #202123; border-right: 1px solid #4d4d4f;")
-        sidebar_layout = QVBoxLayout(sidebar)
-
+        # SIDEBAR
+        side = QWidget()
+        side.setFixedWidth(260)
+        side.setStyleSheet("background:#202123; border-right:1px solid #444;")
+        vbox = QVBoxLayout(side)
         lbl_title = QLabel("FLOTTA AGENTI")
-        lbl_title.setStyleSheet("color: #ececf1; font-weight: bold; font-size: 14px; padding: 10px;")
-        sidebar_layout.addWidget(lbl_title)
+        lbl_title.setStyleSheet("color:#ddd; font-weight:bold; padding:10px;")
+        vbox.addWidget(lbl_title)
 
-        self.btn_new = QPushButton("+ Crea Nuovo Robot")
-        self.btn_new.setStyleSheet(
-            "QPushButton { border: 1px solid #565869; border-radius: 5px; color: white; "
-            "padding: 10px; text-align: left; background-color: transparent; } "
-            "QPushButton:hover { background-color: #2a2b32; }")
-        self.btn_new.clicked.connect(self.create_robot_dialog)
-        sidebar_layout.addWidget(self.btn_new)
+        btn_new = QPushButton("+ Nuovo Agente")
+        btn_new.setStyleSheet(
+            "background:transparent; border:1px solid #555; color:white; "
+            "padding:8px; text-align:left;")
+        btn_new.clicked.connect(self.create_robot)
+        vbox.addWidget(btn_new)
 
-        self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet(
-            "QListWidget { background: transparent; border: none; outline: none; } "
-            "QListWidget::item { color: #ececf1; padding: 12px; border-radius: 5px; margin-bottom: 2px; } "
-            "QListWidget::item:selected { background-color: #343541; } "
-            "QListWidget::item:hover { background-color: #2a2b32; }")
-        self.list_widget.currentItemChanged.connect(self.load_robot_interface)
-        sidebar_layout.addWidget(self.list_widget)
+        self.list = QListWidget()
+        self.list.setStyleSheet("background:transparent; border:none; color:#ddd;")
+        self.list.currentItemChanged.connect(self.load_robot)
+        vbox.addWidget(self.list)
 
-        sidebar_layout.addStretch()
-        api_frame = QFrame()
-        api_frame.setStyleSheet("border-top: 1px solid #4d4d4f; padding-top: 10px;")
-        api_layout = QVBoxLayout(api_frame)
-        lbl_api = QLabel("OpenRouter API Key")
-        lbl_api.setStyleSheet("color: #8e8ea0; font-size: 12px; font-weight: bold;")
-        api_layout.addWidget(lbl_api)
-        self.input_api_key = QLineEdit()
-        self.input_api_key.setText(self.api_key)
-        self.input_api_key.setPlaceholderText("sk-or-...")
-        self.input_api_key.setEchoMode(QLineEdit.Password)
-        self.input_api_key.setStyleSheet(
-            "QLineEdit { background-color: #40414f; color: white; border: 1px solid #565869; "
-            "padding: 8px; border-radius: 4px; font-size: 12px; } "
-            "QLineEdit:focus { border: 1px solid #19c37d; }")
-        self.input_api_key.textChanged.connect(self.save_api_key)
-        api_layout.addWidget(self.input_api_key)
-        sidebar_layout.addWidget(api_frame)
-        main_layout.addWidget(sidebar)
+        vbox.addStretch()
+        lbl_api = QLabel("API Key OpenRouter")
+        lbl_api.setStyleSheet("color:#888; font-size:11px; font-weight:bold;")
+        vbox.addWidget(lbl_api)
+        self.txt_api = QLineEdit(self.api_key)
+        self.txt_api.setEchoMode(QLineEdit.Password)
+        self.txt_api.setStyleSheet("background:#333; color:white; border:1px solid #555; padding:5px;")
+        self.txt_api.textChanged.connect(self.save_api)
+        vbox.addWidget(self.txt_api)
+        main.addWidget(side)
 
-        self.right_panel = QWidget()
-        self.right_panel.setStyleSheet("background-color: #343541;")
-        self.right_panel.setVisible(False)
-        right_layout = QVBoxLayout(self.right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        # CHAT PANEL
+        self.panel = QWidget()
+        self.panel.setVisible(False)
+        self.panel.setStyleSheet("background:#343541;")
+        p_lay = QVBoxLayout(self.panel)
+        p_lay.setContentsMargins(0, 0, 0, 0)
 
-        header_frame = QFrame()
-        header_frame.setStyleSheet("background-color: #343541; border-bottom: 1px solid #2d2d30; padding: 15px;")
-        header_layout = QHBoxLayout(header_frame)
-        self.lbl_name = QLabel("Nome Robot")
-        self.lbl_name.setStyleSheet("font-size: 18px; font-weight: bold; color: white;")
-        self.input_telegram = QLineEdit()
-        self.input_telegram.setPlaceholderText("Canale Telegram...")
-        self.input_telegram.setStyleSheet("background: #40414f; color: white; border: none; padding: 8px; border-radius: 4px;")
-        self.input_telegram.setFixedWidth(220)
-        self.input_telegram.textChanged.connect(self.save_current_config)
-        self.btn_toggle = QPushButton("AVVIA")
-        self.btn_toggle.setCheckable(True)
-        self.btn_toggle.setFixedWidth(100)
-        self.btn_toggle.clicked.connect(self.toggle_status)
-        self.btn_delete = QPushButton("X")
-        self.btn_delete.setFixedWidth(40)
-        self.btn_delete.setStyleSheet("background-color: #ef4444; border-radius: 4px;")
-        self.btn_delete.clicked.connect(self.delete_robot)
-        header_layout.addWidget(self.lbl_name)
-        header_layout.addStretch()
-        header_layout.addWidget(QLabel("Target:"))
-        header_layout.addWidget(self.input_telegram)
-        header_layout.addWidget(self.btn_toggle)
-        header_layout.addWidget(self.btn_delete)
-        right_layout.addWidget(header_frame)
+        # Header
+        head = QFrame()
+        head.setStyleSheet("background:#202123; padding:10px; border-bottom:1px solid #444;")
+        h_box = QHBoxLayout(head)
+        self.lbl_name = QLabel("Robot")
+        self.lbl_name.setStyleSheet("font-size:18px; font-weight:bold; color:white;")
+        self.txt_tg = QLineEdit()
+        self.txt_tg.setPlaceholderText("Target Telegram...")
+        self.txt_tg.setFixedWidth(200)
+        self.txt_tg.setStyleSheet("background:#444; color:white; border:none; padding:5px;")
+        self.txt_tg.textChanged.connect(self.save_config)
 
-        self.chat_display = QTextEdit()
-        self.chat_display.setReadOnly(True)
-        self.chat_display.setStyleSheet("border: none; padding: 20px; color: #d1d5db; font-size: 15px; background-color: #343541;")
-        right_layout.addWidget(self.chat_display)
+        self.btn_act = QPushButton("AVVIA")
+        self.btn_act.setCheckable(True)
+        self.btn_act.setFixedWidth(80)
+        self.btn_act.clicked.connect(self.toggle_active)
 
-        input_container = QWidget()
-        input_container.setStyleSheet("background-color: #343541; padding: 20px;")
-        input_box = QHBoxLayout(input_container)
-        self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("Istruisci il robot...")
-        self.chat_input.setStyleSheet(
-            "QLineEdit { background-color: #40414f; color: white; border: 1px solid #565869; "
-            "padding: 12px; border-radius: 6px; font-size: 14px; } "
-            "QLineEdit:focus { border: 1px solid #19c37d; }")
-        self.chat_input.returnPressed.connect(self.send_message)
+        self.btn_del = QPushButton("X")
+        self.btn_del.setFixedWidth(40)
+        self.btn_del.setStyleSheet("background:#a00;")
+        self.btn_del.clicked.connect(self.delete_robot)
+
+        h_box.addWidget(self.lbl_name)
+        h_box.addStretch()
+        h_box.addWidget(QLabel("Target:"))
+        h_box.addWidget(self.txt_tg)
+        h_box.addWidget(self.btn_act)
+        h_box.addWidget(self.btn_del)
+        p_lay.addWidget(head)
+
+        # Chat display
+        self.chat = QTextEdit()
+        self.chat.setReadOnly(True)
+        self.chat.setStyleSheet(
+            "border:none; padding:15px; color:#ddd; font-size:14px; background:#343541;")
+        p_lay.addWidget(self.chat)
+
+        # Input bar
+        in_box = QWidget()
+        in_box.setStyleSheet("padding:15px;")
+        ib_lay = QHBoxLayout(in_box)
+        self.inp = QLineEdit()
+        self.inp.setPlaceholderText("Scrivi istruzioni...")
+        self.inp.setStyleSheet(
+            "background:#40414f; color:white; border:1px solid #555; "
+            "padding:10px; border-radius:5px;")
+        self.inp.returnPressed.connect(self.send_msg)
         self.btn_send = QPushButton("Invia")
         self.btn_send.setStyleSheet(
-            "background-color: #19c37d; color: white; padding: 12px 20px; "
-            "border-radius: 6px; font-weight: bold;")
-        self.btn_send.clicked.connect(self.send_message)
-        input_box.addWidget(self.chat_input)
-        input_box.addWidget(self.btn_send)
-        right_layout.addWidget(input_container)
-        main_layout.addWidget(self.right_panel)
+            "background:#19c37d; color:white; padding:10px; "
+            "font-weight:bold; border-radius:5px;")
+        self.btn_send.clicked.connect(self.send_msg)
+        ib_lay.addWidget(self.inp)
+        ib_lay.addWidget(self.btn_send)
+        p_lay.addWidget(in_box)
+
+        main.addWidget(self.panel)
         self.refresh_list()
 
-    def load_api_key(self):
-        try:
-            with open(self.api_file, "r") as f:
-                return json.load(f).get("api_key", "")
-        except Exception:
-            return ""
-
-    def save_api_key(self):
-        key = self.input_api_key.text().strip()
-        self.api_key = key
-        with open(self.api_file, "w") as f:
-            json.dump({"api_key": key}, f)
-
+    # --- Data ---
     def load_data(self):
         try:
-            with open(self.robots_file, "r") as f:
+            with open(self.robots_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
 
     def save_data(self):
-        with open(self.robots_file, "w") as f:
+        with open(self.robots_file, "w", encoding="utf-8") as f:
             json.dump(self.robots_data, f, indent=4)
 
-    def refresh_list(self):
-        self.list_widget.clear()
-        for name, data in self.robots_data.items():
-            icon = "[ON]" if data["active"] else "[OFF]"
-            self.list_widget.addItem(QListWidgetItem(f"{icon} {name}"))
+    def load_api_key(self):
+        try:
+            with open(self.api_file, "r") as f:
+                return json.load(f).get("key", "")
+        except Exception:
+            return ""
 
-    def create_robot_dialog(self):
+    def save_api(self):
+        self.api_key = self.txt_api.text().strip()
+        with open(self.api_file, "w") as f:
+            json.dump({"key": self.api_key}, f)
+
+    # --- Robot management ---
+    def refresh_list(self):
+        self.list.clear()
+        for name, data in self.robots_data.items():
+            icon = "[ON]" if data.get("active", False) else "[OFF]"
+            self.list.addItem(f"{icon} {name}")
+
+    def create_robot(self):
         name, ok = QInputDialog.getText(self, "Nuovo Robot", "Nome:")
         if ok and name and name not in self.robots_data:
-            self.robots_data[name] = {"active": False, "telegram": "", "chat_history": []}
+            self.robots_data[name] = {"active": False, "telegram": "", "history": []}
             self.save_data()
             self.refresh_list()
 
-    def load_robot_interface(self, current, previous):
-        if not current:
-            self.right_panel.setVisible(False)
+    def load_robot(self, cur, prev):
+        if not cur:
+            self.panel.setVisible(False)
             return
-        name = current.text().replace("[ON] ", "").replace("[OFF] ", "")
+        name = cur.text().replace("[ON] ", "").replace("[OFF] ", "")
         self.current_robot_name = name
         data = self.robots_data[name]
-        self.right_panel.setVisible(True)
+        self.panel.setVisible(True)
         self.lbl_name.setText(name)
-        self.input_telegram.setText(data["telegram"])
-        self.update_toggle_btn(data["active"])
-        self.chat_display.clear()
-        for msg in data["chat_history"]:
-            self.append_chat_visual(msg["role"], msg["content"])
+        self.txt_tg.setText(data.get("telegram", ""))
+        self.update_btn(data.get("active", False))
+        self.chat.clear()
+        for m in data.get("history", []):
+            self.append_visual(m["role"], m["content"])
 
-    def save_current_config(self):
-        if self.current_robot_name:
-            self.robots_data[self.current_robot_name]["telegram"] = self.input_telegram.text()
+    def save_config(self):
+        if self.current_robot_name and self.current_robot_name in self.robots_data:
+            self.robots_data[self.current_robot_name]["telegram"] = self.txt_tg.text()
             self.save_data()
 
-    def toggle_status(self):
-        name = self.current_robot_name
-        if not name:
+    def toggle_active(self):
+        n = self.current_robot_name
+        if not n or n not in self.robots_data:
             return
-        self.robots_data[name]["active"] = not self.robots_data[name]["active"]
+        self.robots_data[n]["active"] = not self.robots_data[n].get("active", False)
         self.save_data()
-        self.update_toggle_btn(self.robots_data[name]["active"])
         self.refresh_list()
+        self.update_btn(self.robots_data[n]["active"])
 
-    def update_toggle_btn(self, active):
+    def update_btn(self, active):
         if active:
-            self.btn_toggle.setText("PAUSA")
-            self.btn_toggle.setStyleSheet("background-color: #eab308; color: black; font-weight: bold; border-radius: 4px;")
+            self.btn_act.setText("PAUSA")
+            self.btn_act.setStyleSheet(
+                "background:#eab308; color:black; font-weight:bold;")
         else:
-            self.btn_toggle.setText("AVVIA")
-            self.btn_toggle.setStyleSheet("background-color: #22c55e; color: white; font-weight: bold; border-radius: 4px;")
+            self.btn_act.setText("AVVIA")
+            self.btn_act.setStyleSheet(
+                "background:#22c55e; color:white; font-weight:bold;")
 
     def delete_robot(self):
         name = self.current_robot_name
         if not name or name not in self.robots_data:
             return
-        confirm = QMessageBox.question(self, "Elimina", f"Cancellare {name}?", QMessageBox.Yes | QMessageBox.No)
+        confirm = QMessageBox.question(
+            self, "Elimina", f"Cancellare {name}?",
+            QMessageBox.Yes | QMessageBox.No)
         if confirm == QMessageBox.Yes:
             del self.robots_data[name]
             self.current_robot_name = None
             self.save_data()
-            self.right_panel.setVisible(False)
+            self.panel.setVisible(False)
             self.refresh_list()
 
-    def set_ui_busy(self, busy):
-        self.ai_busy = busy
-        self.chat_input.setEnabled(not busy)
+    # --- Chat ---
+    def set_busy(self, busy):
+        self.inp.setEnabled(not busy)
         self.btn_send.setEnabled(not busy)
-        if busy:
-            self.chat_input.setPlaceholderText("Attendi risposta...")
-            self.btn_send.setText("...")
-        else:
-            self.chat_input.setPlaceholderText("Istruisci il robot...")
-            self.btn_send.setText("Invia")
-            self.chat_input.setFocus()
+        self.btn_send.setText("..." if busy else "Invia")
 
-    def send_message(self):
-        if self.ai_busy:
+    def send_msg(self):
+        txt = self.inp.text().strip()
+        if not txt:
             return
-        text = self.chat_input.text().strip()
-        if not text:
+        if not SafetySentinel.scan_input(txt):
+            self.append_visual("system", "BLOCKED BY SENTINEL")
+            self.inp.clear()
             return
-        if not SafetySentinel.scan_input(text):
-            self.append_chat_visual("system", "COMANDO BLOCCATO DAL SENTINEL")
-            self.chat_input.clear()
-            return
-        if not self.api_key or len(self.api_key) < 10:
-            QMessageBox.critical(self, "API Key Mancante", "Inserisci la chiave OpenRouter nella sidebar!")
+        if len(self.api_key) < 5:
+            QMessageBox.critical(self, "Errore", "Manca API Key!")
             return
 
         name = self.current_robot_name
         if not name or name not in self.robots_data:
             return
-        self.set_ui_busy(True)
-        self.append_chat_visual("user", text)
-        self.robots_data[name]["chat_history"].append({"role": "user", "content": text})
+        self.set_busy(True)
+        self.append_visual("user", txt)
+        self.robots_data[name]["history"].append({"role": "user", "content": txt})
         self.save_data()
-        self.chat_input.clear()
+        self.inp.clear()
 
-        history = self.robots_data[name]["chat_history"]
-        sys_prompt = f"Sei {name}, robot di betting. Telegram: {self.robots_data[name]['telegram']}."
-        self.chat_display.append("<i style='color: gray; font-size: 12px;'>Sentinel sta analizzando...</i>")
-        self.worker = OpenRouterWorker(self.api_key, history, sys_prompt)
-        self.worker.response_received.connect(self.on_ai_response)
-        self.worker.log_received.connect(self.on_ai_log)
-        self.worker.finished.connect(lambda: self.set_ui_busy(False))
+        sys_p = f"Sei {name}, assistente betting. Telegram: {self.robots_data[name].get('telegram', '')}."
+        self.worker = OpenRouterWorker(self.api_key, self.robots_data[name]["history"], sys_p)
+        self.worker.response_received.connect(self.on_resp)
+        self.worker.log_received.connect(self.on_log)
+        self.worker.finished_task.connect(self.on_task_end)
         self.worker.start()
 
-    def on_ai_log(self, text):
-        self.chat_display.append(f"<div style='color: #888; font-family: monospace; font-size: 11px;'>{text}</div>")
-        self.chat_display.moveCursor(QTextCursor.End)
+    def on_log(self, txt):
+        self.chat.append(
+            f"<div style='color:#888; font-size:10px;'>{txt}</div>")
+        self.chat.moveCursor(QTextCursor.End)
 
-    def on_ai_response(self, text):
+    def on_resp(self, txt):
         name = self.current_robot_name
-        self.append_chat_visual("assistant", text)
+        self.append_visual("assistant", txt)
         if name and name in self.robots_data:
-            self.robots_data[name]["chat_history"].append({"role": "assistant", "content": text})
+            self.robots_data[name]["history"].append(
+                {"role": "assistant", "content": txt})
             self.save_data()
-        main_win = self.window()
-        if name and hasattr(main_win, "supervisor"):
-            main_win.supervisor.report_activity(name, success=True)
 
-    def append_chat_visual(self, role, text):
+    def on_task_end(self, success):
+        self.set_busy(False)
+        name = self.current_robot_name
+        mw = self.window()
+        if name and hasattr(mw, "supervisor"):
+            mw.supervisor.report(name, success)
+
+    def append_visual(self, role, txt):
         if role == "system":
-            color, sender = "#ff4444", "SENTINEL"
+            col, who = "#f00", "SYSTEM"
         elif role == "user":
-            color, sender = "#a8b1ff", "TU"
+            col, who = "#a8b1ff", "TU"
         else:
-            color, sender = "#19c37d", "ROBOT"
-        html = (f"<div style='margin-bottom: 10px;'>"
-                f"<b style='color: {color};'>{sender}</b><br>"
-                f"<span style='color: #ececf1;'>{text}</span></div>")
-        self.chat_display.append(html)
-        self.chat_display.moveCursor(QTextCursor.End)
+            col, who = "#19c37d", "ROBOT"
+        self.chat.append(
+            f"<div style='margin-bottom:10px;'>"
+            f"<b style='color:{col};'>{who}</b><br>"
+            f"<span style='color:#ddd;'>{txt}</span></div>")
+        self.chat.moveCursor(QTextCursor.End)
 
 
-# ---------------------------------------------------------------------------
-#  V5.1 SUPERVISOR CORE (WATCHDOG & KILL SWITCH)
-# ---------------------------------------------------------------------------
+
+# ============================================================================
+#  4. SUPERVISOR WATCHDOG (MONITOR & KILL SWITCH)
+# ============================================================================
 class SupervisorTab(QWidget):
-    def __init__(self, controller, robot_factory):
+    def __init__(self, controller, factory):
         super().__init__()
         self.controller = controller
-        self.factory = robot_factory
+        self.factory = factory
         self.stats = {}
-        self.watchdog_timer = QTimer()
-        self.watchdog_timer.timeout.connect(self.scan_vital_signs)
-        self.watchdog_timer.start(2000)
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.scan)
+        self.timer.start(2000)
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        header = QFrame()
-        header.setStyleSheet("background: #2d2d30; border-radius: 8px; padding: 10px;")
-        h_layout = QHBoxLayout(header)
+        lay = QVBoxLayout(self)
+
+        # Header
+        h = QFrame()
+        h.setStyleSheet("background:#222; padding:10px; border-radius:5px;")
+        hl = QHBoxLayout(h)
         lbl = QLabel("SUPERVISOR ACTIVE")
-        lbl.setStyleSheet("color: #00ff00; font-weight: bold; font-size: 16px; letter-spacing: 1px;")
-        self.btn_kill_all = QPushButton("EMERGENCY STOP")
-        self.btn_kill_all.setFixedSize(180, 40)
-        self.btn_kill_all.setStyleSheet(
-            "QPushButton { background-color: #ff0000; color: white; font-weight: bold; "
-            "border: 2px solid #550000; border-radius: 5px; } "
-            "QPushButton:hover { background-color: #ff4444; } "
-            "QPushButton:pressed { background-color: #aa0000; }")
-        self.btn_kill_all.clicked.connect(self.emergency_stop)
-        h_layout.addWidget(lbl)
-        h_layout.addStretch()
-        h_layout.addWidget(self.btn_kill_all)
-        layout.addWidget(header)
+        lbl.setStyleSheet("color:#0f0; font-weight:bold;")
+        btn_kill = QPushButton("EMERGENCY STOP")
+        btn_kill.setStyleSheet(
+            "background:red; color:white; font-weight:bold; padding:10px;")
+        btn_kill.clicked.connect(self.kill_all)
+        hl.addWidget(lbl)
+        hl.addStretch()
+        hl.addWidget(btn_kill)
+        lay.addWidget(h)
 
-        self.monitor_table = QTableWidget()
-        self.monitor_table.setColumnCount(5)
-        self.monitor_table.setHorizontalHeaderLabels(["AGENTE", "STATO", "ERRORI (1h)", "TOKEN USAGE", "HEALTH"])
-        self.monitor_table.horizontalHeader().setStretchLastSection(True)
-        self.monitor_table.setStyleSheet("background: #1e1e1e; color: white; border: none; font-family: Consolas;")
-        layout.addWidget(self.monitor_table)
+        # Table
+        self.tab = QTableWidget(0, 5)
+        self.tab.setHorizontalHeaderLabels(
+            ["AGENTE", "STATO", "ERRORI", "REQ", "HEALTH"])
+        self.tab.horizontalHeader().setStretchLastSection(True)
+        self.tab.setStyleSheet("background:#111; color:white; border:none;")
+        lay.addWidget(self.tab)
 
-        self.log_console = QTextEdit()
-        self.log_console.setReadOnly(True)
-        self.log_console.setMaximumHeight(150)
-        self.log_console.setStyleSheet("background: #000; color: #0f0; font-family: monospace; font-size: 11px;")
-        layout.addWidget(self.log_console)
+        # Log
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumHeight(100)
+        self.log.setStyleSheet(
+            "background:black; color:#0f0; font-family:monospace;")
+        lay.addWidget(self.log)
 
-    def scan_vital_signs(self):
-        robots = self.factory.robots_data
-        self.monitor_table.setRowCount(len(robots))
-        row = 0
-        for name, data in robots.items():
+    def scan(self):
+        d = self.factory.robots_data
+        self.tab.setRowCount(len(d))
+        for i, (name, data) in enumerate(d.items()):
             if name not in self.stats:
-                self.stats[name] = {"errors": 0, "calls": 0, "status": "IDLE"}
-            is_active = data.get("active", False)
-            errors = self.stats[name]["errors"]
-            calls = self.stats[name]["calls"]
-            health_status = "HEALTHY"
-            if errors > 5:
-                self.force_stop_agent(name, "TOO MANY ERRORS")
-                health_status = "KILLED (Errors)"
-            elif calls > 50:
-                self.force_stop_agent(name, "API FLOODING")
-                health_status = "PAUSED (Spam)"
-            status_icon = "RUNNING" if is_active else "SLEEPING"
-            if health_status != "HEALTHY":
-                status_icon = "CRITICAL"
-            self.monitor_table.setItem(row, 0, QTableWidgetItem(name))
-            self.monitor_table.setItem(row, 1, QTableWidgetItem(status_icon))
-            self.monitor_table.setItem(row, 2, QTableWidgetItem(str(errors)))
-            self.monitor_table.setItem(row, 3, QTableWidgetItem(f"{calls} req"))
-            self.monitor_table.setItem(row, 4, QTableWidgetItem(health_status))
-            row += 1
+                self.stats[name] = {"err": 0, "req": 0}
 
-    def report_activity(self, robot_name, success):
-        if not robot_name or robot_name not in self.stats:
+            st = self.stats[name]
+            act = data.get("active", False)
+
+            health = "OK"
+            if st["err"] > 5:
+                health = "KILLED (Errors)"
+                self.force_stop(name, "Troppi errori")
+            elif st["req"] > 50:
+                health = "PAUSED (Spam)"
+                self.force_stop(name, "Troppe richieste")
+
+            ico = "RUNNING" if act else "SLEEPING"
+            if health != "OK":
+                ico = "CRITICAL"
+
+            self.tab.setItem(i, 0, QTableWidgetItem(name))
+            self.tab.setItem(i, 1, QTableWidgetItem(ico))
+            self.tab.setItem(i, 2, QTableWidgetItem(str(st["err"])))
+            self.tab.setItem(i, 3, QTableWidgetItem(str(st["req"])))
+            self.tab.setItem(i, 4, QTableWidgetItem(health))
+
+    def report(self, name, success):
+        if not name or name not in self.stats:
             return
-        self.stats[robot_name]["calls"] += 1
+        self.stats[name]["req"] += 1
         if not success:
-            self.stats[robot_name]["errors"] += 1
+            self.stats[name]["err"] += 1
         else:
             # Decrement instead of reset so threshold remains reachable
-            self.stats[robot_name]["errors"] = max(0, self.stats[robot_name]["errors"] - 1)
+            self.stats[name]["err"] = max(0, self.stats[name]["err"] - 1)
 
-    def force_stop_agent(self, name, reason):
-        if name in self.factory.robots_data and self.factory.robots_data[name]["active"]:
+    def force_stop(self, name, reason):
+        if name in self.factory.robots_data and self.factory.robots_data[name].get("active", False):
             self.factory.robots_data[name]["active"] = False
             self.factory.save_data()
             self.factory.refresh_list()
             ts = datetime.now().strftime("%H:%M:%S")
-            self.log_console.append(f"[{ts}] SUPERVISOR: Agente '{name}' arrestato! Motivo: {reason}")
+            self.log.append(f"[{ts}] STOPPED {name}: {reason}")
 
-    def emergency_stop(self):
+    def kill_all(self):
         reply = QMessageBox.question(
             self, "EMERGENCY STOP",
-            "Sei sicuro? Questo arrestera TUTTI i robot immediatamente.",
+            "Fermare TUTTI i robot?",
             QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             count = 0
-            for name in self.factory.robots_data:
-                if self.factory.robots_data[name]["active"]:
-                    self.factory.robots_data[name]["active"] = False
+            for n in self.factory.robots_data:
+                if self.factory.robots_data[n].get("active", False):
+                    self.factory.robots_data[n]["active"] = False
                     count += 1
             self.factory.save_data()
             self.factory.refresh_list()
             ts = datetime.now().strftime("%H:%M:%S")
-            self.log_console.append(f"[{ts}] EMERGENCY STOP ATTIVATO. {count} agenti terminati.")
-            QMessageBox.warning(self, "SYSTEM HALT", f"Tutti i {count} agenti sono stati spenti forzatamente.")
+            self.log.append(f"[{ts}] SYSTEM HALT. {count} agenti terminati.")
 
 
-# ---------------------------------------------------------------------------
-#  CLASSIC COMPONENTS (PRESERVED)
-# ---------------------------------------------------------------------------
+# ============================================================================
+#  LEGACY COMPONENTS (PRESERVED)
+# ============================================================================
 class ConfigValidator:
+    """Kept for main.py compatibility."""
     REQUIRED = {"rpa.pin": str}
+
     @classmethod
     def validate(cls, config, logger=None):
         return []
 
 
-class AIWorker(QThread):
-    response_ready = Signal(str)
-    error_occurred = Signal(str)
-    def __init__(self, vision_learner, prompt):
-        super().__init__()
-        self.vision = vision_learner
-        self.prompt = prompt
-    def run(self):
-        try:
-            res = self.vision.understand_text(self.prompt) if self.vision else "No AI"
-            self.response_ready.emit(str(res))
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-
-
-class TrainerWorker(QThread):
-    response_ready = Signal(str)
-    error_occurred = Signal(str)
-    def __init__(self, controller, question, include_dom=False, include_screenshot=False):
-        super().__init__()
-        self.controller = controller
-        self.question = question
-        self.include_dom = include_dom
-        self.include_screenshot = include_screenshot
-    def run(self):
-        try:
-            res = self.controller.ask_trainer(self.question, self.include_dom, self.include_screenshot)
-            self.response_ready.emit(res or "No response.")
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-
-
 class RPAWorker(QThread):
     bet_placed = Signal(dict)
     bet_error = Signal(str)
+
     def __init__(self, executor, logger=None, monitor=None, controller=None):
         super().__init__()
         self._queue = queue.Queue()
@@ -592,11 +563,14 @@ class RPAWorker(QThread):
         self.executor = executor
         self.logger = logger
         self.controller = controller
+
     def enqueue_bet(self, signal_data):
         self._queue.put(signal_data)
+
     def stop(self):
         self._running = False
         self._queue.put(None)
+
     def run(self):
         while self._running:
             item = self._queue.get()
@@ -615,35 +589,6 @@ class RPAWorker(QThread):
                 self.bet_error.emit(str(e))
 
 
-class ChatTab(QWidget):
-    def __init__(self, vision_learner=None, logger=None, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Legacy Chat"))
-        self.chat_display = QTextEdit()
-        self.chat_display.setReadOnly(True)
-        layout.addWidget(self.chat_display)
-
-
-class TrainerTab(QWidget):
-    def __init__(self, controller=None, logger=None, parent=None):
-        super().__init__(parent)
-        self.controller = controller
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("AI Trainer"))
-        self.chat_display = QTextEdit()
-        layout.addWidget(self.chat_display)
-        self.train_btn = QPushButton("Train Step")
-        self.train_btn.clicked.connect(self._on_train_step)
-        layout.addWidget(self.train_btn)
-    def _on_train_step(self):
-        if self.controller:
-            self.controller.request_training()
-    @Slot(str)
-    def on_training_complete(self, res):
-        self.chat_display.append(f"Result: {res}")
-
-
 class RPAMonitorTab(QWidget):
     def __init__(self, executor=None, rpa_worker=None, logger=None, parent=None):
         super().__init__(parent)
@@ -654,6 +599,7 @@ class RPAMonitorTab(QWidget):
         layout.addWidget(self.bet_table)
         if self.rpa_worker:
             self.rpa_worker.bet_placed.connect(self._on_bet_placed)
+
     def _on_bet_placed(self, data):
         r = self.bet_table.rowCount()
         self.bet_table.insertRow(r)
@@ -662,6 +608,7 @@ class RPAMonitorTab(QWidget):
 
 class SettingsTab(QWidget):
     stealth_changed = Signal(str)
+
     def __init__(self, config=None, logger=None, controller=None, parent=None):
         super().__init__(parent)
         self.config = config or {}
@@ -686,6 +633,7 @@ class MoneyTab(QWidget):
         btn = QPushButton("Save")
         btn.clicked.connect(self.save)
         layout.addRow(btn)
+
     def save(self):
         if self.controller:
             self.controller.table = RoserpinaTable(self.bankroll.value(), 3.0)
@@ -697,16 +645,38 @@ class StatsTab(QWidget):
         QVBoxLayout(self).addWidget(QLabel("Statistics"))
 
 
-# ---------------------------------------------------------------------------
+class TrainerTab(QWidget):
+    def __init__(self, controller=None, logger=None, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("AI Trainer"))
+        self.chat_display = QTextEdit()
+        layout.addWidget(self.chat_display)
+        self.train_btn = QPushButton("Train Step")
+        self.train_btn.clicked.connect(self._on_train_step)
+        layout.addWidget(self.train_btn)
+
+    def _on_train_step(self):
+        if self.controller:
+            self.controller.request_training()
+
+    @Slot(str)
+    def on_training_complete(self, res):
+        self.chat_display.append(f"Result: {res}")
+
+
+
+# ============================================================================
 #  MAIN WINDOW
-# ---------------------------------------------------------------------------
+# ============================================================================
 class MainWindow(QMainWindow):
     def __init__(self, vision=None, telegram_learner=None, rpa_healer=None,
                  logger=None, executor=None, config=None, monitor=None,
                  controller=None):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("SuperAgent H24 V5 Sentinel")
+        self.setWindowTitle("SuperAgent V5.1 SENTINEL")
         self.setMinimumSize(1200, 800)
 
         self.rpa_worker = None
@@ -717,12 +687,13 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        self.robot_factory = RobotFactoryTab(self.controller)
-        self.supervisor = SupervisorTab(self.controller, self.robot_factory)
+        # Primary tabs
+        self.factory = RobotFactoryTab(controller)
+        self.supervisor = SupervisorTab(controller, self.factory)
+        self.tabs.addTab(self.factory, "Factory")
+        self.tabs.addTab(self.supervisor, "SUPERVISOR")
 
-        self.tabs.addTab(self.robot_factory, "Robot Factory")
-        self.tabs.addTab(self.supervisor, "SUPERVISOR CORE")
-
+        # Legacy tabs
         self.rpa_tab = RPAMonitorTab(executor, self.rpa_worker, logger)
         self.tabs.addTab(self.rpa_tab, "RPA Monitor")
 
@@ -745,32 +716,34 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.stats_tab, "Stats")
 
         self.trainer_tab = TrainerTab(controller, logger)
-        self.tabs.addTab(self.trainer_tab, "Trainer Legacy")
+        self.tabs.addTab(self.trainer_tab, "Trainer")
 
         if self.controller:
-            self.controller.training_complete.connect(self.trainer_tab.on_training_complete)
+            self.controller.training_complete.connect(
+                self.trainer_tab.on_training_complete)
 
     @Slot(str)
     def _on_stealth_changed(self, mode):
-        print(f"Stealth changed: {mode}")
+        if self.controller:
+            self.controller.set_stealth_mode(mode)
 
 
 def apply_dark_theme(app):
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(53, 53, 53))
-    palette.setColor(QPalette.WindowText, Qt.white)
-    palette.setColor(QPalette.Base, QColor(25, 25, 25))
-    palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-    palette.setColor(QPalette.ToolTipBase, Qt.white)
-    palette.setColor(QPalette.ToolTipText, Qt.white)
-    palette.setColor(QPalette.Text, Qt.white)
-    palette.setColor(QPalette.Button, QColor(53, 53, 53))
-    palette.setColor(QPalette.ButtonText, Qt.white)
-    palette.setColor(QPalette.BrightText, Qt.red)
-    palette.setColor(QPalette.Link, QColor(42, 130, 218))
-    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-    palette.setColor(QPalette.HighlightedText, Qt.black)
-    app.setPalette(palette)
+    p = QPalette()
+    p.setColor(QPalette.Window, QColor(53, 53, 53))
+    p.setColor(QPalette.WindowText, Qt.white)
+    p.setColor(QPalette.Base, QColor(25, 25, 25))
+    p.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    p.setColor(QPalette.ToolTipBase, Qt.white)
+    p.setColor(QPalette.ToolTipText, Qt.white)
+    p.setColor(QPalette.Text, Qt.white)
+    p.setColor(QPalette.Button, QColor(53, 53, 53))
+    p.setColor(QPalette.ButtonText, Qt.white)
+    p.setColor(QPalette.BrightText, Qt.red)
+    p.setColor(QPalette.Link, QColor(42, 130, 218))
+    p.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    p.setColor(QPalette.HighlightedText, Qt.black)
+    app.setPalette(p)
 
 
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
