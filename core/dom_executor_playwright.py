@@ -1108,7 +1108,7 @@ class DomExecutorPlaywright:
             self.logger.error(f"handle_signal: could not select market {market}")
             return False
 
-        return self.place_bet(selectors_or_match=selectors)
+        return self.place_bet(selectors_or_match=selectors, market=None, stake=None)
 
     def close(self):
         """Clean up browser resources (page, context, browser, playwright)."""
