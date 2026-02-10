@@ -1,70 +1,93 @@
-## Refactoring e Miglioramenti Tecnici
+# 🚀 SuperAgent V4 Pro: Autonomous Betting Enterprise
 
-Con questo refactoring hai trasformato uno script di automazione in un software di livello enterprise. La gestione del SingletonLock di Chrome e il passaggio del context unico tra i thread sono le "saldature" che separano un progetto amatoriale da un sistema H24.
+SuperAgent V4 Pro è un framework di automazione d'élite per il betting ad alta frequenza. Non è un semplice bot, ma un **Agente Autonomo Ridondante** che integra Intelligenza Artificiale multi-modello, navigazione stealth avanzata (Playwright) e un'architettura self-healing progettata per operare **24/7 senza supervisione umana**.
 
-Ecco l'ultimo check-up tecnico e lo schema dei segnali per garantire che la comunicazione tra i moduli non causi deadlock o crash di memoria.
+---
 
-1. **Schema della Comunicazione Thread-Safe**  
-In un sistema PySide6, è vitale che il thread di Telegram non tocchi direttamente l'interfaccia o il browser. Deve emettere un segnale che il MainWindow (Thread Principale) intercetta e smista.
+## 💎 Caratteristiche d'Élite
 
-   Logica di smistamento in MainWindow:
-   ```python
-   # Nel costruttore di MainWindow
-   self.telegram_tab.signal_received.connect(self.process_new_signal)
+### 🧠 1. AI Fallback Chain (5 Livelli di Resilienza)
 
-   def process_new_signal(self, data):
-       # Data contiene le info estratte (squadre, mercato, quota)
-       self.logger.info(f"Slot: Ricevuto segnale per {data['teams']}")
-       # Passiamo il lavoro all'RPA Worker già esistente che usa l'executor Singleton
-       if self.rpa_worker and self.rpa_worker.isRunning():
-           self.rpa_worker.enqueue_bet(data) 
-       else:
-           self.logger.error("RPA Worker non attivo, segnale perso.")
-   ```
+Il sistema garantisce il mapping del DOM e la logica decisionale anche in caso di outage delle API primarie, scalando automaticamente attraverso:
 
-2. **Il "Clean Kill" nel DomExecutorPlaywright**  
-Hai aggiunto la rimozione del SingletonLock, che è fondamentale. Per rendere il sistema ancora più resiliente, aggiungiamo una chiusura pulita (Graceful Shutdown) che previene la formazione di processi zombie di Chrome, molto comuni dopo un crash.
+- **Anthropic Claude 3.5 Sonnet**: Motore logico primario per precisione chirurgica.
+- **GPT-OSS-120b**: Fallback ad alte prestazioni.
+- **Qwen 3 Coder 480b**: Specialista nell'analisi di strutture HTML complesse.
+- **Gemini 2.0 Flash Lite**: Velocità estrema per decisioni real-time.
+- **Arcee-AI Trinity**: L'ultima linea di difesa per la continuità operativa.
 
-   In dom_executor_playwright.py:
-   ```python
-   def __del__(self):
-       """Assicura la chiusura delle risorse anche se l'oggetto viene distrutto brutalmente."""
-       self.close()
+### 🛡️ 2. Architettura Sentinel & Guardian
 
-   def close(self):
-       try:
-           if self.page: self.page.close()
-           if self.ctx: self.ctx.close()
-           if self.browser: self.browser.close()
-           if self.pw: self.pw.stop()
-       except:
-           pass # Evita errori a cascata durante lo spegnimento
-   ```
+Il cuore del sistema è protetto da tre layer di supervisione:
 
-3. **Gestione della Sessione Telethon (EXE-Safe)**  
-Quando compilerai in .exe, il percorso della sessione potrebbe diventare problematico se non è assoluto.
+- **Sentinel Core**: Monitora la latenza e attiva l'Hot-Swap tra istanze parallele di Chrome se rileva anomalie.
+- **Guardian Core**: Previene il "suicidio" del bot monitorando loop infiniti e streak di fallimenti.
+- **Autonomous Healer**: Ripara automaticamente la connessione CDP e ricicla il browser in caso di memory leak o freeze.
 
-   In telegram_listener_fixed.py: Definiamo un path assoluto in APPDATA o nella cartella data del progetto
-   ```python
-   session_path = os.path.join(BASE_DIR, "data", f"session_{api_id}")
-   self.client = TelegramClient(session_path, api_id, api_hash)
-   ```
-   In questo modo, anche se sposti l'eseguibile, il database della sessione rimarrà coerente e non richiederà il ri-inserimento del codice OTP ogni volta.
+### 🔌 3. Bet365.it Real-Time Bridge
 
-4. **Ultimo Check sulla Build con hidden-imports**  
-Poiché hai centralizzato tutto, il file build.py deve includere esplicitamente i moduli che PyInstaller non riesce a vedere "attraverso" i thread di Qt.
+Integrazione nativa e profonda per Bet365.it:
 
-   Assicurati che build.py abbia questi flag aggiuntivi:
-   
-   ```
-   --collect-all playwright         # Fondamentale per le icone e i driver.
-   --collect-submodules telethon    # Per gestire tutti i componenti del protocollo MTProto.
-   ```
+- **Stealth Tracking**: Movimenti del mouse basati su curve di Bezier umane e digitazione dinamica.
+- **DOM Monitoring**: Rilevamento istantaneo di cambi quota e mercati sospesi.
+- **Anti-Bot Bypass**: Gestione avanzata di fingerprinting (Canvas, WebGL, AudioContext).
 
-🔥 **Verdetto Finale**  
-Con il Singleton Executor, la Lock Protection e il Watchdog a basso consumo, hai eliminato il 99% dei motivi di crash nei sistemi RPA.
+---
 
-Il sistema è ora un "Blindato":
-- Stabilità: Chrome non andrà mai in conflitto di profilo.
-- Resilienza: Se Windows riavvia o il driver crasha, il Watchdog riparte da zero pulendo i file lock.
-- Manutenibilità: La UI riflette lo stato reale del browser singleton senza discrepanze.
+## 📊 Algoritmi di Money Management
+
+Il sistema automatizza la gestione del rischio applicando il **Criterio di Kelly** e tabelle di progressione dinamiche.
+
+Tutti i calcoli sono eseguiti nel `BetWorker` in un thread isolato, garantendo che la UI rimanga fluida anche durante operazioni massive.
+
+---
+
+## 🛠️ Setup Tecnico
+
+### Prerequisiti
+
+- **Python 3.10.11** (Versione raccomandata per stabilità PySide6)
+- **Chrome** (Avviato con porta di debug: `chrome.exe --remote-debugging-port=9222`)
+- **Hardware Vault**: Il sistema richiede l'inizializzazione del `vault.bin` locale per il salvataggio criptato (AES-256) delle chiavi API.
+
+### Installazione (Developer Mode)
+
+```bash
+# Clona il repository
+git clone https://github.com/petiro/Dom2.git
+
+# Installa le dipendenze (congelate a NumPy 1.26.4 per compatibilità)
+pip install -r requirements.txt
+
+# Inizializza Playwright
+python -m playwright install chromium
+```
+
+### Compilazione Enterprise EXE
+
+Il progetto include una spec di compilazione avanzata che gestisce i browser hooks e riduce i falsi positivi degli antivirus:
+
+```bash
+python -m PyInstaller SuperAgent_V4_Enterprise.spec --clean
+```
+
+---
+
+## 📦 Struttura del Progetto
+
+- **`core/`**: Logica di business, orchestratori (Sentinel, Guardian) e gestione browser.
+- **`ui/`**: Interfaccia grafica basata su PySide6 (Qt).
+- **`data/`**: Database locale delle sessioni e file di configurazione (YAML).
+- **`main.py`**: Entry point con splash screen asincrono e inizializzazione logger.
+
+---
+
+## 📜 Logica di Stabilità V4.x
+
+- **Thread Safety**: Comunicazione sicura via segnali Qt tra Watchdog (thread demone) e Controller (thread principale).
+- **Zero-Deadlock**: Gestione del flag `is_pending` centralizzata per prevenire blocchi logici sui segnali Telegram.
+- **Auto-Recovery**: Riavvio controllato delle sessioni CDP senza perdita dello stato della scommessa.
+
+---
+
+> **Disclaimer**: Questo software è inteso per scopi di ricerca sull'automazione e l'intelligenza artificiale. L'utente si assume la piena responsabilità per l'uso dello strumento in contesti di gambling reale.
