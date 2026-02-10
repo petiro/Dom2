@@ -22,12 +22,9 @@ def run_tests():
         app = QApplication.instance() or QApplication(sys.argv)
         
         # Verifichiamo che la classe si istanzi senza errori
-        class DummyLogger:
-            def info(self,*a): pass
-            def error(self,*a): pass
-            def warning(self,*a): pass
-
-        executor = DomExecutorPlaywright(DummyLogger())
+        import logging
+        test_logger = logging.getLogger("TEST_EXECUTOR")
+        executor = DomExecutorPlaywright(test_logger)
         print("✅ DomExecutor Instantiation: OK")
 
         # Verifica presenza metodi critici

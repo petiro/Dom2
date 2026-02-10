@@ -1,8 +1,8 @@
+import logging
 from PySide6.QtCore import QThread, Signal
 
 class BetWorker(QThread):
-    finished = Signal(dict) # Output: {status, stake, odds}
-    log = Signal(str, str)  # Output: level, message
+    finished = Signal(bool)
 
     def __init__(self, table, executor, match_data):
         super().__init__()
@@ -10,44 +10,32 @@ class BetWorker(QThread):
         self.executor = executor
         self.match = match_data['match']
         self.market = match_data['market']
+        self.money_manager = table
+        self.logger = logging.getLogger("BetWorker")
 
     def run(self):
+        self.table.is_pending = True
         try:
-            self.log.emit("info", f"Scouting: {self.match} | {self.market}")
+            odds = self.executor.find_odds(self.match, self.market)
 
-            # 1. Navigate to match and select market
-            selectors = self.executor._load_selectors()
-
-            if not self.executor.navigate_to_match(self.match, selectors):
-                self.finished.emit({"status": "error", "msg": "Match non trovato"})
-                return
-
-            if not self.executor.select_market(self.market, selectors):
-                self.finished.emit({"status": "error", "msg": "Mercato non trovato"})
-                return
-
-            # 2. Find odds on page
-            odds = self.executor.get_current_odds()
             if not odds or odds <= 1.0:
-                self.finished.emit({"status": "error", "msg": "Quota non trovata o <= 1.0"})
+                self.logger.error(f"Quote non valide: {odds}")
+                self.finished.emit(False)
                 return
 
-            # 3. Calculate stake via Roserpina
-            stake = self.table.calculate_stake(odds)
+            stake = self.money_manager.calculate_stake(odds)
+
             if stake <= 0:
-                self.finished.emit({"status": "error", "msg": "Stake calcolato a 0"})
+                self.logger.warning("Stake calcolato a 0. Operazione annullata.")
+                self.finished.emit(False)
                 return
-            self.log.emit("info", f"Stake Roserpina: EUR {stake} @ {odds}")
 
-            # 4. Place bet (takes selectors dict)
-            if self.executor.place_bet({
-                "match": self.match,
-                "market": self.market,
-                "stake": stake
-            }):
-                self.finished.emit({"status": "placed", "stake": stake, "odds": odds})
-            else:
-                self.finished.emit({"status": "error", "msg": "Piazzamento fallito"})
+            success = self.executor.place_bet(self.match, self.market, stake)
+            self.finished.emit(success)
 
         except Exception as e:
-            self.finished.emit({"status": "error", "msg": str(e)})
+            self.logger.error(f"Errore BetWorker: {e}")
+            self.finished.emit(False)
+
+        finally:
+            self.table.is_pending = False

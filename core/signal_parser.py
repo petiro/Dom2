@@ -4,7 +4,7 @@ class TelegramSignalParser:
     def parse(self, text):
         """Estrae team e calcola l'Over Successivo basandosi sulla somma gol."""
         # 1. Estrazione Team (dopo emoji VS)
-        teams_match = re.search(r"🆚\s*(.*?)\n", text)
+        teams_match = re.search(r"(?:🆚|VS|vs)\s*(.*?)\n", text)
         match_name = teams_match.group(1).strip() if teams_match else None
 
         # 2. Estrazione Punteggio per calcolo Over
