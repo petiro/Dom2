@@ -125,7 +125,22 @@ class SuperAgentController(QObject):
 
     def set_monitor(self, monitor):
         self.monitor = monitor
+        # Wire browser health check through controller (thread-safe)
+        if monitor and hasattr(monitor, 'set_recovery_callback'):
+            monitor.set_recovery_callback(self._check_and_recover_browser)
         self._log("[Controller] HealthMonitor connected")
+
+    def _check_and_recover_browser(self):
+        """Called from HealthMonitor thread. Uses executor_lock for thread safety."""
+        if not self.executor:
+            return
+        with self._executor_lock:
+            try:
+                if not self.executor.check_health():
+                    self._log("[Controller] Browser unresponsive — recovering")
+                    self.executor.recover_session()
+            except Exception as e:
+                self._log(f"[Controller] Browser recovery failed: {e}")
 
     def set_vision(self, vision):
         self.vision = vision
@@ -393,9 +408,18 @@ class SuperAgentController(QObject):
             return self.executor.select_market(params.get("market", ""), selectors)
         elif action == "place_bet":
             self.state_manager.set_state(AgentState.BETTING)
+            amount = params.get("amount")
+            if not amount:
+                teams_p = params.get("teams", "")
+                market_p = params.get("market", "")
+                odds, _loc = self.executor.find_odds(teams_p, market_p)
+                amount = self.table.calculate_stake(odds) if odds > 1.0 else 0
+            if not amount or amount <= 0:
+                self._log("[Controller] Stake = 0, bet annullata")
+                return False
             return self.executor.place_bet(
                 params.get("teams", ""), params.get("market", ""),
-                params.get("amount")
+                amount
             )
         else:
             self._log(f"[Controller] Unknown step action: {action}")
@@ -458,7 +482,13 @@ class SuperAgentController(QObject):
 
                 # State: BETTING
                 self.state_manager.transition(AgentState.BETTING)
-                result = self.executor.place_bet(teams, market, None)
+                odds, _loc = self.executor.find_odds(teams, market)
+                stake = self.table.calculate_stake(odds) if odds > 1.0 else 0
+                if not stake or stake <= 0:
+                    self._log("[Controller] Stake = 0, bet annullata")
+                    self.state_manager.transition(AgentState.IDLE)
+                    return False
+                result = self.executor.place_bet(teams, market, stake)
 
             # Record result
             self._bet_results.append({

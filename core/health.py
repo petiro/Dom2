@@ -39,8 +39,9 @@ class HealthMonitor:
         self.start_time = datetime.now()
         self._stop_event = threading.Event()
         self._restarting = False          # race-condition guard
-        self._recovery_lock = threading.Lock()
         self._mem_samples: list[float] = []
+        # Callback for browser recovery (set by controller for thread safety)
+        self._on_browser_unhealthy = None
 
     # ------------------------------------------------------------------
     #  Public API
@@ -52,6 +53,10 @@ class HealthMonitor:
     def set_executor(self, executor):
         """Attach (or replace) the browser executor after init."""
         self.executor = executor
+
+    def set_recovery_callback(self, callback):
+        """Set callback for browser recovery (called from monitor thread)."""
+        self._on_browser_unhealthy = callback
 
     def run_forever(self):
         """Start all daemon monitoring threads."""
@@ -98,16 +103,12 @@ class HealthMonitor:
                 self._hard_restart()
                 return
 
-            # --- 2. Browser health ---
-            if self.executor:
+            # --- 2. Browser health (via callback, no direct Playwright access) ---
+            if self._on_browser_unhealthy:
                 try:
-                    if not self.executor.check_health():
-                        self.logger.warning(
-                            "[HealthMonitor] Browser unresponsive — recovering")
-                        with self._recovery_lock:
-                            self.executor.recover_session()
+                    self._on_browser_unhealthy()
                 except Exception as e:
-                    self.logger.error(f"[HealthMonitor] Browser check error: {e}")
+                    self.logger.error(f"[HealthMonitor] Browser recovery callback error: {e}")
 
             # --- 3. Memory guard (averaged) ---
             try:
