@@ -738,14 +738,34 @@ class DomExecutorPlaywright:
     # ------------------------------------------------------------------
     #  Core: Find Odds (for BetWorker)
     # ------------------------------------------------------------------
-    def find_odds(self, match, market):
-        self.logger.info(f"Ricerca quote: {match} | {market}")
-        return 1.85
+    def find_odds(self, match_name, market_name):
+        """Ricerca reale della quota su Bet365."""
+        try:
+            self.logger.info(f"Ricerca quota reale per: {match_name} -> {market_name}")
+            # 1. Attende che la pagina sia carica
+            self.page.wait_for_selector(".gl-MarketGroup", timeout=10000)
+
+            # 2. Cerca il blocco del mercato (es. 'Esito Finale')
+            market_group = self.page.locator(".gl-MarketGroup", has_text=market_name).first
+
+            # 3. All'interno del gruppo, cerca la quota
+            odds_element = market_group.locator(".gl-ParticipantOddsOnly_Odds").first
+
+            if odds_element.is_visible():
+                str_odds = odds_element.inner_text().strip()
+                self.logger.info(f"Quota trovata: {str_odds}")
+                return float(str_odds)
+
+            return 0.0
+        except Exception as e:
+            self.logger.error(f"Errore ricerca quota Bet365: {e}")
+            return 0.0
 
     # ------------------------------------------------------------------
     #  Core: Place Bet
     # ------------------------------------------------------------------
     def place_bet(self, selectors_or_match, market=None, stake=None):
+        """Logica di piazzamento reale sulla Schedina di Bet365."""
         if isinstance(selectors_or_match, dict):
             s = selectors_or_match
         else:
@@ -755,12 +775,37 @@ class DomExecutorPlaywright:
                 "stake": stake
             }
 
-        self.logger.info(
-            f"Piazzamento scommessa: {s.get('match')} | "
-            f"{s.get('market')} | {s.get('stake')}"
-        )
+        match = s.get("match")
+        market_name = s.get("market")
+        bet_stake = s.get("stake")
 
-        return True
+        try:
+            self.logger.info(f"Avvio piazzamento: {bet_stake} su {match}")
+
+            # 1. Clicca sulla quota per aggiungerla alla schedina
+            self.find_odds(match, market_name)
+            self.page.locator(".gl-ParticipantOddsOnly_Odds").first.click()
+
+            # 2. Gestione Schedina (Bet Slip)
+            stake_input = self.page.locator(".stb-StakeBox_Input")
+            stake_input.wait_for(state="visible", timeout=5000)
+
+            # Inserimento umano dello stake
+            stake_input.click()
+            self.page.keyboard.type(str(bet_stake), delay=100)
+
+            # 3. Click sul tasto Scommetti (Place Bet)
+            place_btn = self.page.locator(".btn-PlaceBet")
+            if place_btn.is_enabled():
+                # --- In produzione decommenta per piazzare realmente ---
+                # self.smart_click(place_btn)
+                self.logger.info("[MOCK] Tasto Scommetti cliccato con successo!")
+                return True
+
+            return False
+        except Exception as e:
+            self.logger.error(f"Errore piazzamento Bet365: {e}")
+            return False
 
     def _wait_for_page_ready(self, timeout=15000):
         """Wait until the page is fully loaded and interactive."""
