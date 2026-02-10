@@ -10,4 +10,4 @@ opencv-python==4.8.1.78
 pyautogui==0.9.54
 pillow==10.1.0
 websockets==11.0.3
-packaging
+packaging==23.2
