@@ -9,6 +9,7 @@ import sys
 import time
 import logging
 import threading
+import ctypes
 
 # --- SISTEMA AUTO-LOG (Scatola Nera) ---
 def setup_logging():
@@ -33,9 +34,8 @@ def is_admin():
     if sys.platform != "win32":
         return True
     try:
-        import ctypes
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
         return False
 
 if not is_admin():
