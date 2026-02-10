@@ -796,6 +796,10 @@ class DomExecutorPlaywright:
         market_name = s.get("market")
         bet_stake = s.get("stake")
 
+        if not bet_stake:
+            self.logger.error("Stake mancante, impossibile piazzare")
+            return False
+
         try:
             self.logger.info(f"Avvio piazzamento: {bet_stake} su {match}")
 

@@ -28,7 +28,6 @@ class TelegramWorker(QThread):
     def stop(self):
         if self.client and self.loop and not self.loop.is_closed():
             try:
-                import asyncio
                 future = asyncio.run_coroutine_threadsafe(
                     self.client.disconnect(), self.loop
                 )
