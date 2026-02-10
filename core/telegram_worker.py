@@ -1,3 +1,4 @@
+import os
 from PySide6.QtCore import QThread, Signal
 import asyncio
 
@@ -6,6 +7,8 @@ try:
     TELETHON_AVAILABLE = True
 except ImportError:
     TELETHON_AVAILABLE = False
+
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class TelegramWorker(QThread):
     chats_loaded = Signal(list)
@@ -18,6 +21,9 @@ class TelegramWorker(QThread):
         self.selected_chats = config.get('selected_chats', [])
         self.client = None
         self.loop = asyncio.new_event_loop()
+        # Absolute session path for PyInstaller compatibility
+        self._data_dir = os.path.join(_BASE_DIR, "data")
+        os.makedirs(self._data_dir, exist_ok=True)
 
     def run(self):
         if not TELETHON_AVAILABLE:
@@ -38,7 +44,8 @@ class TelegramWorker(QThread):
         self.wait(5000)
 
     async def _main(self):
-        self.client = TelegramClient('session_v4', self.api_id, self.api_hash)
+        session_path = os.path.join(self._data_dir, "session_v4")
+        self.client = TelegramClient(session_path, self.api_id, self.api_hash)
         await self.client.start()
 
         @self.client.on(events.NewMessage(chats=self.selected_chats))

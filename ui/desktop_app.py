@@ -722,6 +722,12 @@ class MainWindow(QMainWindow):
             self.controller.training_complete.connect(
                 self.trainer_tab.on_training_complete)
 
+    def closeEvent(self, event):
+        if self.rpa_worker:
+            self.rpa_worker.stop()
+            self.rpa_worker.wait(3000)
+        super().closeEvent(event)
+
     @Slot(str)
     def _on_stealth_changed(self, mode):
         if self.controller:

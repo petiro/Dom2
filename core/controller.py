@@ -95,6 +95,10 @@ class SuperAgentController(QObject):
         self.current_config = self.vault.decrypt_data()
         self.telegram_worker = None
 
+        # Auto-mapping state
+        self.mapper_worker = None
+        self._mapper_thread = None
+
     # ------------------------------------------------------------------
     #  Internal logging (emits Qt Signal + logger)
     # ------------------------------------------------------------------
@@ -512,8 +516,8 @@ class SuperAgentController(QObject):
                     self.state_manager.transition(AgentState.RECOVERING)
                     with self._executor_lock:
                         self.executor.recover_session()
-                except Exception as e:
-                    self._log(f"[Controller] Recovery during signal processing failed: {e}")
+                except Exception as recovery_err:
+                    self._log(f"[Controller] Recovery during signal processing failed: {recovery_err}")
             if not self._stop_event.is_set():
                 self.state_manager.transition(AgentState.IDLE)
             return False
@@ -638,6 +642,11 @@ class SuperAgentController(QObject):
             self.safe_emit(self.log_message, "API Key mancante")
             return
 
+        # Stop previous mapper if running
+        if hasattr(self, '_mapper_thread') and self._mapper_thread and self._mapper_thread.isRunning():
+            self._mapper_thread.quit()
+            self._mapper_thread.wait(3000)
+
         with self._executor_lock:
             # Navigate if needed and extract DOM
             if self.executor and self.executor.page:
@@ -648,17 +657,18 @@ class SuperAgentController(QObject):
                 self.safe_emit(self.log_message, "Browser non inizializzato")
                 return
 
-            from core.auto_mapper_worker import AutoMapperWorker
-            from PySide6.QtCore import QThread
-            self.mapper_worker = AutoMapperWorker(api_key, dom_data)
-            self._mapper_thread = QThread()
-            self.mapper_worker.moveToThread(self._mapper_thread)
-            self._mapper_thread.started.connect(self.mapper_worker.run)
-            self.mapper_worker.finished.connect(self.on_mapping_success)
-            self.mapper_worker.error.connect(lambda e: self.safe_emit(self.log_message, e))
-            self.mapper_worker.finished.connect(self._mapper_thread.quit)
-            self.mapper_worker.error.connect(self._mapper_thread.quit)
-            self._mapper_thread.start()
+        # Create worker/thread outside executor lock
+        from core.auto_mapper_worker import AutoMapperWorker
+        from PySide6.QtCore import QThread
+        self.mapper_worker = AutoMapperWorker(api_key, dom_data)
+        self._mapper_thread = QThread()
+        self.mapper_worker.moveToThread(self._mapper_thread)
+        self._mapper_thread.started.connect(self.mapper_worker.run)
+        self.mapper_worker.finished.connect(self.on_mapping_success)
+        self.mapper_worker.error.connect(lambda e: self.safe_emit(self.log_message, e))
+        self.mapper_worker.finished.connect(self._mapper_thread.quit)
+        self.mapper_worker.error.connect(self._mapper_thread.quit)
+        self._mapper_thread.start()
 
     def on_mapping_success(self, result_dict):
         import yaml

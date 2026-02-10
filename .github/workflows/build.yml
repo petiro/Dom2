@@ -29,7 +29,7 @@ jobs:
         
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name "SuperAgent_V4" --clean main.py
+          pyinstaller --noconfirm --onefile --windowed --name "SuperAgent_V4" --clean --add-data "config;config" --add-data "data;data" main.py
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
