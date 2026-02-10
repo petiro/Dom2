@@ -13,23 +13,27 @@ import ctypes
 
 # --- SISTEMA AUTO-LOG (Scatola Nera) ---
 def setup_logging():
-    # Determina dove salvare il log (nella stessa cartella dell'EXE)
     log_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "debug_log.txt")
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_path, encoding='utf-8'), # Scrive su file
-            logging.StreamHandler(sys.stdout)               # Scrive anche in console
-        ]
-    )
-    logging.info("--- AVVIO SUPERAGENT V4 ---")
-    logging.info(f"Cartella di esecuzione: {os.getcwd()}")
-    logging.info(f"Sistema Operativo: {sys.platform}")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
 
-# Esegui il setup immediatamente (prima del controllo admin)
-setup_logging()
+    # Rimuovi handler esistenti per evitare duplicati
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # File Handler con encoding corretto
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+    # Stream Handler per la console
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(stream_handler)
+
+    logging.info("--- LOGGING INIZIALIZZATO CORRETTAMENTE ---")
+
 # ---------------------------------------
 
 def is_admin():
@@ -39,9 +43,6 @@ def is_admin():
         return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception:
         return False
-
-if not is_admin():
-    logging.warning("ATTENZIONE: Il programma NON è avviato come Amministratore. Alcune funzioni potrebbero fallire.")
 
 # PATCH 1 — Path stabile (before any local imports)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -318,4 +319,7 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_logging()
+    if not is_admin():
+        logging.warning("Avvio senza privilegi Admin - Alcune funzioni mouse/tastiera potrebbero fallire.")
     main()

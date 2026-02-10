@@ -719,6 +719,7 @@ class DomExecutorPlaywright:
         finally:
             self.browser = None
             self.ctx = None
+            self.page = None
 
     # ------------------------------------------------------------------
     #  Screenshot to Base64
@@ -1080,8 +1081,8 @@ class DomExecutorPlaywright:
             self.logger.info("Browser session recovered successfully")
             return True
         except Exception as e:
-            self.logger.critical(f"Browser unrecoverable: {e} — triggering restart")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            self.logger.critical(f"Sessione irrecuperabile: {e}. Richiesta chiusura controllata.")
+            sys.exit(1)
 
     def handle_signal(self, signal_data: dict):
         """Handle a parsed Telegram signal — navigate, select market, place bet.

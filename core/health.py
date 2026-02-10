@@ -153,6 +153,10 @@ class HealthMonitor:
         if self._restarting:
             return
         self._restarting = True
-        self.logger.critical("[HealthMonitor] HARD RESTART triggered")
-        time.sleep(2)   # grace period for log flush
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        self.logger.critical("[HealthMonitor] RESTART DI EMERGENZA")
+        try:
+            if sys.platform == "win32":
+                os.startfile(sys.executable)  # pylint: disable=no-member
+            sys.exit(0)
+        except Exception:
+            os._exit(1)

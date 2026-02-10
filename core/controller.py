@@ -152,8 +152,10 @@ class SuperAgentController(QObject):
             self._log("[Controller] SystemWatchdog connected")
 
     def _handle_recycle_request(self):
-        if self.executor:
-            self.executor.recycle_browser()
+        with self._executor_lock:
+            if self.executor:
+                self.executor.recycle_browser()
+                self.executor.launch_browser_cdp()
 
     def _init_os_human(self):
         """Lazy-init HumanOS for desktop-level recovery."""
@@ -673,8 +675,7 @@ class SuperAgentController(QObject):
         if not data['match']:
             return
 
-        # 3. Avvio Thread Scommessa
-        self.table.is_pending = True
+        # 3. Avvio Thread Scommessa (is_pending gestito da BetWorker.run)
         self.bet_worker = BetWorker(self.table, self.executor, data)
 
         self.bet_worker.finished.connect(self.on_bet_complete)
