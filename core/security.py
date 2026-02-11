@@ -28,7 +28,7 @@ class Vault:
                 )
                 output = result.stdout.splitlines()
                 serial = output[1].strip() if len(output) > 1 else "DEFAULT_MACHINE_FALLBACK"
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.CalledProcessError):
                 serial = platform.node() or "FALLBACK_ID"
         else:
             serial = platform.node() or "FALLBACK_ID"
