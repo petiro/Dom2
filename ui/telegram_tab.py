@@ -14,6 +14,7 @@ from PySide6.QtGui import QFont
 from datetime import datetime
 
 QUEUE_POLL_INTERVAL_MS = 100
+MAX_QUEUE_EVENTS_PER_TICK = 50
 
 
 
@@ -431,11 +432,13 @@ class TelegramTab(QWidget):
         self.disconnect_btn.setEnabled(False)
 
     def _drain_event_queue(self):
-        while True:
+        processed = 0
+        while processed < MAX_QUEUE_EVENTS_PER_TICK:
             try:
                 event = self._event_queue.get_nowait()
             except Empty:
                 break
+            processed += 1
             try:
                 event_type = event[0]
             except (TypeError, IndexError) as exc:
@@ -443,8 +446,8 @@ class TelegramTab(QWidget):
                 continue
             if event_type == "message":
                 try:
-                    _, timestamp, message = event
-                except (TypeError, ValueError) as exc:
+                    timestamp, message = event[1], event[2]
+                except (TypeError, ValueError, IndexError) as exc:
                     self._log_malformed_event("message", event, exc)
                     continue
                 self.on_message_received(timestamp, message)
@@ -474,7 +477,7 @@ class TelegramTab(QWidget):
     def _log_malformed_event(self, event_type, event, error=None):
         if not self.logger:
             return
-        detail = str(error) if error else "unexpected payload"
+        detail = error.__class__.__name__ if error else "unexpected payload"
         self.logger.warning(f"Malformed {event_type} event ({detail})")
 
     def update_status(self, status, color):
