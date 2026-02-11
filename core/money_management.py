@@ -1,9 +1,11 @@
 import json
 import os
 
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 class RoserpinaTable:
     def __init__(self, table_id=1, bankroll=100.0, target_pct=3.0, max_bets=10):
-        self.config_path = f"config/money_table_{table_id}.json"
+        self.config_path = os.path.join(_ROOT_DIR, "config", f"money_table_{table_id}.json")
         self.bankroll = bankroll
         self.target_profit = (bankroll * target_pct) / 100
         self.max_bets = max_bets
@@ -27,7 +29,7 @@ class RoserpinaTable:
 
     def _save(self, data=None):
         if data: self.data = data
-        os.makedirs("config", exist_ok=True)
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         with open(self.config_path, 'w') as f:
             json.dump(self.data, f, indent=4)
 

@@ -6,11 +6,13 @@ import base64
 import platform
 from cryptography.fernet import Fernet
 
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 class Vault:
     def __init__(self):
         self.key = self._generate_machine_key()
         self.cipher = Fernet(self.key)
-        self.vault_path = "config/vault.bin"
+        self.vault_path = os.path.join(_ROOT_DIR, "config", "vault.bin")
 
     def _generate_machine_key(self):
         if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -30,7 +32,7 @@ class Vault:
     def encrypt_data(self, data_dict):
         json_data = json.dumps(data_dict).encode()
         encrypted_data = self.cipher.encrypt(json_data)
-        os.makedirs("config", exist_ok=True)
+        os.makedirs(os.path.dirname(self.vault_path), exist_ok=True)
         with open(self.vault_path, "wb") as f:
             f.write(encrypted_data)
 

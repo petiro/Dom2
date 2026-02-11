@@ -681,10 +681,13 @@ class SuperAgentController(QObject):
                 self.executor.highlight_selectors(yaml_code)
 
     def save_selectors_yaml(self, yaml_code):
+        import os
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        yaml_path = os.path.join(_root, "config", "selectors.yaml")
         try:
-            with open("config/selectors.yaml", "w", encoding="utf-8") as f:
+            with open(yaml_path, "w", encoding="utf-8") as f:
                 f.write(yaml_code)
-            self.safe_emit(self.log_message, "selectors.yaml salvato correttamente")
+            self.safe_emit(self.log_message, f"selectors.yaml salvato in: {yaml_path}")
         except Exception as e:
             self.safe_emit(self.log_message, f"Errore salvataggio YAML: {e}")
 

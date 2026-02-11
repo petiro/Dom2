@@ -34,7 +34,8 @@ LOG_FILE = os.path.join(_ROOT_DIR, "superagent.log")
 # --- MODULE LOGGER (does not conflict with main.py's setup_logging) ---
 _logger = logging.getLogger("desktop_app")
 if not _logger.handlers:
-    _fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    from logging.handlers import RotatingFileHandler
+    _fh = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
     _fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     _logger.addHandler(_fh)
     _logger.setLevel(logging.INFO)
