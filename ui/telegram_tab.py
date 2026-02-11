@@ -3,7 +3,7 @@ Telegram Tab - Monitor and manage Telegram integration
 All heavy operations (API calls, parsing) run in separate QThreads to avoid blocking UI.
 """
 import os
-from queue import Queue
+from queue import Queue, Empty
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
     QLabel, QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem,
@@ -425,10 +425,15 @@ class TelegramTab(QWidget):
         """Handle error"""
         QMessageBox.critical(self, "Telegram Error", error)
         self.update_status("Error", "red")
+        self.connect_btn.setEnabled(True)
+        self.disconnect_btn.setEnabled(False)
 
     def _drain_event_queue(self):
-        while not self._event_queue.empty():
-            event = self._event_queue.get()
+        while True:
+            try:
+                event = self._event_queue.get_nowait()
+            except Empty:
+                break
             event_type = event[0] if event else None
             if event_type == "message":
                 _, timestamp, message = event
