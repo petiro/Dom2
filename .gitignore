@@ -11,6 +11,6 @@ config/money_table_*.json
 *.spec
 my_robots.json
 api_config.json
-superagent.log
+superagent*.log
 *.session
 *.session-journal
