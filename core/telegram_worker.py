@@ -20,7 +20,7 @@ class TelegramWorker(QThread):
         self.api_hash = config.get('api_hash', '')
         self.selected_chats = config.get('selected_chats', [])
         self.client = None
-        self.loop = asyncio.new_event_loop()
+        self.loop = None
         # Absolute session path for PyInstaller compatibility
         self._data_dir = os.path.join(_BASE_DIR, "data")
         os.makedirs(self._data_dir, exist_ok=True)
@@ -28,6 +28,7 @@ class TelegramWorker(QThread):
     def run(self):
         if not TELETHON_AVAILABLE:
             return
+        self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self._main())
 
