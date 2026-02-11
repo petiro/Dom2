@@ -435,33 +435,44 @@ class TelegramTab(QWidget):
             except Empty:
                 break
             if not event:
+                self._log_malformed_event("unknown", event)
                 continue
             event_type = event[0]
             if event_type == "message":
                 try:
                     _, timestamp, message = event
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as exc:
+                    self._log_malformed_event("message", event, exc)
                     continue
                 self.on_message_received(timestamp, message)
             elif event_type == "status":
                 try:
                     status = event[1]
-                except IndexError:
+                except IndexError as exc:
+                    self._log_malformed_event("status", event, exc)
                     continue
                 self.on_status_changed(status)
             elif event_type == "error":
                 try:
                     error = event[1]
-                except IndexError:
+                except IndexError as exc:
+                    self._log_malformed_event("error", event, exc)
                     continue
                 self.on_error(error)
             elif event_type == "parsed":
                 try:
                     payload = event[1]
-                except IndexError:
+                except IndexError as exc:
+                    self._log_malformed_event("parsed", event, exc)
                     continue
                 if isinstance(payload, dict):
                     self.signal_received.emit(payload)
+
+    def _log_malformed_event(self, event_type, event, error=None):
+        if not self.logger:
+            return
+        detail = f"{error}" if error else "unexpected payload"
+        self.logger.warning("Malformed %s event: %s (%s)", event_type, event, detail)
 
     def update_status(self, status, color):
         """Update status label"""
