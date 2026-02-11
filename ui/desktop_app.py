@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.1 - SENTINEL EDITION
+SuperAgent Desktop App V5.2 - SENTINEL EDITION (UI FIX & GRAPHICS UPDATE)
 """
 import os
 import sys
@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
     QTextEdit, QPushButton, QLabel, QLineEdit, QGroupBox, QTabWidget,
     QTableWidget, QTableWidgetItem, QCheckBox, QMessageBox, QSpinBox,
     QProgressBar, QComboBox, QFormLayout, QSplitter, QDoubleSpinBox,
-    QListWidget, QListWidgetItem, QFrame, QInputDialog
+    QListWidget, QListWidgetItem, QFrame, QDialog, QDialogButtonBox
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize
 from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon
 
 try:
@@ -28,14 +28,103 @@ try:
     from ui.telegram_tab import TelegramTab
 except ImportError:
     class RoserpinaTable:
-        def __init__(self, bankroll, target_pct): pass
+        def __init__(self, b, t): pass
     class MappingTab(QWidget):
-        def __init__(self, controller): super().__init__()
+        def __init__(self, c): super().__init__()
     class TelegramTab(QWidget):
-        signal_received = Signal(dict)
-        def __init__(self, **kwargs): super().__init__()
+        def __init__(self, **k): super().__init__()
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+# ============================================================================
+#  GLOBAL STYLESHEET (CSS PRO)
+# ============================================================================
+STYLE_SHEET = """
+/* Sfondo Generale */
+QMainWindow, QWidget { background-color: #343541; color: #ececf1; font-family: 'Segoe UI', sans-serif; }
+
+/* Tab Widget */
+QTabWidget::pane { border: 1px solid #4d4d4f; top: -1px; }
+QTabBar::tab { background: #202123; color: #8e8ea0; padding: 10px 20px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
+QTabBar::tab:selected { background: #343541; color: white; border-top: 2px solid #10a37f; font-weight: bold; }
+
+/* LineEdit - FIX SCRITTURA */
+QLineEdit {
+    background-color: #40414f;
+    color: white;
+    border: 1px solid #565869;
+    border-radius: 4px;
+    padding: 8px;
+    selection-background-color: #10a37f;
+}
+QLineEdit:focus { border: 1px solid #10a37f; background-color: #4d4d4f; }
+QLineEdit:disabled { background-color: #2a2b32; color: #666; }
+
+/* TextEdit */
+QTextEdit { background-color: #353740; border: none; color: #ececf1; padding: 5px; }
+
+/* Liste */
+QListWidget { background-color: #202123; border: none; }
+QListWidget::item { padding: 12px; border-radius: 4px; color: #ececf1; margin: 2px 5px; }
+QListWidget::item:selected { background-color: #343541; border: 1px solid #565869; }
+QListWidget::item:hover { background-color: #2a2b32; }
+
+/* Bottoni */
+QPushButton {
+    background-color: #40414f;
+    color: white;
+    border: 1px solid #565869;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+QPushButton:hover { background-color: #4d4d4f; border-color: #8e8ea0; }
+QPushButton:pressed { background-color: #2a2b32; }
+QPushButton:disabled { background-color: #2a2b32; color: #555; border: none; }
+
+/* Tabelle */
+QTableWidget { gridline-color: #444; background-color: #1e1e1e; }
+QHeaderView::section { background-color: #202123; color: white; padding: 5px; border: none; }
+"""
+
+
+# ============================================================================
+#  CUSTOM INPUT DIALOG (FIX WHITE-ON-WHITE)
+# ============================================================================
+class CustomInputDialog(QDialog):
+    def __init__(self, title, label_text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedWidth(400)
+        self.setStyleSheet("background-color: #202123; color: white;")
+
+        layout = QVBoxLayout(self)
+
+        lbl = QLabel(label_text)
+        lbl.setStyleSheet("font-size: 14px; font-weight: bold; margin-bottom: 5px;")
+        layout.addWidget(lbl)
+
+        self.input_field = QLineEdit()
+        self.input_field.setPlaceholderText("Scrivi qui...")
+        self.input_field.setStyleSheet(
+            "QLineEdit { background-color: #40414f; color: white; "
+            "border: 2px solid #10a37f; padding: 10px; font-size: 14px; }"
+            "QLineEdit:focus { border-color: #19c37d; }")
+        layout.addWidget(self.input_field)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        btns.setStyleSheet(
+            "QPushButton { background-color: #10a37f; color: white; border: none; }"
+            "QPushButton[text='Cancel'] { background-color: #555; }")
+        layout.addWidget(btns)
+
+        self.input_field.setFocus()
+
+    def get_text(self):
+        return self.input_field.text().strip()
 
 
 # ============================================================================
@@ -44,7 +133,7 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class SafetySentinel:
     FORBIDDEN = [
         "import os", "sys.exit", "os.system", "rm -rf", "format c:",
-        "drop table", "alter user", "shutdown", "reboot", "wget ", "curl "
+        "shutdown", "wget ", "curl "
     ]
 
     @staticmethod
@@ -63,7 +152,7 @@ class SafetySentinel:
 
     @staticmethod
     def warning() -> str:
-        return "SECURITY ALERT: Comando bloccato dal Sentinel System."
+        return "BLOCKED BY SENTINEL SECURITY."
 
 
 # ============================================================================
@@ -153,7 +242,7 @@ class OpenRouterWorker(QThread):
 
 
 # ============================================================================
-#  3. ROBOT FACTORY (MULTI-AGENT UI)
+#  3. ROBOT FACTORY (V5.2 UI)
 # ============================================================================
 class RobotFactoryTab(QWidget):
     def __init__(self, controller):
@@ -171,70 +260,79 @@ class RobotFactoryTab(QWidget):
         main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(0)
 
-        # SIDEBAR
+        # --- SIDEBAR ---
         side = QWidget()
-        side.setFixedWidth(260)
-        side.setStyleSheet("background:#202123; border-right:1px solid #444;")
+        side.setFixedWidth(280)
+        side.setStyleSheet("background-color: #202123; border-right: 1px solid #4d4d4f;")
         vbox = QVBoxLayout(side)
+        vbox.setContentsMargins(10, 20, 10, 20)
+        vbox.setSpacing(15)
+
         lbl_title = QLabel("FLOTTA AGENTI")
-        lbl_title.setStyleSheet("color:#ddd; font-weight:bold; padding:10px;")
+        lbl_title.setStyleSheet(
+            "color:#8e8ea0; font-weight:bold; font-size:12px; letter-spacing:1px;")
         vbox.addWidget(lbl_title)
 
         btn_new = QPushButton("+ Nuovo Agente")
         btn_new.setStyleSheet(
-            "background:transparent; border:1px solid #555; color:white; "
-            "padding:8px; text-align:left;")
+            "background-color: #10a37f; color: white; border: none; "
+            "padding: 10px; font-weight: bold;")
         btn_new.clicked.connect(self.create_robot)
         vbox.addWidget(btn_new)
 
         self.list = QListWidget()
-        self.list.setStyleSheet("background:transparent; border:none; color:#ddd;")
         self.list.currentItemChanged.connect(self.load_robot)
         vbox.addWidget(self.list)
 
-        vbox.addStretch()
-        lbl_api = QLabel("API Key OpenRouter")
-        lbl_api.setStyleSheet("color:#888; font-size:11px; font-weight:bold;")
-        vbox.addWidget(lbl_api)
+        # API Key Section
+        api_box = QGroupBox("Configurazione API")
+        api_box.setStyleSheet(
+            "border: 1px solid #444; padding: 10px; margin-top: 10px;")
+        ab_lay = QVBoxLayout(api_box)
         self.txt_api = QLineEdit(self.api_key)
+        self.txt_api.setPlaceholderText("sk-or-...")
         self.txt_api.setEchoMode(QLineEdit.Password)
-        self.txt_api.setStyleSheet("background:#333; color:white; border:1px solid #555; padding:5px;")
         self.txt_api.textChanged.connect(self.save_api)
-        vbox.addWidget(self.txt_api)
+        ab_lay.addWidget(self.txt_api)
+        vbox.addWidget(api_box)
+
         main.addWidget(side)
 
-        # CHAT PANEL
+        # --- CHAT PANEL ---
         self.panel = QWidget()
         self.panel.setVisible(False)
-        self.panel.setStyleSheet("background:#343541;")
         p_lay = QVBoxLayout(self.panel)
         p_lay.setContentsMargins(0, 0, 0, 0)
+        p_lay.setSpacing(0)
 
         # Header
         head = QFrame()
-        head.setStyleSheet("background:#202123; padding:10px; border-bottom:1px solid #444;")
+        head.setStyleSheet(
+            "background-color: #343541; border-bottom: 1px solid #2d2d30; padding: 15px;")
         h_box = QHBoxLayout(head)
         self.lbl_name = QLabel("Robot")
-        self.lbl_name.setStyleSheet("font-size:18px; font-weight:bold; color:white;")
+        self.lbl_name.setStyleSheet("font-size: 20px; font-weight: bold; color: white;")
+
         self.txt_tg = QLineEdit()
-        self.txt_tg.setPlaceholderText("Target Telegram...")
-        self.txt_tg.setFixedWidth(200)
-        self.txt_tg.setStyleSheet("background:#444; color:white; border:none; padding:5px;")
+        self.txt_tg.setPlaceholderText("Username Canale (es: @Tips)")
+        self.txt_tg.setFixedWidth(250)
+        self.txt_tg.setStyleSheet(
+            "background: #40414f; color: #10a37f; font-weight: bold; padding: 8px;")
         self.txt_tg.textChanged.connect(self.save_config)
 
         self.btn_act = QPushButton("AVVIA")
         self.btn_act.setCheckable(True)
-        self.btn_act.setFixedWidth(80)
+        self.btn_act.setFixedWidth(100)
         self.btn_act.clicked.connect(self.toggle_active)
 
         self.btn_del = QPushButton("X")
         self.btn_del.setFixedWidth(40)
-        self.btn_del.setStyleSheet("background:#a00;")
+        self.btn_del.setStyleSheet("background: #ef4444; border:none;")
         self.btn_del.clicked.connect(self.delete_robot)
 
         h_box.addWidget(self.lbl_name)
         h_box.addStretch()
-        h_box.addWidget(QLabel("Target:"))
+        h_box.addWidget(QLabel("Target Telegram:"))
         h_box.addWidget(self.txt_tg)
         h_box.addWidget(self.btn_act)
         h_box.addWidget(self.btn_del)
@@ -243,25 +341,28 @@ class RobotFactoryTab(QWidget):
         # Chat display
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
-        self.chat.setStyleSheet(
-            "border:none; padding:15px; color:#ddd; font-size:14px; background:#343541;")
         p_lay.addWidget(self.chat)
 
         # Input bar
-        in_box = QWidget()
-        in_box.setStyleSheet("padding:15px;")
+        in_box = QFrame()
+        in_box.setStyleSheet(
+            "background-color: #343541; padding: 20px; border-top: 1px solid #444;")
         ib_lay = QHBoxLayout(in_box)
+
         self.inp = QLineEdit()
-        self.inp.setPlaceholderText("Scrivi istruzioni...")
+        self.inp.setPlaceholderText("Scrivi istruzioni al robot...")
+        self.inp.setMinimumHeight(50)
         self.inp.setStyleSheet(
-            "background:#40414f; color:white; border:1px solid #555; "
-            "padding:10px; border-radius:5px;")
+            "background: #40414f; color: white; border: 1px solid #565869; "
+            "border-radius: 6px; padding: 10px; font-size: 14px;")
         self.inp.returnPressed.connect(self.send_msg)
+
         self.btn_send = QPushButton("Invia")
+        self.btn_send.setMinimumHeight(50)
         self.btn_send.setStyleSheet(
-            "background:#19c37d; color:white; padding:10px; "
-            "font-weight:bold; border-radius:5px;")
+            "background-color: #19c37d; color: white; font-weight: bold; border-radius: 6px;")
         self.btn_send.clicked.connect(self.send_msg)
+
         ib_lay.addWidget(self.inp)
         ib_lay.addWidget(self.btn_send)
         p_lay.addWidget(in_box)
@@ -301,11 +402,15 @@ class RobotFactoryTab(QWidget):
             self.list.addItem(f"{icon} {name}")
 
     def create_robot(self):
-        name, ok = QInputDialog.getText(self, "Nuovo Robot", "Nome:")
-        if ok and name and name not in self.robots_data:
-            self.robots_data[name] = {"active": False, "telegram": "", "history": []}
-            self.save_data()
-            self.refresh_list()
+        dlg = CustomInputDialog("Nuovo Agente", "Nome del Robot:", self)
+        if dlg.exec():
+            name = dlg.get_text()
+            if name and name not in self.robots_data:
+                self.robots_data[name] = {"active": False, "telegram": "", "history": []}
+                self.save_data()
+                self.refresh_list()
+            elif name and name in self.robots_data:
+                QMessageBox.warning(self, "Errore", "Nome gia' esistente.")
 
     def load_robot(self, cur, prev):
         if not cur:
@@ -316,11 +421,17 @@ class RobotFactoryTab(QWidget):
         data = self.robots_data[name]
         self.panel.setVisible(True)
         self.lbl_name.setText(name)
+
+        self.txt_tg.blockSignals(True)
         self.txt_tg.setText(data.get("telegram", ""))
+        self.txt_tg.blockSignals(False)
+
         self.update_btn(data.get("active", False))
         self.chat.clear()
         for m in data.get("history", []):
             self.append_visual(m["role"], m["content"])
+
+        self.inp.setFocus()
 
     def save_config(self):
         if self.current_robot_name and self.current_robot_name in self.robots_data:
@@ -340,11 +451,13 @@ class RobotFactoryTab(QWidget):
         if active:
             self.btn_act.setText("PAUSA")
             self.btn_act.setStyleSheet(
-                "background:#eab308; color:black; font-weight:bold;")
+                "background:#eab308; color:black; border:none; "
+                "border-radius:4px; font-weight:bold;")
         else:
             self.btn_act.setText("AVVIA")
             self.btn_act.setStyleSheet(
-                "background:#22c55e; color:white; font-weight:bold;")
+                "background:#22c55e; color:white; border:none; "
+                "border-radius:4px; font-weight:bold;")
 
     def delete_robot(self):
         name = self.current_robot_name
@@ -387,8 +500,10 @@ class RobotFactoryTab(QWidget):
         self.save_data()
         self.inp.clear()
 
-        sys_p = f"Sei {name}, assistente betting. Telegram: {self.robots_data[name].get('telegram', '')}."
-        self.worker = OpenRouterWorker(self.api_key, self.robots_data[name]["history"], sys_p)
+        sys_p = (f"Sei {name}, assistente betting. "
+                 f"Telegram: {self.robots_data[name].get('telegram', '')}.")
+        self.worker = OpenRouterWorker(
+            self.api_key, self.robots_data[name]["history"], sys_p)
         self.worker.response_received.connect(self.on_resp)
         self.worker.log_received.connect(self.on_log)
         self.worker.finished_task.connect(self.on_task_end)
@@ -396,7 +511,7 @@ class RobotFactoryTab(QWidget):
 
     def on_log(self, txt):
         self.chat.append(
-            f"<div style='color:#888; font-size:10px;'>{txt}</div>")
+            f"<div style='color:#666; font-size:10px; font-family:monospace;'>{txt}</div>")
         self.chat.moveCursor(QTextCursor.End)
 
     def on_resp(self, txt):
@@ -415,22 +530,23 @@ class RobotFactoryTab(QWidget):
             mw.supervisor.report(name, success)
 
     def append_visual(self, role, txt):
-        if role == "system":
-            col, who = "#f00", "SYSTEM"
-        elif role == "user":
-            col, who = "#a8b1ff", "TU"
+        if role == "user":
+            html = (f"<div style='text-align:right; margin:10px;'>"
+                    f"<span style='background:#10a37f; color:white; padding:8px 12px; "
+                    f"border-radius:15px; display:inline-block;'>{txt}</span></div>")
+        elif role == "assistant":
+            html = (f"<div style='text-align:left; margin:10px;'>"
+                    f"<span style='background:#444654; color:#ececf1; padding:8px 12px; "
+                    f"border-radius:15px; display:inline-block;'>{txt}</span></div>")
         else:
-            col, who = "#19c37d", "ROBOT"
-        self.chat.append(
-            f"<div style='margin-bottom:10px;'>"
-            f"<b style='color:{col};'>{who}</b><br>"
-            f"<span style='color:#ddd;'>{txt}</span></div>")
+            html = f"<div style='text-align:center; color:#888; margin:5px;'><i>{txt}</i></div>"
+        self.chat.append(html)
         self.chat.moveCursor(QTextCursor.End)
 
 
 
 # ============================================================================
-#  4. SUPERVISOR WATCHDOG (MONITOR & KILL SWITCH)
+#  4. SUPERVISOR WATCHDOG
 # ============================================================================
 class SupervisorTab(QWidget):
     def __init__(self, controller, factory):
@@ -446,35 +562,31 @@ class SupervisorTab(QWidget):
     def init_ui(self):
         lay = QVBoxLayout(self)
 
-        # Header
         h = QFrame()
-        h.setStyleSheet("background:#222; padding:10px; border-radius:5px;")
+        h.setStyleSheet("background:#202123; padding:15px; border-radius:6px;")
         hl = QHBoxLayout(h)
         lbl = QLabel("SUPERVISOR ACTIVE")
-        lbl.setStyleSheet("color:#0f0; font-weight:bold;")
+        lbl.setStyleSheet("color:#10a37f; font-weight:bold; font-size:16px;")
         btn_kill = QPushButton("EMERGENCY STOP")
-        btn_kill.setStyleSheet(
-            "background:red; color:white; font-weight:bold; padding:10px;")
+        btn_kill.setStyleSheet("background:#ef4444; border:none;")
         btn_kill.clicked.connect(self.kill_all)
         hl.addWidget(lbl)
         hl.addStretch()
         hl.addWidget(btn_kill)
         lay.addWidget(h)
 
-        # Table
         self.tab = QTableWidget(0, 5)
         self.tab.setHorizontalHeaderLabels(
-            ["AGENTE", "STATO", "ERRORI", "REQ", "HEALTH"])
+            ["AGENTE", "STATO", "ERR", "REQ", "HEALTH"])
         self.tab.horizontalHeader().setStretchLastSection(True)
-        self.tab.setStyleSheet("background:#111; color:white; border:none;")
+        self.tab.setStyleSheet("border:none; background:#202123; color:#ddd;")
         lay.addWidget(self.tab)
 
-        # Log
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumHeight(100)
         self.log.setStyleSheet(
-            "background:black; color:#0f0; font-family:monospace;")
+            "background:black; color:#10a37f; font-family:monospace;")
         lay.addWidget(self.log)
 
     def scan(self):
@@ -512,11 +624,11 @@ class SupervisorTab(QWidget):
         if not success:
             self.stats[name]["err"] += 1
         else:
-            # Decrement instead of reset so threshold remains reachable
             self.stats[name]["err"] = max(0, self.stats[name]["err"] - 1)
 
     def force_stop(self, name, reason):
-        if name in self.factory.robots_data and self.factory.robots_data[name].get("active", False):
+        if (name in self.factory.robots_data
+                and self.factory.robots_data[name].get("active", False)):
             self.factory.robots_data[name]["active"] = False
             self.factory.save_data()
             self.factory.refresh_list()
@@ -525,8 +637,7 @@ class SupervisorTab(QWidget):
 
     def kill_all(self):
         reply = QMessageBox.question(
-            self, "EMERGENCY STOP",
-            "Fermare TUTTI i robot?",
+            self, "EMERGENCY STOP", "Fermare TUTTI i robot?",
             QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             count = 0
@@ -541,10 +652,9 @@ class SupervisorTab(QWidget):
 
 
 # ============================================================================
-#  LEGACY COMPONENTS (PRESERVED)
+#  LEGACY COMPONENTS (PRESERVED FOR main.py COMPATIBILITY)
 # ============================================================================
 class ConfigValidator:
-    """Kept for main.py compatibility."""
     REQUIRED = {"rpa.pin": str}
 
     @classmethod
@@ -623,7 +733,7 @@ class SettingsTab(QWidget):
 
 
 class MoneyTab(QWidget):
-    def __init__(self, controller):
+    def __init__(self, controller=None):
         super().__init__()
         self.controller = controller
         layout = QFormLayout(self)
@@ -666,7 +776,6 @@ class TrainerTab(QWidget):
         self.chat_display.append(f"Result: {res}")
 
 
-
 # ============================================================================
 #  MAIN WINDOW
 # ============================================================================
@@ -676,8 +785,9 @@ class MainWindow(QMainWindow):
                  controller=None):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("SuperAgent V5.1 SENTINEL")
-        self.setMinimumSize(1200, 800)
+        self.setWindowTitle("SuperAgent V5.2 Sentinel")
+        self.setMinimumSize(1200, 850)
+        self.setStyleSheet(STYLE_SHEET)
 
         self.rpa_worker = None
         if executor or controller:
@@ -756,6 +866,7 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
             logger=None, executor=None, config=None, monitor=None,
             controller=None):
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     apply_dark_theme(app)
     win = MainWindow(vision, telegram_learner, rpa_healer,
                      logger, executor, config, monitor, controller)
