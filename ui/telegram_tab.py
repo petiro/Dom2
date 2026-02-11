@@ -473,7 +473,7 @@ class TelegramTab(QWidget):
         if not self.logger:
             return
         detail = str(error) if error else "unexpected payload"
-        self.logger.warning("Malformed %s event: %s (%s)", event_type, event, detail)
+        self.logger.warning("Malformed %s event (%s)", event_type, detail)
 
     def update_status(self, status, color):
         """Update status label"""
