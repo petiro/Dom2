@@ -21,13 +21,17 @@ class CoreServices:
         self.telegram = None
         self.browser = None
         self.playwright = None
+        self._stop_event = None
 
     async def start_all(self):
-        await asyncio.gather(
-            self._guard_task("telegram", self.start_telegram()),
-            self._guard_task("browser", self.start_browser()),
-            self._guard_task("ai", self.ai_worker()),
-        )
+        if self._stop_event is None:
+            self._stop_event = asyncio.Event()
+        tasks = [
+            asyncio.create_task(self._guard_task("telegram", self.start_telegram())),
+            asyncio.create_task(self._guard_task("browser", self.start_browser())),
+            asyncio.create_task(self._guard_task("ai", self.ai_worker())),
+        ]
+        await asyncio.gather(*tasks)
 
     async def _guard_task(self, label, coro):
         try:
@@ -63,5 +67,13 @@ class CoreServices:
 
     async def ai_worker(self):
         """Placeholder loop for future AI worker tasks."""
-        while True:
+        while self._stop_event and not self._stop_event.is_set():
             await asyncio.sleep(1)
+
+    def request_stop(self):
+        if not self._stop_event:
+            return
+        if self.core and self.core.loop.is_running():
+            self.core.loop.call_soon_threadsafe(self._stop_event.set)
+        else:
+            self._stop_event.set()

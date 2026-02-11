@@ -1,3 +1,4 @@
+import logging
 import os
 from queue import Queue
 from threading import Thread
@@ -6,6 +7,7 @@ from core_loop import CoreLoop
 from core_services import CoreServices
 from ui.desktop_app import run_v6_app
 
+logger = logging.getLogger("dom2_v6")
 
 def _start_core(core):
     core.start()
@@ -15,12 +17,13 @@ def main():
     queue = Queue()
     core = CoreLoop()
     api_id_raw = (os.getenv("DOM2_API_ID") or "").strip()
-    api_id = 0
+    api_id = None
     if api_id_raw:
         try:
             api_id = int(api_id_raw)
         except ValueError:
             queue.put(("core", "Invalid DOM2_API_ID: must be numeric"))
+            api_id = None
     api_hash = os.getenv("DOM2_API_HASH", "")
     services = CoreServices(core, queue, api_id=api_id, api_hash=api_hash)
 
@@ -43,10 +46,11 @@ def main():
     try:
         return run_v6_app(core, queue)
     finally:
+        services.request_stop()
         core.stop()
         core_thread.join(timeout=5)
         if core_thread.is_alive():
-            print("Core thread did not terminate within timeout")
+            logger.warning("Core thread did not terminate within timeout")
 
 
 if __name__ == "__main__":
