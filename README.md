@@ -82,6 +82,18 @@ python -m PyInstaller SuperAgent_V4_Enterprise.spec --clean
 
 ---
 
+## 🔍 Repository Audit (Bug & Improvement)
+
+Per scansionare il repository alla ricerca di pattern noti (es. `shell=True`, `except:` bare, TODO/FIXME), esegui:
+
+```bash
+python repo_audit.py
+```
+
+Il report elenca le occorrenze con percorso e numero di riga.
+
+---
+
 ## 📜 Logica di Stabilità V4.x
 
 - **Thread Safety**: Comunicazione sicura via segnali Qt tra Watchdog (thread demone) e Controller (thread principale).
