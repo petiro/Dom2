@@ -22,7 +22,7 @@ def main():
         try:
             api_id = int(api_id_raw)
         except ValueError:
-            queue.put(("core", "Invalid DOM2_API_ID: must be numeric"))
+            logger.warning("Invalid DOM2_API_ID: must be numeric")
             api_id = None
     api_hash = os.getenv("DOM2_API_HASH", "")
     services = CoreServices(core, queue, api_id=api_id, api_hash=api_hash)
