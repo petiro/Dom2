@@ -30,7 +30,7 @@ def main():
     core_thread = Thread(target=_start_core, args=(core,), daemon=True)
     core_thread.start()
 
-    services_future = core.run_async(services.start_all())
+    services_handle = core.run_async(services.start_all())
 
     def _report_startup_failure(future):
         try:
@@ -41,7 +41,7 @@ def main():
         if exc:
             queue.put(("core", f"Service startup error: {exc}"))
 
-    services_future.add_done_callback(_report_startup_failure)
+    services_handle.add_done_callback(_report_startup_failure)
 
     try:
         return run_v6_app(core, queue)
