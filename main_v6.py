@@ -27,8 +27,8 @@ def main():
     def _report_startup_failure(future):
         try:
             exc = future.exception()
-        except Exception as exc:
-            queue.put(("core", f"Service startup error: {exc}"))
+        except Exception as retrieval_exc:
+            queue.put(("core", f"Service startup error: {retrieval_exc}"))
             return
         if exc:
             queue.put(("core", f"Service startup error: {exc}"))

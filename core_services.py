@@ -57,5 +57,6 @@ class CoreServices:
         self.queue.put(("browser", "🌐 Browser avviato"))
 
     async def ai_worker(self):
+        """Placeholder loop for future AI worker tasks."""
         while True:
             await asyncio.sleep(1)
