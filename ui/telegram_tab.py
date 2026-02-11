@@ -13,6 +13,8 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QFont
 from datetime import datetime
 
+QUEUE_POLL_INTERVAL_MS = 100
+
 
 
 
@@ -159,7 +161,7 @@ class TelegramTab(QWidget):
         self.init_ui()
         self._queue_timer = QTimer(self)
         self._queue_timer.timeout.connect(self._drain_event_queue)
-        self._queue_timer.start(100)
+        self._queue_timer.start(QUEUE_POLL_INTERVAL_MS)
 
         # Load saved credentials from vault
         if self.controller:
@@ -473,7 +475,7 @@ class TelegramTab(QWidget):
         if not self.logger:
             return
         detail = str(error) if error else "unexpected payload"
-        self.logger.warning("Malformed %s event (%s)", event_type, detail)
+        self.logger.warning(f"Malformed {event_type} event ({detail})")
 
     def update_status(self, status, color):
         """Update status label"""
