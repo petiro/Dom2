@@ -3,12 +3,13 @@ Telegram Tab - Monitor and manage Telegram integration
 All heavy operations (API calls, parsing) run in separate QThreads to avoid blocking UI.
 """
 import os
+from queue import Queue
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
     QLabel, QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem,
     QCheckBox, QMessageBox, QSpinBox, QProgressBar
 )
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QFont
 from datetime import datetime
 
@@ -40,23 +41,37 @@ class TelegramListenerThread(QThread):
     status_changed = Signal(str)  # status
     error_occurred = Signal(str)  # error message
 
-    def __init__(self, api_id, api_hash, agent, parser, logger):
+    def __init__(self, api_id, api_hash, agent, parser, logger, event_queue=None):
         super().__init__()
         self.api_id = api_id
         self.api_hash = api_hash
         self.agent = agent
         self.parser = parser
         self.logger = logger
+        self.event_queue = event_queue
         self.running = True
         self.client = None  # Keep reference for clean disconnect
         self._loop = None
+
+    def _queue_event(self, event_type, *payload):
+        if self.event_queue is not None:
+            self.event_queue.put((event_type, *payload))
+            return
+        if event_type == "message":
+            self.message_received.emit(*payload)
+        elif event_type == "parsed":
+            self.signal_parsed.emit(payload[0] if payload else None)
+        elif event_type == "status":
+            self.status_changed.emit(payload[0] if payload else "")
+        elif event_type == "error":
+            self.error_occurred.emit(payload[0] if payload else "")
 
     def run(self):
         try:
             from telethon import TelegramClient, events
             import asyncio
 
-            self.status_changed.emit("Connecting...")
+            self._queue_event("status", "Connecting...")
 
             # EXE-safe absolute session path in data/ folder
             _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,8 +80,6 @@ class TelegramListenerThread(QThread):
             session_path = os.path.join(_data_dir, f"session_{self.api_id}")
             self.client = TelegramClient(session_path, self.api_id, self.api_hash)
             client = self.client
-            signal_ref = self.message_received
-            signal_parsed_ref = self.signal_parsed
             parser_ref = self.parser
             logger_ref = self.logger
 
@@ -78,8 +91,7 @@ class TelegramListenerThread(QThread):
                         return
 
                     ts = datetime.now().strftime("%H:%M:%S")
-                    # Emit signal to UI thread (Qt signals are thread-safe)
-                    signal_ref.emit(ts, text)
+                    self._queue_event("message", ts, text)
 
                     # Parse in this background thread (does NOT block UI)
                     try:
@@ -88,7 +100,7 @@ class TelegramListenerThread(QThread):
                             if logger_ref:
                                 logger_ref.info(f"Parsed signal: {result}")
                             # Emit parsed signal via Qt Signal for thread-safe executor access
-                            signal_parsed_ref.emit(result)
+                            self._queue_event("parsed", result)
                     except Exception as e:
                         if logger_ref:
                             logger_ref.error(f"Parse error in listener: {e}")
@@ -96,7 +108,7 @@ class TelegramListenerThread(QThread):
                 await client.start()
                 if logger_ref:
                     logger_ref.info("Telegram listener connected successfully")
-                self.status_changed.emit("Connected")
+                self._queue_event("status", "Connected")
                 await client.run_until_disconnected()
 
             self._loop = asyncio.new_event_loop()
@@ -104,10 +116,10 @@ class TelegramListenerThread(QThread):
             self._loop.run_until_complete(main())
 
         except ImportError:
-            self.error_occurred.emit("Telethon not installed. Run: pip install telethon")
+            self._queue_event("error", "Telethon not installed. Run: pip install telethon")
         except Exception as e:
-            self.error_occurred.emit(f"Telegram error: {str(e)}")
-            self.status_changed.emit("Disconnected")
+            self._queue_event("error", f"Telegram error: {str(e)}")
+            self._queue_event("status", "Disconnected")
         finally:
             if self._loop and not self._loop.is_closed():
                 self._loop.close()
@@ -143,7 +155,11 @@ class TelegramTab(QWidget):
         self.controller = controller
         self.listener_thread = None
         self._parse_workers = []  # Keep references to active workers
+        self._event_queue = Queue()
         self.init_ui()
+        self._queue_timer = QTimer(self)
+        self._queue_timer.timeout.connect(self._drain_event_queue)
+        self._queue_timer.start(100)
 
         # Load saved credentials from vault
         if self.controller:
@@ -323,17 +339,8 @@ class TelegramTab(QWidget):
             api_hash,
             self.agent,
             parser,
-            self.logger
-        )
-
-        self.listener_thread.message_received.connect(self.on_message_received)
-        self.listener_thread.status_changed.connect(self.on_status_changed)
-        self.listener_thread.error_occurred.connect(self.on_error)
-
-        # Emit parsed signals as widget-level signal_received for MainWindow routing
-        # (routed through Controller via RPAWorker — single path, no duplication)
-        self.listener_thread.signal_parsed.connect(
-            lambda data: self.signal_received.emit(data) if isinstance(data, dict) else None
+            self.logger,
+            event_queue=self._event_queue
         )
 
         self.listener_thread.start()
@@ -418,8 +425,22 @@ class TelegramTab(QWidget):
         """Handle error"""
         QMessageBox.critical(self, "Telegram Error", error)
         self.update_status("Error", "red")
-        self.connect_btn.setEnabled(True)
-        self.disconnect_btn.setEnabled(False)
+
+    def _drain_event_queue(self):
+        while not self._event_queue.empty():
+            event = self._event_queue.get()
+            event_type = event[0] if event else None
+            if event_type == "message":
+                _, timestamp, message = event
+                self.on_message_received(timestamp, message)
+            elif event_type == "status":
+                self.on_status_changed(event[1])
+            elif event_type == "error":
+                self.on_error(event[1])
+            elif event_type == "parsed":
+                payload = event[1]
+                if isinstance(payload, dict):
+                    self.signal_received.emit(payload)
 
     def update_status(self, status, color):
         """Update status label"""
