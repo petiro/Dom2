@@ -438,22 +438,28 @@ class TelegramTab(QWidget):
                 continue
             event_type = event[0]
             if event_type == "message":
-                if len(event) < 3:
+                try:
+                    _, timestamp, message = event
+                except (TypeError, ValueError):
                     continue
-                _, timestamp, message = event[:3]
                 self.on_message_received(timestamp, message)
             elif event_type == "status":
-                if len(event) < 2:
+                try:
+                    status = event[1]
+                except IndexError:
                     continue
-                self.on_status_changed(event[1])
+                self.on_status_changed(status)
             elif event_type == "error":
-                if len(event) < 2:
+                try:
+                    error = event[1]
+                except IndexError:
                     continue
-                self.on_error(event[1])
+                self.on_error(error)
             elif event_type == "parsed":
-                if len(event) < 2:
+                try:
+                    payload = event[1]
+                except IndexError:
                     continue
-                payload = event[1]
                 if isinstance(payload, dict):
                     self.signal_received.emit(payload)
 
