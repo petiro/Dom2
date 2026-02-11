@@ -14,7 +14,8 @@ def _start_core(core):
 def main():
     queue = Queue()
     core = CoreLoop()
-    api_id = int(os.getenv("DOM2_API_ID", "0") or 0)
+    api_id_raw = (os.getenv("DOM2_API_ID") or "").strip()
+    api_id = int(api_id_raw) if api_id_raw else 0
     api_hash = os.getenv("DOM2_API_HASH", "")
     services = CoreServices(core, queue, api_id=api_id, api_hash=api_hash)
 
