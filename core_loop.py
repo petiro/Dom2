@@ -1,10 +1,12 @@
 import asyncio
+import threading
 
 
 class CoreLoop:
     def __init__(self):
         self.loop = asyncio.new_event_loop()
         self.tasks = []
+        self._task_lock = threading.Lock()
 
     def start(self):
         asyncio.set_event_loop(self.loop)
@@ -22,7 +24,9 @@ class CoreLoop:
 
     def stop(self):
         def _stop():
-            for task in list(self.tasks):
+            with self._task_lock:
+                tasks = list(self.tasks)
+            for task in tasks:
                 task.cancel()
             self.loop.stop()
 
@@ -37,7 +41,8 @@ class CoreLoop:
     def add_task(self, coro):
         def _create():
             task = self.loop.create_task(coro)
-            self.tasks.append(task)
+            with self._task_lock:
+                self.tasks.append(task)
 
         if self.loop.is_running():
             self.loop.call_soon_threadsafe(_create)
