@@ -1,0 +1,45 @@
+import asyncio
+
+
+class CoreLoop:
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self.tasks = []
+
+    def start(self):
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(self.loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                self.loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            self.loop.close()
+
+    def stop(self):
+        def _stop():
+            for task in list(self.tasks):
+                task.cancel()
+            self.loop.stop()
+
+        if self.loop.is_running():
+            self.loop.call_soon_threadsafe(_stop)
+        else:
+            _stop()
+
+    def run_async(self, coro):
+        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+    def add_task(self, coro):
+        def _create():
+            task = self.loop.create_task(coro)
+            self.tasks.append(task)
+
+        if self.loop.is_running():
+            self.loop.call_soon_threadsafe(_create)
+        else:
+            _create()

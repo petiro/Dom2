@@ -921,3 +921,25 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
                      logger, executor, config, monitor, controller)
     win.show()
     return app.exec()
+
+
+def run_v6_app(core, queue):
+    app = QApplication(sys.argv)
+
+    widget = QWidget()
+    layout = QVBoxLayout()
+    label = QLabel("DOM2 ONLINE")
+    layout.addWidget(label)
+    widget.setLayout(layout)
+    widget.show()
+
+    def poll():
+        while not queue.empty():
+            source, msg = queue.get()
+            label.setText(f"{source}: {msg}")
+
+    timer = QTimer()
+    timer.timeout.connect(poll)
+    timer.start(100)
+
+    return app.exec()

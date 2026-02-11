@@ -79,6 +79,8 @@ python -m PyInstaller SuperAgent_V4_Enterprise.spec --clean
 - **`ui/`**: Interfaccia grafica basata su PySide6 (Qt).
 - **`data/`**: Database locale delle sessioni e file di configurazione (YAML).
 - **`main.py`**: Entry point con splash screen asincrono e inizializzazione logger.
+- **`main_v6.py`**: Entry point V6 con core loop unificato (usa `DOM2_API_ID`/`DOM2_API_HASH`).
+- **`core_loop.py`** / **`core_services.py`**: Loop asyncio centralizzato e servizi unificati.
 
 ---
 
