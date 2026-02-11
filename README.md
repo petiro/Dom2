@@ -82,7 +82,7 @@ python -m PyInstaller SuperAgent_V4_Enterprise.spec --clean
 
 ---
 
-## 🔍 Repository Audit (Bug & Improvement)
+## 🔍 Audit del Repository (Bug e Miglioramenti)
 
 Per scansionare il repository alla ricerca di pattern noti (es. `shell=True`, `except:` bare, TODO/FIXME), esegui:
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 EXCLUDED_DIRS = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".venv"}
-TEXT_EXTENSIONS = {".py", ".md", ".yml", ".yaml", ".txt"}
+TEXT_EXTENSIONS = {".py", ".md", ".yml", ".yaml"}
 
 
 @dataclass(frozen=True)
@@ -21,20 +21,34 @@ def should_scan(path: Path) -> bool:
     return not any(part in EXCLUDED_DIRS for part in path.parts)
 
 
-def has_todo_comment(line: str, comment_prefix: str) -> bool:
-    comment_index = line.find(comment_prefix)
+def has_hash_comment_todo(line: str) -> bool:
+    comment_index = line.find("#")
     if comment_index == -1:
         return False
-    comment_text = line[comment_index + len(comment_prefix) :]
+    comment_text = line[comment_index + 1 :]
+    return "TODO" in comment_text or "FIXME" in comment_text
+
+
+def has_markdown_comment_todo(line: str) -> bool:
+    start = line.find("<!--")
+    if start == -1:
+        return False
+    end = line.find("-->", start + 4)
+    if end == -1:
+        return False
+    comment_text = line[start + 4 : end]
     return "TODO" in comment_text or "FIXME" in comment_text
 
 
 def scan_file(path: Path) -> list[Finding]:
     findings: list[Finding] = []
     content = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    todo_comment_prefix = "#" if path.suffix.lower() in {".py", ".yml", ".yaml"} else ""
+    suffix = path.suffix.lower()
+    is_python = suffix == ".py"
+    is_yaml = suffix in {".yml", ".yaml"}
+    is_markdown = suffix == ".md"
     for line_number, line in enumerate(content, start=1):
-        if todo_comment_prefix and has_todo_comment(line, todo_comment_prefix):
+        if (is_python or is_yaml) and has_hash_comment_todo(line):
             findings.append(
                 Finding(
                     category="Improvement",
@@ -43,24 +57,36 @@ def scan_file(path: Path) -> list[Finding]:
                     message="TODO/FIXME comment",
                 )
             )
-        if re.match(r"^\s*except\s*:\s*(#.*)?$", line):
+        if is_markdown and has_markdown_comment_todo(line):
             findings.append(
                 Finding(
-                    category="Bug",
+                    category="Improvement",
                     path=path,
                     line_number=line_number,
-                    message="Bare except detected",
+                    message="TODO/FIXME comment",
                 )
             )
-        if re.search(r"subprocess\.\w+\([^#]*\bshell\s*=\s*True", line):
-            findings.append(
-                Finding(
-                    category="Bug",
-                    path=path,
-                    line_number=line_number,
-                    message="subprocess call with shell=True",
+        if is_python:
+            if re.match(r"^\s*except\s*:\s*(#.*)?$", line):
+                findings.append(
+                    Finding(
+                        category="Bug",
+                        path=path,
+                        line_number=line_number,
+                        message="Bare except detected",
+                    )
                 )
-            )
+            comment_index = line.find("#")
+            code_segment = line if comment_index == -1 else line[:comment_index]
+            if re.search(r"subprocess\.\w+\([^)]*\bshell\s*=\s*True", code_segment):
+                findings.append(
+                    Finding(
+                        category="Security",
+                        path=path,
+                        line_number=line_number,
+                        message="Security risk: subprocess call with shell=True",
+                    )
+                )
     return findings
 
 
@@ -78,9 +104,14 @@ def print_report(findings: list[Finding], root: Path) -> None:
     for finding in findings:
         grouped.setdefault(finding.category, []).append(finding)
 
-    for category in ("Bug", "Improvement"):
+    categories = [
+        ("Security", "Security Issues"),
+        ("Bug", "Bugs"),
+        ("Improvement", "Improvements"),
+    ]
+    for category, label in categories:
         items = grouped.get(category, [])
-        print(f"\n{category}s ({len(items)}):")
+        print(f"\n{label} ({len(items)}):")
         if not items:
             print("- None found.")
             continue

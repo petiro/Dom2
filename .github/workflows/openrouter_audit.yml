@@ -74,8 +74,8 @@ jobs:
           try:
               with open("commit_diff.txt", "r", encoding="utf-8", errors="replace") as f:
                   diff_content = f.read()[:25000] # Limite per evitare payload troppo grandi
-          except:
-              diff_content = ""
+          except OSError:
+            diff_content = ""
 
           if not diff_content.strip():
               print("Diff vuoto o errore lettura.")
