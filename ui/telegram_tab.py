@@ -434,15 +434,25 @@ class TelegramTab(QWidget):
                 event = self._event_queue.get_nowait()
             except Empty:
                 break
-            event_type = event[0] if event else None
+            if not event:
+                continue
+            event_type = event[0]
             if event_type == "message":
-                _, timestamp, message = event
+                if len(event) < 3:
+                    continue
+                _, timestamp, message = event[:3]
                 self.on_message_received(timestamp, message)
             elif event_type == "status":
+                if len(event) < 2:
+                    continue
                 self.on_status_changed(event[1])
             elif event_type == "error":
+                if len(event) < 2:
+                    continue
                 self.on_error(event[1])
             elif event_type == "parsed":
+                if len(event) < 2:
+                    continue
                 payload = event[1]
                 if isinstance(payload, dict):
                     self.signal_received.emit(payload)

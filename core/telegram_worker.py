@@ -31,7 +31,11 @@ class TelegramWorker(QThread):
             return
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self._main())
+        try:
+            self.loop.run_until_complete(self._main())
+        finally:
+            if not self.loop.is_closed():
+                self.loop.close()
 
     def stop(self):
         if self.client and self.loop and not self.loop.is_closed():
