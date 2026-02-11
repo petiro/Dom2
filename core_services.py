@@ -33,7 +33,7 @@ class CoreServices:
         try:
             await coro
         except Exception as exc:
-            self.queue.put((label, f"{label} error: {exc}"))
+            self.queue.put((label, f"Error: {exc}"))
 
     async def start_telegram(self):
         if TelegramClient is None or events is None:

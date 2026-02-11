@@ -46,7 +46,7 @@ def main():
         core.stop()
         core_thread.join(timeout=5)
         if core_thread.is_alive():
-            queue.put(("core", "Core thread did not terminate within timeout"))
+            print("Core thread did not terminate within timeout")
 
 
 if __name__ == "__main__":
