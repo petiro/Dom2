@@ -41,11 +41,9 @@ class CoreLoop:
     def add_task(self, coro):
         def _create():
             task = self.loop.create_task(coro)
-            task.add_done_callback(self._remove_task)
             with self._task_lock:
                 self.tasks.append(task)
-            if task.done():
-                self._remove_task(task)
+            task.add_done_callback(self._remove_task)
 
         if self.loop.is_running():
             self.loop.call_soon_threadsafe(_create)

@@ -24,24 +24,29 @@ class CoreServices:
 
     async def start_all(self):
         await asyncio.gather(
-            self.start_telegram(),
-            self.start_browser(),
-            self.ai_worker(),
-            return_exceptions=True,
+            self._guard_task("telegram", self.start_telegram()),
+            self._guard_task("browser", self.start_browser()),
+            self._guard_task("ai", self.ai_worker()),
         )
+
+    async def _guard_task(self, label, coro):
+        try:
+            await coro
+        except Exception as exc:
+            self.queue.put((label, f"{label} error: {exc}"))
 
     async def start_telegram(self):
         if TelegramClient is None or events is None:
-            self.queue.put(("telegram", "Telethon non disponibile"))
+            self.queue.put(("telegram", "Telethon not available"))
             return
         if not self.api_id or not self.api_hash:
-            self.queue.put(("telegram", "API_ID/API_HASH mancanti"))
+            self.queue.put(("telegram", "API_ID/API_HASH missing"))
             return
 
         self.telegram = TelegramClient("dom2_session", self.api_id, self.api_hash)
         self.telegram.add_event_handler(self.on_message, events.NewMessage)
         await self.telegram.start()
-        self.queue.put(("telegram", "✅ Telegram Online"))
+        self.queue.put(("telegram", "✅ Telegram online"))
         await self.telegram.run_until_disconnected()
 
     async def on_message(self, event):
@@ -49,12 +54,12 @@ class CoreServices:
 
     async def start_browser(self):
         if async_playwright is None:
-            self.queue.put(("browser", "Playwright non disponibile"))
+            self.queue.put(("browser", "Playwright not available"))
             return
 
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(headless=True)
-        self.queue.put(("browser", "🌐 Browser avviato"))
+        self.queue.put(("browser", "🌐 Browser started"))
 
     async def ai_worker(self):
         """Placeholder loop for future AI worker tasks."""

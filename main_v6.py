@@ -15,7 +15,12 @@ def main():
     queue = Queue()
     core = CoreLoop()
     api_id_raw = (os.getenv("DOM2_API_ID") or "").strip()
-    api_id = int(api_id_raw) if api_id_raw else 0
+    api_id = 0
+    if api_id_raw:
+        try:
+            api_id = int(api_id_raw)
+        except ValueError:
+            queue.put(("core", "Invalid DOM2_API_ID: must be numeric"))
     api_hash = os.getenv("DOM2_API_HASH", "")
     services = CoreServices(core, queue, api_id=api_id, api_hash=api_hash)
 
@@ -40,6 +45,8 @@ def main():
     finally:
         core.stop()
         core_thread.join(timeout=5)
+        if core_thread.is_alive():
+            queue.put(("core", "Core thread did not terminate within timeout"))
 
 
 if __name__ == "__main__":
