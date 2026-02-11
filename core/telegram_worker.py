@@ -1,4 +1,5 @@
 import os
+from queue import Full
 from PySide6.QtCore import QThread, Signal
 import asyncio
 
@@ -57,7 +58,10 @@ class TelegramWorker(QThread):
         @self.client.on(events.NewMessage(chats=self.selected_chats))
         async def handler(event):
             if self.message_queue is not None:
-                self.message_queue.put(event.raw_text)
+                try:
+                    self.message_queue.put_nowait(event.raw_text)
+                except Full:
+                    pass
             else:
                 self.message_received.emit(event.raw_text)
 

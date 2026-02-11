@@ -3,7 +3,7 @@ Telegram Tab - Monitor and manage Telegram integration
 All heavy operations (API calls, parsing) run in separate QThreads to avoid blocking UI.
 """
 import os
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
     QLabel, QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem,
@@ -58,7 +58,11 @@ class TelegramListenerThread(QThread):
 
     def _queue_event(self, event_type, *payload):
         if self.event_queue is not None:
-            self.event_queue.put((event_type, *payload))
+            try:
+                self.event_queue.put_nowait((event_type, *payload))
+            except Full:
+                if self.logger:
+                    self.logger.warning(f"Dropping {event_type} event: queue full")
             return
         if event_type == "message":
             self.message_received.emit(*payload)
@@ -446,9 +450,9 @@ class TelegramTab(QWidget):
                 continue
             if event_type == "message":
                 try:
-                    payload = event[1:3]
-                    if len(payload) < 2:
+                    if len(event) < 3:
                         raise ValueError("Missing payload")
+                    payload = event[1:3]
                     timestamp, message = payload
                 except (TypeError, ValueError) as exc:
                     self._log_malformed_event("message", event, exc)
@@ -481,7 +485,8 @@ class TelegramTab(QWidget):
         if not self.logger:
             return
         detail = error.__class__.__name__
-        self.logger.warning(f"Malformed {event_type} event ({detail})")
+        event_size = len(event) if hasattr(event, "__len__") else "unknown"
+        self.logger.warning(f"Malformed {event_type} event ({detail}, size={event_size})")
 
     def update_status(self, status, color):
         """Update status label"""
