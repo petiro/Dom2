@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.2 - SENTINEL EDITION (UI FIX & GRAPHICS UPDATE)
+SuperAgent Desktop App V5.3 - SENTINEL EDITION (PATH FIX & LOGGING)
 """
 import os
 import sys
@@ -7,6 +7,7 @@ import re
 import time
 import queue
 import json
+import logging
 import requests
 from datetime import datetime
 from requests.adapters import HTTPAdapter
@@ -22,6 +23,23 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize
 from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon
 
+# --- ABSOLUTE PATHS (PROJECT ROOT) ---
+_UI_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_UI_DIR)
+
+ROBOTS_FILE = os.path.join(_ROOT_DIR, "my_robots.json")
+API_FILE = os.path.join(_ROOT_DIR, "api_config.json")
+LOG_FILE = os.path.join(_ROOT_DIR, "superagent.log")
+
+# --- MODULE LOGGER (does not conflict with main.py's setup_logging) ---
+_logger = logging.getLogger("desktop_app")
+if not _logger.handlers:
+    _fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    _fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    _logger.addHandler(_fh)
+    _logger.setLevel(logging.INFO)
+
+# --- IMPORTS ---
 try:
     from core.money_management import RoserpinaTable
     from ui.mapping_tab import MappingTab
@@ -34,63 +52,40 @@ except ImportError:
     class TelegramTab(QWidget):
         def __init__(self, **k): super().__init__()
 
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 
 # ============================================================================
-#  GLOBAL STYLESHEET (CSS PRO)
+#  GLOBAL STYLESHEET
 # ============================================================================
 STYLE_SHEET = """
-/* Sfondo Generale */
 QMainWindow, QWidget { background-color: #343541; color: #ececf1; font-family: 'Segoe UI', sans-serif; }
-
-/* Tab Widget */
 QTabWidget::pane { border: 1px solid #4d4d4f; top: -1px; }
 QTabBar::tab { background: #202123; color: #8e8ea0; padding: 10px 20px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QTabBar::tab:selected { background: #343541; color: white; border-top: 2px solid #10a37f; font-weight: bold; }
-
-/* LineEdit - FIX SCRITTURA */
 QLineEdit {
-    background-color: #40414f;
-    color: white;
-    border: 1px solid #565869;
-    border-radius: 4px;
-    padding: 8px;
-    selection-background-color: #10a37f;
+    background-color: #40414f; color: white; border: 1px solid #565869;
+    border-radius: 4px; padding: 8px; selection-background-color: #10a37f;
 }
 QLineEdit:focus { border: 1px solid #10a37f; background-color: #4d4d4f; }
 QLineEdit:disabled { background-color: #2a2b32; color: #666; }
-
-/* TextEdit */
 QTextEdit { background-color: #353740; border: none; color: #ececf1; padding: 5px; }
-
-/* Liste */
 QListWidget { background-color: #202123; border: none; }
 QListWidget::item { padding: 12px; border-radius: 4px; color: #ececf1; margin: 2px 5px; }
 QListWidget::item:selected { background-color: #343541; border: 1px solid #565869; }
 QListWidget::item:hover { background-color: #2a2b32; }
-
-/* Bottoni */
 QPushButton {
-    background-color: #40414f;
-    color: white;
-    border: 1px solid #565869;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-weight: 600;
+    background-color: #40414f; color: white; border: 1px solid #565869;
+    padding: 8px 16px; border-radius: 4px; font-weight: 600;
 }
 QPushButton:hover { background-color: #4d4d4f; border-color: #8e8ea0; }
 QPushButton:pressed { background-color: #2a2b32; }
 QPushButton:disabled { background-color: #2a2b32; color: #555; border: none; }
-
-/* Tabelle */
 QTableWidget { gridline-color: #444; background-color: #1e1e1e; }
 QHeaderView::section { background-color: #202123; color: white; padding: 5px; border: none; }
 """
 
 
 # ============================================================================
-#  CUSTOM INPUT DIALOG (FIX WHITE-ON-WHITE)
+#  CUSTOM INPUT DIALOG
 # ============================================================================
 class CustomInputDialog(QDialog):
     def __init__(self, title, label_text, parent=None):
@@ -177,6 +172,7 @@ class OpenRouterWorker(QThread):
         ]
 
     def run(self):
+        _logger.info("Worker AI avviato.")
         for msg in self.history:
             if not SafetySentinel.scan_input(msg.get("content", "")):
                 self.log_received.emit("Sentinel: Input storico infetto.")
@@ -202,6 +198,7 @@ class OpenRouterWorker(QThread):
         success = False
         for model in self.fallback_models:
             self.log_received.emit(f"Connessione a {model}...")
+            _logger.info(f"Tentativo connessione modello: {model}")
             try:
                 payload = {"model": model, "messages": messages,
                            "temperature": 0.7, "max_tokens": 800}
@@ -212,24 +209,31 @@ class OpenRouterWorker(QThread):
                 if resp.status_code == 200:
                     content = resp.json()['choices'][0]['message']['content']
                     if not SafetySentinel.scan_input(content):
+                        _logger.warning("Output AI bloccato dal Sentinel.")
                         self.log_received.emit("Sentinel: Risposta AI bloccata.")
                         self.response_received.emit(SafetySentinel.warning())
                         self.finished_task.emit(False)
                         return
+                    _logger.info("Risposta AI ricevuta con successo.")
                     self.log_received.emit("Risposta ricevuta.")
                     self.response_received.emit(content)
                     success = True
                     break
                 elif resp.status_code == 401:
+                    _logger.error("Errore Auth 401")
                     self.log_received.emit("Errore Auth: Controlla la API Key")
                     break
                 else:
+                    _logger.error(f"Errore API {resp.status_code}")
                     self.log_received.emit(f"Errore HTTP {resp.status_code}")
             except requests.exceptions.Timeout:
+                _logger.error(f"Timeout su {model}")
                 self.log_received.emit(f"Timeout su {model}")
             except requests.exceptions.ConnectionError:
+                _logger.error(f"Connessione fallita su {model}")
                 self.log_received.emit(f"Connessione fallita su {model}")
             except Exception as e:
+                _logger.error(f"Eccezione Worker: {e}")
                 self.log_received.emit(SafetySentinel.sanitize_log(str(e))[:60])
             time.sleep(0.3)
 
@@ -242,14 +246,12 @@ class OpenRouterWorker(QThread):
 
 
 # ============================================================================
-#  3. ROBOT FACTORY (V5.2 UI)
+#  3. ROBOT FACTORY (V5.3 - ABSOLUTE PATHS + LOGGING)
 # ============================================================================
 class RobotFactoryTab(QWidget):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
-        self.robots_file = "my_robots.json"
-        self.api_file = "api_config.json"
         self.current_robot_name = None
         self.robots_data = self.load_data()
         self.api_key = self.load_api_key()
@@ -284,10 +286,8 @@ class RobotFactoryTab(QWidget):
         self.list.currentItemChanged.connect(self.load_robot)
         vbox.addWidget(self.list)
 
-        # API Key Section
         api_box = QGroupBox("Configurazione API")
-        api_box.setStyleSheet(
-            "border: 1px solid #444; padding: 10px; margin-top: 10px;")
+        api_box.setStyleSheet("border: 1px solid #444; padding: 10px; margin-top: 10px;")
         ab_lay = QVBoxLayout(api_box)
         self.txt_api = QLineEdit(self.api_key)
         self.txt_api.setPlaceholderText("sk-or-...")
@@ -295,7 +295,6 @@ class RobotFactoryTab(QWidget):
         self.txt_api.textChanged.connect(self.save_api)
         ab_lay.addWidget(self.txt_api)
         vbox.addWidget(api_box)
-
         main.addWidget(side)
 
         # --- CHAT PANEL ---
@@ -370,29 +369,40 @@ class RobotFactoryTab(QWidget):
         main.addWidget(self.panel)
         self.refresh_list()
 
-    # --- Data ---
+    # --- Data (ABSOLUTE PATHS) ---
     def load_data(self):
-        try:
-            with open(self.robots_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+        if os.path.exists(ROBOTS_FILE):
+            try:
+                with open(ROBOTS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
 
     def save_data(self):
-        with open(self.robots_file, "w", encoding="utf-8") as f:
-            json.dump(self.robots_data, f, indent=4)
+        try:
+            with open(ROBOTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.robots_data, f, indent=4)
+            _logger.info(f"Dati robot salvati in: {ROBOTS_FILE}")
+        except Exception as e:
+            _logger.error(f"Errore salvataggio robot: {e}")
 
     def load_api_key(self):
-        try:
-            with open(self.api_file, "r") as f:
-                return json.load(f).get("key", "")
-        except Exception:
-            return ""
+        if os.path.exists(API_FILE):
+            try:
+                with open(API_FILE, "r") as f:
+                    return json.load(f).get("key", "")
+            except Exception:
+                return ""
+        return ""
 
     def save_api(self):
         self.api_key = self.txt_api.text().strip()
-        with open(self.api_file, "w") as f:
-            json.dump({"key": self.api_key}, f)
+        try:
+            with open(API_FILE, "w", encoding="utf-8") as f:
+                json.dump({"key": self.api_key}, f)
+        except Exception as e:
+            _logger.error(f"Errore salvataggio API: {e}")
 
     # --- Robot management ---
     def refresh_list(self):
@@ -409,6 +419,7 @@ class RobotFactoryTab(QWidget):
                 self.robots_data[name] = {"active": False, "telegram": "", "history": []}
                 self.save_data()
                 self.refresh_list()
+                _logger.info(f"Nuovo robot creato: {name}")
             elif name and name in self.robots_data:
                 QMessageBox.warning(self, "Errore", "Nome gia' esistente.")
 
@@ -446,6 +457,7 @@ class RobotFactoryTab(QWidget):
         self.save_data()
         self.refresh_list()
         self.update_btn(self.robots_data[n]["active"])
+        _logger.info(f"Robot {n} stato cambiato a: {self.robots_data[n]['active']}")
 
     def update_btn(self, active):
         if active:
@@ -472,6 +484,7 @@ class RobotFactoryTab(QWidget):
             self.save_data()
             self.panel.setVisible(False)
             self.refresh_list()
+            _logger.info(f"Robot eliminato: {name}")
 
     # --- Chat ---
     def set_busy(self, busy):
@@ -501,7 +514,7 @@ class RobotFactoryTab(QWidget):
         self.inp.clear()
 
         sys_p = (f"Sei {name}, assistente betting. "
-                 f"Telegram: {self.robots_data[name].get('telegram', '')}.")
+                 f"Telegram target: {self.robots_data[name].get('telegram', '')}.")
         self.worker = OpenRouterWorker(
             self.api_key, self.robots_data[name]["history"], sys_p)
         self.worker.response_received.connect(self.on_resp)
@@ -634,6 +647,7 @@ class SupervisorTab(QWidget):
             self.factory.refresh_list()
             ts = datetime.now().strftime("%H:%M:%S")
             self.log.append(f"[{ts}] STOPPED {name}: {reason}")
+            _logger.warning(f"Supervisor STOPPED {name}: {reason}")
 
     def kill_all(self):
         reply = QMessageBox.question(
@@ -649,6 +663,7 @@ class SupervisorTab(QWidget):
             self.factory.refresh_list()
             ts = datetime.now().strftime("%H:%M:%S")
             self.log.append(f"[{ts}] SYSTEM HALT. {count} agenti terminati.")
+            _logger.warning(f"EMERGENCY STOP: {count} agenti terminati.")
 
 
 # ============================================================================
@@ -785,7 +800,7 @@ class MainWindow(QMainWindow):
                  controller=None):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("SuperAgent V5.2 Sentinel")
+        self.setWindowTitle("SuperAgent V5.3 Sentinel")
         self.setMinimumSize(1200, 850)
         self.setStyleSheet(STYLE_SHEET)
 
@@ -831,6 +846,8 @@ class MainWindow(QMainWindow):
         if self.controller:
             self.controller.training_complete.connect(
                 self.trainer_tab.on_training_complete)
+
+        _logger.info(f"Applicazione avviata. Root Dir: {_ROOT_DIR}")
 
     def closeEvent(self, event):
         if self.rpa_worker:
