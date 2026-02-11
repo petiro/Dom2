@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.3 - SENTINEL EDITION (PATH FIX & LOGGING)
+SuperAgent Desktop App V5.5 - SENTINEL EDITION (PERMISSIONS FIX & AUTO-REPAIR)
 """
 import os
 import sys
@@ -12,6 +12,7 @@ import requests
 from datetime import datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from logging.handlers import RotatingFileHandler
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -23,24 +24,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize
 from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon
 
-# --- ABSOLUTE PATHS (PROJECT ROOT) ---
-_UI_DIR = os.path.dirname(os.path.abspath(__file__))
-_ROOT_DIR = os.path.dirname(_UI_DIR)
-
-ROBOTS_FILE = os.path.join(_ROOT_DIR, "my_robots.json")
-API_FILE = os.path.join(_ROOT_DIR, "api_config.json")
-LOG_FILE = os.path.join(_ROOT_DIR, "superagent.log")
-
-# --- MODULE LOGGER (does not conflict with main.py's setup_logging) ---
-_logger = logging.getLogger("desktop_app")
-if not _logger.handlers:
-    from logging.handlers import RotatingFileHandler
-    _fh = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
-    _fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    _logger.addHandler(_fh)
-    _logger.setLevel(logging.INFO)
-
-# --- IMPORTS ---
 try:
     from core.money_management import RoserpinaTable
     from ui.mapping_tab import MappingTab
@@ -52,6 +35,40 @@ except ImportError:
         def __init__(self, c): super().__init__()
     class TelegramTab(QWidget):
         def __init__(self, **k): super().__init__()
+
+
+# ============================================================================
+#  PATH SYSTEM (PERMISSION-SAFE)
+# ============================================================================
+def get_project_root():
+    """Compute project root with write-permission verification."""
+    try:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        test_file = os.path.join(base, ".perm_test.tmp")
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+        return base
+    except Exception:
+        return os.getcwd()
+
+
+_ROOT_DIR = get_project_root()
+ROBOTS_FILE = os.path.join(_ROOT_DIR, "my_robots.json")
+API_FILE = os.path.join(_ROOT_DIR, "api_config.json")
+LOG_FILE = os.path.join(_ROOT_DIR, "superagent_v5.log")
+
+# Module logger with rotation (does not conflict with main.py)
+_logger = logging.getLogger("desktop_app")
+if not _logger.handlers:
+    try:
+        _fh = RotatingFileHandler(
+            LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+        _fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        _logger.addHandler(_fh)
+        _logger.setLevel(logging.INFO)
+    except Exception:
+        pass
 
 
 # ============================================================================
@@ -86,13 +103,14 @@ QHeaderView::section { background-color: #202123; color: white; padding: 5px; bo
 
 
 # ============================================================================
-#  CUSTOM INPUT DIALOG
+#  CUSTOM INPUT DIALOG (PERMISSION-SAFE, FORCED VISIBILITY)
 # ============================================================================
 class CustomInputDialog(QDialog):
     def __init__(self, title, label_text, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setFixedWidth(400)
+        self.setWindowModality(Qt.ApplicationModal)
         self.setStyleSheet("background-color: #202123; color: white;")
 
         layout = QVBoxLayout(self)
@@ -104,8 +122,9 @@ class CustomInputDialog(QDialog):
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Scrivi qui...")
         self.input_field.setStyleSheet(
-            "QLineEdit { background-color: #40414f; color: white; "
-            "border: 2px solid #10a37f; padding: 10px; font-size: 14px; }"
+            "QLineEdit { background-color: white; color: black; "
+            "border: 3px solid #10a37f; padding: 12px; font-size: 16px; "
+            "font-weight: bold; }"
             "QLineEdit:focus { border-color: #19c37d; }")
         layout.addWidget(self.input_field)
 
@@ -113,14 +132,52 @@ class CustomInputDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         btns.setStyleSheet(
-            "QPushButton { background-color: #10a37f; color: white; border: none; }"
+            "QPushButton { background-color: #10a37f; color: white; border: none; padding: 10px; }"
             "QPushButton[text='Cancel'] { background-color: #555; }")
         layout.addWidget(btns)
 
-        self.input_field.setFocus()
+        QTimer.singleShot(100, self.input_field.setFocus)
 
     def get_text(self):
         return self.input_field.text().strip()
+
+
+# ============================================================================
+#  JSON HELPERS (CENTRALIZED WITH ERROR POPUPS)
+# ============================================================================
+def _load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        _logger.error(f"Errore caricamento {path}: {e}")
+        return {}
+
+
+def _save_json(path, data, parent_widget=None):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+        return True
+    except Exception as e:
+        _logger.error(f"Errore scrittura {path}: {e}")
+        if parent_widget:
+            QMessageBox.critical(
+                parent_widget, "Errore Sistema File",
+                f"Non posso salvare in:\n{path}\n\nMotivo: {e}")
+        return False
+
+
+def _ensure_files_exist():
+    """Create default JSON files if missing."""
+    for path, default in [(ROBOTS_FILE, {}), (API_FILE, {"key": ""})]:
+        if not os.path.exists(path):
+            _save_json(path, default)
+
+
+_ensure_files_exist()
 
 
 # ============================================================================
@@ -247,15 +304,15 @@ class OpenRouterWorker(QThread):
 
 
 # ============================================================================
-#  3. ROBOT FACTORY (V5.3 - ABSOLUTE PATHS + LOGGING)
+#  3. ROBOT FACTORY (V5.5 - AUTO-REPAIR + PERMISSION POPUPS)
 # ============================================================================
 class RobotFactoryTab(QWidget):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
         self.current_robot_name = None
-        self.robots_data = self.load_data()
-        self.api_key = self.load_api_key()
+        self.robots_data = _load_json(ROBOTS_FILE)
+        self.api_key = _load_json(API_FILE).get("key", "")
         self.init_ui()
 
     def init_ui(self):
@@ -276,10 +333,11 @@ class RobotFactoryTab(QWidget):
             "color:#8e8ea0; font-weight:bold; font-size:12px; letter-spacing:1px;")
         vbox.addWidget(lbl_title)
 
-        btn_new = QPushButton("+ Nuovo Agente")
+        btn_new = QPushButton("+ NUOVO AGENTE")
+        btn_new.setMinimumHeight(50)
         btn_new.setStyleSheet(
             "background-color: #10a37f; color: white; border: none; "
-            "padding: 10px; font-weight: bold;")
+            "padding: 10px; font-weight: bold; font-size: 13px;")
         btn_new.clicked.connect(self.create_robot)
         vbox.addWidget(btn_new)
 
@@ -311,10 +369,10 @@ class RobotFactoryTab(QWidget):
             "background-color: #343541; border-bottom: 1px solid #2d2d30; padding: 15px;")
         h_box = QHBoxLayout(head)
         self.lbl_name = QLabel("Robot")
-        self.lbl_name.setStyleSheet("font-size: 20px; font-weight: bold; color: white;")
+        self.lbl_name.setStyleSheet("font-size: 20px; font-weight: bold; color: #10a37f;")
 
         self.txt_tg = QLineEdit()
-        self.txt_tg.setPlaceholderText("Username Canale (es: @Tips)")
+        self.txt_tg.setPlaceholderText("@UsernameCanale")
         self.txt_tg.setFixedWidth(250)
         self.txt_tg.setStyleSheet(
             "background: #40414f; color: #10a37f; font-weight: bold; padding: 8px;")
@@ -332,7 +390,7 @@ class RobotFactoryTab(QWidget):
 
         h_box.addWidget(self.lbl_name)
         h_box.addStretch()
-        h_box.addWidget(QLabel("Target Telegram:"))
+        h_box.addWidget(QLabel("Listen to:"))
         h_box.addWidget(self.txt_tg)
         h_box.addWidget(self.btn_act)
         h_box.addWidget(self.btn_del)
@@ -370,40 +428,13 @@ class RobotFactoryTab(QWidget):
         main.addWidget(self.panel)
         self.refresh_list()
 
-    # --- Data (ABSOLUTE PATHS) ---
-    def load_data(self):
-        if os.path.exists(ROBOTS_FILE):
-            try:
-                with open(ROBOTS_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
-
+    # --- Data (centralized JSON helpers) ---
     def save_data(self):
-        try:
-            with open(ROBOTS_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.robots_data, f, indent=4)
-            _logger.info(f"Dati robot salvati in: {ROBOTS_FILE}")
-        except Exception as e:
-            _logger.error(f"Errore salvataggio robot: {e}")
-
-    def load_api_key(self):
-        if os.path.exists(API_FILE):
-            try:
-                with open(API_FILE, "r") as f:
-                    return json.load(f).get("key", "")
-            except Exception:
-                return ""
-        return ""
+        _save_json(ROBOTS_FILE, self.robots_data, self)
 
     def save_api(self):
         self.api_key = self.txt_api.text().strip()
-        try:
-            with open(API_FILE, "w", encoding="utf-8") as f:
-                json.dump({"key": self.api_key}, f)
-        except Exception as e:
-            _logger.error(f"Errore salvataggio API: {e}")
+        _save_json(API_FILE, {"key": self.api_key}, self)
 
     # --- Robot management ---
     def refresh_list(self):
@@ -801,7 +832,7 @@ class MainWindow(QMainWindow):
                  controller=None):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("SuperAgent V5.3 Sentinel")
+        self.setWindowTitle("SuperAgent V5.5 Sentinel")
         self.setMinimumSize(1200, 850)
         self.setStyleSheet(STYLE_SHEET)
 
