@@ -1,10 +1,7 @@
 name: Build SuperAgent V4 EXE
 
 on:
-  # Permette di avviare la build manualmente dal tab "Actions"
   workflow_dispatch:
-  
-  # Avvia automaticamente quando i test passano
   workflow_run:
     workflows: ["V4 Test Suite"]
     types: [completed]
@@ -12,7 +9,6 @@ on:
 
 jobs:
   build:
-    # Esegue se avviato a mano OPPURE se i test sono passati
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-latest
     
@@ -37,15 +33,14 @@ jobs:
         run: python -m playwright install chromium
         
       - name: Create Missing Folders
-        # Crea le cartelle config e data se git non le ha tracciate (perché vuote)
-        # altrimenti PyInstaller fallisce se prova a includerle
+        # Crea le cartelle necessarie vuote
         run: |
           if (-not (Test-Path "config")) { mkdir config }
           if (-not (Test-Path "data")) { mkdir data }
+          if (-not (Test-Path "logs")) { mkdir logs }
 
       - name: Build with PyInstaller
-        # Qui c'è tutta la logica che prima era nel build.py
-        # Nota: usiamo il backtick ` come a capo per PowerShell
+        # COMANDO CORRETTO: Esegue PyInstaller direttamente senza build.py
         run: |
           pyinstaller --noconfirm --onefile --windowed --clean --name "SuperAgent" `
             --hidden-import=PySide6 `
