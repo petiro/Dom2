@@ -24,8 +24,14 @@ import platform
 import subprocess
 from playwright.sync_api import sync_playwright
 
+# Assicurati che questi file esistano nel tuo progetto
 from core.anti_detect import STEALTH_INJECTION_V4
 from core.ai_trainer import AITrainerEngine
+
+# --- CONFIGURAZIONE SAFETY ---
+# Mettiamo FALSE per impedire che, se il selettore fallisce, 
+# il bot provi a cliccare sulle coordinate x,y del monitor (pericolosissimo).
+USE_OS_FALLBACK = False  
 
 # --- STEALTH MODE PROFILES ---
 STEALTH_PROFILES = {
@@ -645,7 +651,7 @@ class DomExecutorPlaywright:
                 remove.forEach(el => el.remove());
                 let html = clone.outerHTML;
                 if (html.length > limit) {
-                    html = html.substring(0, limit) + '\\n<!-- TRONCATO -->';
+                    html = html.substring(0, limit) + '\\n';
                 }
                 return html;
             }""", limit)
