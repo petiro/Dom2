@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.5 - SENTINEL EDITION (PERMISSIONS FIX & AUTO-REPAIR)
+SuperAgent Desktop App V5.5 - SENTINEL EDITION (PERMISSIONS FIX & LOGGING REPAIR)
 """
 import os
 import sys
@@ -39,37 +39,60 @@ except ImportError:
 
 
 # ============================================================================
-#  PATH SYSTEM (PERMISSION-SAFE)
+#  PATH SYSTEM & LOGGING (EXE COMPATIBLE & ROBUST)
 # ============================================================================
 def get_project_root():
-    """Compute project root with write-permission verification."""
+    """Restituisce la cartella reale dove si trova l'EXE o lo script."""
+    # Se congelato con PyInstaller (è un EXE)
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    
+    # Se eseguito come script Python normale
     try:
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        test_file = os.path.join(base, ".perm_test.tmp")
-        with open(test_file, "w") as f:
-            f.write("test")
-        os.remove(test_file)
-        return base
+        # Sale di due livelli da ui/desktop_app.py -> root
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     except Exception:
         return os.getcwd()
 
-
 _ROOT_DIR = get_project_root()
-ROBOTS_FILE = os.path.join(_ROOT_DIR, "my_robots.json")
-API_FILE = os.path.join(_ROOT_DIR, "api_config.json")
-LOG_FILE = os.path.join(_ROOT_DIR, "superagent_v5.log")
 
-# Module logger with rotation (does not conflict with main.py)
+# Crea la cartella logs se non esiste
+LOG_DIR = os.path.join(_ROOT_DIR, "logs")
+if not os.path.exists(LOG_DIR):
+    try:
+        os.makedirs(LOG_DIR)
+    except Exception:
+        LOG_DIR = _ROOT_DIR # Fallback alla root se non posso creare cartelle
+
+# File di configurazione e log con percorsi assoluti
+ROBOTS_FILE = os.path.join(_ROOT_DIR, "config", "my_robots.json")
+API_FILE = os.path.join(_ROOT_DIR, "config", "api_config.json")
+LOG_FILE = os.path.join(LOG_DIR, "superagent_v5.log")
+
+# Setup Logger (Console + File)
 _logger = logging.getLogger("desktop_app")
 if not _logger.handlers:
     try:
+        # Ruota i log: max 5MB, ne tiene 3 vecchi
         _fh = RotatingFileHandler(
             LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
-        _fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        
+        # Formato dettagliato per capire gli errori
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s")
+        _fh.setFormatter(formatter)
+        
         _logger.addHandler(_fh)
+        
+        # Aggiunge anche output su Console (finestra nera) per debug immediato
+        _ch = logging.StreamHandler()
+        _ch.setFormatter(formatter)
+        _logger.addHandler(_ch)
+        
         _logger.setLevel(logging.INFO)
-    except Exception:
-        pass
+        _logger.info(f"=== SUPERAGENT STARTED === ROOT: {_ROOT_DIR}")
+        
+    except Exception as e:
+        print(f"ERRORE CRITICO LOGGER: Non posso scrivere in {LOG_FILE}. Motivo: {e}")
 
 
 # ============================================================================
@@ -159,6 +182,11 @@ def _load_json(path):
 
 def _save_json(path, data, parent_widget=None):
     try:
+        # Assicurati che la cartella esista (per config/my_robots.json)
+        folder = os.path.dirname(path)
+        if folder and not os.path.exists(folder):
+            os.makedirs(folder, exist_ok=True)
+            
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
         return True
