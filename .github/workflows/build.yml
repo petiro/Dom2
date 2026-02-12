@@ -24,7 +24,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # Velocizza le build successive
+          cache: 'pip'
           
       - name: Install Dependencies
         run: |
@@ -34,13 +34,33 @@ jobs:
           pip install playwright
           
       - name: Install Playwright Browsers
-        # Necessario anche se usi Chrome di sistema, per le librerie interne
         run: python -m playwright install chromium
         
-      - name: Run Build Script
-        # Esegue il tuo build.py che contiene già tutti gli hidden-imports corretti
+      - name: Create Missing Folders
+        # Crea le cartelle config e data se git non le ha tracciate (perché vuote)
+        # altrimenti PyInstaller fallisce se prova a includerle
         run: |
-          python build.py
+          if (-not (Test-Path "config")) { mkdir config }
+          if (-not (Test-Path "data")) { mkdir data }
+
+      - name: Build with PyInstaller
+        # Qui c'è tutta la logica che prima era nel build.py
+        # Nota: usiamo il backtick ` come a capo per PowerShell
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --clean --name "SuperAgent" `
+            --hidden-import=PySide6 `
+            --hidden-import=telethon `
+            --hidden-import=telethon.tl.types `
+            --hidden-import=telethon.tl.functions `
+            --hidden-import=telethon.extensions `
+            --hidden-import=playwright `
+            --hidden-import=yaml `
+            --hidden-import=ui.telegram_tab `
+            --hidden-import=ui.desktop_app `
+            --hidden-import=core.telegram_worker `
+            --add-data "config;config" `
+            --add-data "data;data" `
+            main.py
           
       - name: Verify Build Existence
         run: |
@@ -55,6 +75,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SuperAgent_V4_Windows
-          # Il nome del file generato da build.py è SuperAgent.exe
           path: dist/SuperAgent.exe
           retention-days: 3
