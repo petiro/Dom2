@@ -17,14 +17,22 @@ class Vault:
     def _generate_machine_key(self):
         if os.environ.get("GITHUB_ACTIONS") == "true":
             serial = "CI_TEST_ID"
-        else:
+        elif platform.system().lower() == "windows":
             try:
-                cmd = 'wmic csproduct get uuid'
-                output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')
+                result = subprocess.run(
+                    ["wmic", "csproduct", "get", "uuid"],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                output = result.stdout.splitlines()
                 serial = output[1].strip() if len(output) > 1 else "DEFAULT_MACHINE_FALLBACK"
-            except Exception:
+            except (OSError, subprocess.CalledProcessError):
                 serial = platform.node() or "FALLBACK_ID"
-            
+        else:
+            serial = platform.node() or "FALLBACK_ID"
+
         # Crea chiave a 32 byte
         hash_key = hashlib.sha256(serial.encode()).digest()
         return base64.urlsafe_b64encode(hash_key[:32])
