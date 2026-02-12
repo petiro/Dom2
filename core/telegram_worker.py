@@ -23,7 +23,7 @@ class TelegramWorker(QThread):
         self.client = None
         self.loop = None
         self.message_queue = message_queue
-        self.keep_alive_task = None  # Inizializzazione importante
+        self.keep_alive_task = None
         
         # Absolute session path for PyInstaller compatibility
         self._data_dir = os.path.join(_BASE_DIR, "data")
