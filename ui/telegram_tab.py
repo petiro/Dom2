@@ -17,8 +17,6 @@ QUEUE_POLL_INTERVAL_MS = 100
 MAX_QUEUE_EVENTS_PER_TICK = 50
 
 
-
-
 class TelegramParseWorker(QThread):
     """Worker thread for parsing a single message with AI (avoids blocking UI)"""
     finished = Signal(str, str, object)  # timestamp, message, result (dict or None)
@@ -78,7 +76,13 @@ class TelegramListenerThread(QThread):
             from telethon import TelegramClient, events
             import asyncio
 
+            # CONFLICT RESOLUTION:
+            # Usiamo _queue_event per coerenza con l'architettura thread-safe.
+            # Inizializziamo il loop asyncio (necessario per Telethon nel thread).
             self._queue_event("status", "Connecting...")
+            
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
 
             # EXE-safe absolute session path in data/ folder
             _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,8 +122,6 @@ class TelegramListenerThread(QThread):
                 self._queue_event("status", "Connected")
                 await client.run_until_disconnected()
 
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
             self._loop.run_until_complete(main())
 
         except ImportError:
