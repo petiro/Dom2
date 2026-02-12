@@ -24,17 +24,18 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize
 from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon
 
+# Gestione import opzionali per evitare crash immediati se mancano moduli
 try:
     from core.money_management import RoserpinaTable
     from ui.mapping_tab import MappingTab
     from ui.telegram_tab import TelegramTab
 except ImportError:
     class RoserpinaTable:
-        def __init__(self, b, t): pass
+        def __init__(self, *args, **kwargs): pass
     class MappingTab(QWidget):
-        def __init__(self, c): super().__init__()
+        def __init__(self, *args, **kwargs): super().__init__()
     class TelegramTab(QWidget):
-        def __init__(self, **k): super().__init__()
+        def __init__(self, **kwargs): super().__init__()
 
 
 # ============================================================================
@@ -300,7 +301,6 @@ class OpenRouterWorker(QThread):
             self.finished_task.emit(False)
         else:
             self.finished_task.emit(True)
-
 
 
 # ============================================================================
@@ -589,7 +589,6 @@ class RobotFactoryTab(QWidget):
         self.chat.moveCursor(QTextCursor.End)
 
 
-
 # ============================================================================
 #  4. SUPERVISOR WATCHDOG
 # ============================================================================
@@ -763,6 +762,9 @@ class RPAMonitorTab(QWidget):
         self.bet_table.setItem(r, 0, QTableWidgetItem(str(data.get("teams"))))
 
 
+# ============================================================================
+#  SETTINGS TAB (AGGIORNATA PER STEALTH MODE)
+# ============================================================================
 class SettingsTab(QWidget):
     stealth_changed = Signal(str)
 
@@ -771,10 +773,22 @@ class SettingsTab(QWidget):
         self.config = config or {}
         self.controller = controller
         layout = QVBoxLayout(self)
+        
         layout.addWidget(QLabel("Settings (Stealth & Config)"))
+        
+        # Menu a tendina Stealth
         self.stealth_combo = QComboBox()
         self.stealth_combo.addItems(["Umano Lento", "Bilanciato", "Pro"])
+        
+        # --- FIX: Legge dal config e imposta il default corretto ---
+        default_mode = self.config.get("rpa", {}).get("stealth_mode", "balanced")
+        # Mappa i valori del config agli indici del menu (0, 1, 2)
+        mode_map = {"slow": 0, "balanced": 1, "pro": 2}
+        self.stealth_combo.setCurrentIndex(mode_map.get(default_mode, 1))
+        # -----------------------------------------------------------
+        
         layout.addWidget(self.stealth_combo)
+        
         self.stealth_combo.currentIndexChanged.connect(
             lambda i: self.stealth_changed.emit(["slow", "balanced", "pro"][i]))
 
@@ -836,6 +850,13 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1200, 850)
         self.setStyleSheet(STYLE_SHEET)
 
+        # --- FIX RISOLUZIONE (Centra e ridimensiona in base al config) ---
+        target_width = config.get("ui", {}).get("window_size", [1280, 800])[0]
+        target_height = config.get("ui", {}).get("window_size", [1280, 800])[1]
+        self.resize(target_width, target_height)
+        self.center_window()
+        # -----------------------------------------------------------------
+
         self.rpa_worker = None
         if executor or controller:
             self.rpa_worker = RPAWorker(executor, logger, monitor, controller)
@@ -881,6 +902,13 @@ class MainWindow(QMainWindow):
 
         _logger.info(f"Applicazione avviata. Root Dir: {_ROOT_DIR}")
 
+    def center_window(self):
+        """Centra la finestra nello schermo attivo"""
+        qr = self.frameGeometry()
+        cp = self.screen().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
     def closeEvent(self, event):
         if self.rpa_worker:
             self.rpa_worker.stop()
@@ -914,9 +942,29 @@ def apply_dark_theme(app):
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
             logger=None, executor=None, config=None, monitor=None,
             controller=None):
+    
+    # --- FIX RISOLUZIONE HIGH DPI ---
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    # --------------------------------
+    
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     apply_dark_theme(app)
+    
+    # Carica la config (necessaria per passare i parametri alla finestra)
+    if config is None:
+        config_path = os.path.join(_ROOT_DIR, "config", "config.yaml")
+        if os.path.exists(config_path):
+            import yaml
+            with open(config_path, "r") as f:
+                config = yaml.safe_load(f)
+        else:
+            config = {}
+
     win = MainWindow(vision, telegram_learner, rpa_healer,
                      logger, executor, config, monitor, controller)
     win.show()
