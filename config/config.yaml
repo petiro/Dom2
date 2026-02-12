@@ -1,5 +1,47 @@
-system:
-  debug_level: "info"
+# ========================================================
+#  SUPERAGENT V8 CONFIGURATION - SENTINEL EDITION
+# ========================================================
 
+# --- IMPOSTAZIONI DI SISTEMA ---
+system:
+  debug_level: "info"   # Opzioni: debug, info, warning, error
+  version: "5.5"
+
+# --- OPENROUTER API (AI BRAIN) ---
+openrouter:
+  api_key: "sk-or-..."  # Inserisci qui la tua chiave (o lasciala vuota e usa la UI)
+  model: "google/gemini-2.0-flash-lite-preview-02-05:free"
+
+# --- TELEGRAM API (CONNESSIONE) ---
+telegram:
+  api_id: ""       # ID numerico (es. 123456)
+  api_hash: ""     # Stringa hash (es. a1b2c3d4...)
+  phone: ""        # Numero con prefisso (es. +39...)
+
+# --- INTERFACCIA UTENTE ---
+ui:
+  theme: "dark"
+  window_size: [1280, 800]
+  start_maximized: false
+  auto_save: true
+
+# --- RPA & AUTOMAZIONE (BROWSER) ---
 rpa:
-  stealth_mode: "pro"
+  enabled: true
+  headless: false        # false = vedi il browser (consigliato per debug)
+  stealth_mode: "pro"    # Opzioni: slow (umano), balanced, pro (veloce/stealth)
+  autobet: false         # ⚠️ ATTENZIONE: Se true, piazza scommesse reali
+  pin: "0000"            # PIN rapido per i siti di betting
+  bookmaker_url: "https://www.bet365.it"
+
+# --- APPRENDIMENTO AUTOMATICO ---
+learning:
+  telegram:
+    enabled: true
+    min_examples: 3
+    confidence_threshold: 0.75
+    
+  rpa_healing:
+    enabled: true
+    auto_update: true
+    confidence_threshold: 0.80
