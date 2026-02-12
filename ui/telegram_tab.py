@@ -84,12 +84,17 @@ class TelegramListenerThread(QThread):
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
 
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
             # EXE-safe absolute session path in data/ folder
             _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             _data_dir = os.path.join(_base, "data")
             os.makedirs(_data_dir, exist_ok=True)
             session_path = os.path.join(_data_dir, f"session_{self.api_id}")
-            self.client = TelegramClient(session_path, self.api_id, self.api_hash)
+            self.client = TelegramClient(
+                session_path, self.api_id, self.api_hash, loop=self._loop
+            )
             client = self.client
             parser_ref = self.parser
             logger_ref = self.logger
