@@ -97,9 +97,4 @@ class TelegramWorker(QThread):
             await self.client.run_until_disconnected()
         finally:
             # Cancel and await the keep_alive task when disconnecting
-            if self.keep_alive_task and not self.keep_alive_task.done():
-                self.keep_alive_task.cancel()
-                try:
-                    await self.keep_alive_task
-                except asyncio.CancelledError:
-                    pass
+            await self._cancel_keep_alive()
