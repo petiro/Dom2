@@ -17,6 +17,7 @@ V4 enhancements:
   - CDP watchdog for browser health
   - request_training() Slot for async training
   - Race condition fix (don't reset IDLE during shutdown)
+  - SAFE MODE: OS Fallback disabled (no random mouse clicks)
 """
 import time
 import threading
@@ -174,15 +175,15 @@ class SuperAgentController(QObject):
         with self._executor_lock:
             if self.executor:
                 self.executor.recycle_browser()
-                self.executor.launch_browser_cdp()
+                self.executor.launch_browser() # Riavvio interno, non CDP/Desktop
 
     def _init_os_human(self):
-        """Lazy-init HumanOS for desktop-level recovery."""
+        """Lazy-init HumanOS for desktop-level recovery (SAFE MODE ONLY)."""
         if self._os_human is None:
             try:
                 from core.os_human_interaction import HumanOS
                 self._os_human = HumanOS(self.logger)
-                self._log("[Controller] HumanOS initialized for desktop recovery")
+                self._log("[Controller] HumanOS initialized (Safe Mode)")
             except Exception as e:
                 self.logger.warning(f"[Controller] HumanOS not available: {e}")
 
@@ -243,15 +244,17 @@ class SuperAgentController(QObject):
         self._log("[Controller] CDP Watchdog started")
 
     # ------------------------------------------------------------------
-    #  Watchdog Slots (V4: browser death recovery)
+    #  Watchdog Slots (V4: browser death recovery) - FIXED & SAFE
     # ------------------------------------------------------------------
     @Slot()
     def on_browser_died(self):
-        """Called when SystemWatchdog detects Chrome is dead.
-        Triggers full recovery: close executor → HumanOS reopen → CDP reconnect."""
+        """
+        Called when SystemWatchdog detects Chrome is dead.
+        Triggers SAFE recovery: internal restart only. No desktop clicking.
+        """
         if self._stop_event.is_set():
             return
-        self._log("[Controller] Browser death detected by Watchdog — starting recovery")
+        self._log("[Controller] ⚠️ Browser death detected — starting SAFE recovery")
         self.state_manager.set_state(AgentState.RECOVERING)
 
         def _recover():
@@ -262,51 +265,27 @@ class SuperAgentController(QObject):
                         try:
                             self.executor.close()
                         except Exception as close_e:
-                            self.logger.warning(f"[Controller] Error closing dead executor (expected during recovery): {close_e}")
+                            self.logger.warning(f"[Controller] Cleanup error (expected): {close_e}")
 
-                    # 2. Try HumanOS desktop relaunch (Win+D → find icon → doubleClick)
+                    # 2. Kill Chrome Processes (OS Command Safe Mode)
+                    # Non usiamo più open_browser_from_desktop() che causava click random
                     self._init_os_human()
-                    if self._os_human and self._os_human.available:
-                        self._log("[Controller] Reopening Chrome via HumanOS desktop...")
-                        opened = self._os_human.open_browser_from_desktop()
-                        if opened:
-                            self._log("[Controller] Chrome reopened — connecting via CDP...")
-                            time.sleep(5)
+                    if self._os_human:
+                        self._log("[Controller] Cleaning residual Chrome processes...")
+                        self._os_human.kill_chrome_processes() # Safe taskkill
 
-                            CDP_RECONNECT_ATTEMPTS = 10
-                            CDP_RECONNECT_INTERVAL = 1
-
-                            success = False
-
-                            if self.executor:
-                                for _ in range(CDP_RECONNECT_ATTEMPTS):
-
-                                    if self._stop_event.is_set():
-                                        break
-
-                                    if self.executor.launch_browser_cdp():
-                                        success = True
-                                        break
-
-                                    time.sleep(CDP_RECONNECT_INTERVAL)
-                                if success:
-                                    self._log("[Controller] CDP reconnect successful!")
-                                    if not self._stop_event.is_set():
-                                        self.state_manager.set_state(AgentState.IDLE)
-                                    return
-                                else:
-                                    self._log("[Controller] CDP reconnect failed")
-
-                    # 3. Fallback: standard executor recovery (persistent context)
-                    self._log("[Controller] Falling back to standard session recovery...")
+                    # 3. Internal Recovery (Playwright Persistence)
+                    self._log("[Controller] Relaunching Browser (Internal)...")
                     if self.executor:
-                        self.executor.recover_session()
+                        # recover_session usa il profilo persistente interno, non serve l'icona sul desktop
+                        self.executor.recover_session() 
+                        
                         if not self._stop_event.is_set():
                             self.state_manager.set_state(AgentState.IDLE)
-                        self._log("[Controller] Standard recovery successful")
+                        self._log("[Controller] ✅ Browser recuperato con successo (SAFE MODE)")
 
             except Exception as e:
-                self._log(f"[Controller] Full recovery failed: {e}")
+                self._log(f"[Controller] ❌ Critical Recovery Failure: {e}")
                 self.state_manager.set_state(AgentState.ERROR)
 
         t = threading.Thread(target=_recover, name="browser-recovery", daemon=True)
