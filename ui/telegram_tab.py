@@ -57,6 +57,8 @@ class TelegramListenerThread(QThread):
             import asyncio
 
             self.status_changed.emit("Connecting...")
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
 
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
