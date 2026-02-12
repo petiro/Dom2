@@ -1,6 +1,10 @@
 name: Build SuperAgent V4 EXE
 
 on:
+  # Permette di avviare la build manualmente dal tab "Actions"
+  workflow_dispatch:
+  
+  # Avvia automaticamente quando i test passano
   workflow_run:
     workflows: ["V4 Test Suite"]
     types: [completed]
@@ -8,32 +12,49 @@ on:
 
 jobs:
   build:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # Esegue se avviato a mano OPPURE se i test sono passati
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-latest
     
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
       
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip' # Velocizza le build successive
           
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+          pip install playwright
           
-      - name: Install Playwright
+      - name: Install Playwright Browsers
+        # Necessario anche se usi Chrome di sistema, per le librerie interne
         run: python -m playwright install chromium
         
-      - name: Build with PyInstaller
+      - name: Run Build Script
+        # Esegue il tuo build.py che contiene già tutti gli hidden-imports corretti
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name "SuperAgent_V4" --clean --add-data "config;config" --add-data "data;data" main.py
+          python build.py
+          
+      - name: Verify Build Existence
+        run: |
+          if (Test-Path "dist/SuperAgent.exe") {
+              Write-Host "Build trovato con successo!"
+          } else {
+              Write-Error "ERRORE: File .exe non trovato nella cartella dist/"
+              exit 1
+          }
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: SuperAgent_V4_Windows
-          path: dist/SuperAgent_V4.exe
-          retention-days: 1
+          # Il nome del file generato da build.py è SuperAgent.exe
+          path: dist/SuperAgent.exe
+          retention-days: 3
