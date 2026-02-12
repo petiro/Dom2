@@ -23,7 +23,8 @@ class TelegramWorker(QThread):
         self.client = None
         self.loop = None
         self.message_queue = message_queue
-        self.keep_alive_task = None
+        self.keep_alive_task = None  # Inizializzazione importante
+        
         # Absolute session path for PyInstaller compatibility
         self._data_dir = os.path.join(_BASE_DIR, "data")
         os.makedirs(self._data_dir, exist_ok=True)
@@ -31,6 +32,7 @@ class TelegramWorker(QThread):
     def run(self):
         if not TELETHON_AVAILABLE:
             return
+        # Creiamo un nuovo loop per questo thread (evita l'errore 'Dummy-1')
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         try:
@@ -40,15 +42,17 @@ class TelegramWorker(QThread):
                 self.loop.close()
 
     def stop(self):
+        """Ferma il worker in modo sicuro e thread-safe."""
         if self.client and self.loop and not self.loop.is_closed():
             try:
-                # Cancel and await the keep_alive task before disconnecting
+                # 1. Cancella il task di keep_alive se esiste
                 if self.keep_alive_task and not self.keep_alive_task.done():
                     future = asyncio.run_coroutine_threadsafe(
                         self._cancel_keep_alive(), self.loop
                     )
                     future.result(timeout=5)
                 
+                # 2. Disconnetti il client
                 future = asyncio.run_coroutine_threadsafe(
                     self.client.disconnect(), self.loop
                 )
@@ -59,6 +63,7 @@ class TelegramWorker(QThread):
         self.wait(5000)
 
     async def _cancel_keep_alive(self):
+        """Cancella e attende il task keep_alive per evitare warning."""
         if self.keep_alive_task and not self.keep_alive_task.done():
             self.keep_alive_task.cancel()
             try:
@@ -73,15 +78,17 @@ class TelegramWorker(QThread):
 
         @self.client.on(events.NewMessage(chats=self.selected_chats))
         async def handler(event):
+            # Se la coda è disponibile, usala (thread-safe)
             if self.message_queue is not None:
                 try:
                     self.message_queue.put_nowait(event.raw_text)
                 except Full:
                     pass
             else:
+                # Altrimenti usa i segnali Qt standard
                 self.message_received.emit(event.raw_text)
 
-        # KEEP-ALIVE LOOP (Cruciale)
+        # KEEP-ALIVE LOOP (Cruciale per connessioni lunghe)
         async def keep_alive():
             while True:
                 try:
@@ -92,9 +99,11 @@ class TelegramWorker(QThread):
                     pass
                 await asyncio.sleep(60)
 
+        # Avvia il task e salvalo in self per poterlo cancellare dopo
         self.keep_alive_task = self.loop.create_task(keep_alive())
+        
         try:
             await self.client.run_until_disconnected()
         finally:
-            # Cancel and await the keep_alive task when disconnecting
+            # Pulisci il task anche se Telegram si disconnette per errore
             await self._cancel_keep_alive()
