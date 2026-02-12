@@ -58,6 +58,9 @@ class TelegramListenerThread(QThread):
 
             self.status_changed.emit("Connecting...")
 
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
             # EXE-safe absolute session path in data/ folder
             _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             _data_dir = os.path.join(_base, "data")
@@ -99,8 +102,6 @@ class TelegramListenerThread(QThread):
                 self.status_changed.emit("Connected")
                 await client.run_until_disconnected()
 
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
             self._loop.run_until_complete(main())
 
         except ImportError:
