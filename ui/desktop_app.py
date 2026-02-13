@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.5 - SENTINEL EDITION (SCROLL & INPUTS FIXED)
+SuperAgent Desktop App V5.6 - SENTINEL EDITION (FACTORY ENHANCED)
 """
 import os
 import sys
@@ -36,7 +36,6 @@ except ImportError:
 try:
     from core.money_management import RoserpinaTable
 except ImportError:
-    # Fallback se manca il core
     class RoserpinaTable:
         def __init__(self, bankroll=100, stake=1): 
             self.bankroll = bankroll
@@ -98,7 +97,7 @@ QTextEdit { background-color: #1e1e1e; border: 1px solid #333; font-family: Cons
 """
 
 # ============================================================================
-#  1. STATS TAB (REALE + SCROLL)
+#  1. STATS TAB
 # ============================================================================
 class StatsTab(QWidget):
     def __init__(self, controller=None):
@@ -111,15 +110,12 @@ class StatsTab(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        
-        # Scroll Wrapper
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
         content = QWidget()
         layout = QVBoxLayout(content)
 
-        # Content
         kpi_layout = QHBoxLayout()
         self.lbl_bets = self._create_card("TOTAL BETS", "0")
         self.lbl_placed = self._create_card("PLACED", "0", "#2196F3")
@@ -180,7 +176,7 @@ class StatsTab(QWidget):
             self.table.setItem(i, 4, item_res)
 
 # ============================================================================
-#  2. MONEY TAB (PERSISTENTE + SCROLL)
+#  2. MONEY TAB
 # ============================================================================
 class MoneyTab(QWidget):
     def __init__(self, controller=None):
@@ -252,7 +248,7 @@ class MoneyTab(QWidget):
             except: pass
 
 # ============================================================================
-#  3. SUPERVISOR TAB (+ SCROLL)
+#  3. SUPERVISOR TAB
 # ============================================================================
 class SupervisorTab(QWidget):
     def __init__(self, controller, factory):
@@ -302,7 +298,7 @@ class SupervisorTab(QWidget):
             self.factory.save_data()
 
 # ============================================================================
-#  4. TRAINER TAB (+ SCROLL)
+#  4. TRAINER TAB
 # ============================================================================
 class TrainerTab(QWidget):
     def __init__(self, controller=None, logger=None):
@@ -357,7 +353,7 @@ class TrainerTab(QWidget):
         except Exception as e: _logger.error(f"Errore salvataggio training: {e}")
 
 # ============================================================================
-#  5. FACTORY TAB (+ SCROLL)
+#  5. FACTORY TAB (AGGIORNATA: CANCELLAZIONE + ISTRUZIONI) ✅
 # ============================================================================
 class RobotFactoryTab(QWidget):
     def __init__(self, controller):
@@ -378,7 +374,7 @@ class RobotFactoryTab(QWidget):
     def init_ui(self):
         main_layout = QHBoxLayout(self)
         
-        # Lista Robot (Sinistra) - No Scroll needed for list usually, but panel yes
+        # Lista Robot (Sinistra)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         self.list_widget = QListWidget()
@@ -396,26 +392,40 @@ class RobotFactoryTab(QWidget):
         right_content = QWidget()
         right_layout = QVBoxLayout(right_content)
 
-        self.right_group = QGroupBox("Dettagli")
+        self.right_group = QGroupBox("Dettagli & Istruzioni")
         self.right_group.setVisible(False)
         form = QFormLayout(self.right_group)
+        
         self.inp_name = QLineEdit()
         self.inp_tg = QLineEdit()
         self.inp_tg.setPlaceholderText("@Canale")
         self.inp_site = QComboBox() 
         self.inp_site.addItems(["bet365", "goldbet", "planetwin365"])
         
+        # NUOVO: CAMPO ISTRUZIONI (CHAT)
+        self.inp_instructions = QTextEdit()
+        self.inp_instructions.setPlaceholderText("Scrivi qui cosa deve fare questo robot...\nEs: 'Analizza solo quote > 2.00 su Tennis'")
+        self.inp_instructions.setMinimumHeight(150)
+        
         self.btn_active = QPushButton("ATTIVA")
         self.btn_active.setCheckable(True)
         self.btn_active.clicked.connect(self.toggle_active)
         
+        # NUOVO: PULSANTE ELIMINA
+        self.btn_delete = QPushButton("🗑️ ELIMINA ROBOT")
+        self.btn_delete.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold;")
+        self.btn_delete.clicked.connect(self.delete_robot)
+        
         form.addRow("Nome:", self.inp_name)
         form.addRow("Telegram:", self.inp_tg)
         form.addRow("Sito Target:", self.inp_site)
+        form.addRow("Istruzioni:", self.inp_instructions)
         form.addRow(self.btn_active)
-        btn_save = QPushButton("Salva")
+        
+        btn_save = QPushButton("Salva Modifiche")
         btn_save.clicked.connect(self.save_robot)
         form.addRow(btn_save)
+        form.addRow(self.btn_delete) # Aggiunto in fondo
         
         right_layout.addWidget(self.right_group)
         right_layout.addStretch()
@@ -431,7 +441,12 @@ class RobotFactoryTab(QWidget):
 
     def create_robot(self):
         name = f"Bot_{len(self.robots_data)+1}"
-        self.robots_data[name] = {"telegram": "", "active": False, "target_site": "bet365"}
+        self.robots_data[name] = {
+            "telegram": "", 
+            "active": False, 
+            "target_site": "bet365",
+            "instructions": ""
+        }
         self.save_data()
         self.refresh_list()
 
@@ -441,8 +456,11 @@ class RobotFactoryTab(QWidget):
         name = item.text()
         self.current_robot = name
         data = self.robots_data[name]
+        
         self.inp_name.setText(name)
         self.inp_tg.setText(data.get("telegram", ""))
+        self.inp_instructions.setPlainText(data.get("instructions", "")) # CARICA ISTRUZIONI
+        
         idx = self.inp_site.findText(data.get("target_site", "bet365"))
         if idx >= 0: self.inp_site.setCurrentIndex(idx)
         self.update_active_btn(data.get("active", False))
@@ -451,17 +469,39 @@ class RobotFactoryTab(QWidget):
         if not self.current_robot: return
         new_name = self.inp_name.text()
         old_name = self.current_robot
-        data = self.robots_data[old_name]
+        
+        # Recupera dati esistenti o crea nuovi
+        data = self.robots_data.get(old_name, {})
         data["telegram"] = self.inp_tg.text()
-        data["target_site"] = self.inp_site.currentText() 
+        data["target_site"] = self.inp_site.currentText()
+        data["instructions"] = self.inp_instructions.toPlainText() # SALVA ISTRUZIONI
         
         if new_name != old_name:
             self.robots_data[new_name] = data
-            del self.robots_data[old_name]
+            if old_name in self.robots_data:
+                del self.robots_data[old_name]
             self.current_robot = new_name
+        else:
+            self.robots_data[old_name] = data
+            
         self.save_data()
         self.refresh_list()
-        QMessageBox.information(self, "Info", "Salvato.")
+        QMessageBox.information(self, "Info", "Agente salvato.")
+
+    def delete_robot(self):
+        if not self.current_robot: return
+        reply = QMessageBox.question(self, "Conferma Eliminazione", 
+                                     f"Sei sicuro di voler eliminare {self.current_robot}?\nQuesta azione è irreversibile.",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            if self.current_robot in self.robots_data:
+                del self.robots_data[self.current_robot]
+                self.save_data()
+                self.refresh_list()
+                self.right_group.setVisible(False)
+                self.current_robot = None
+                QMessageBox.information(self, "Info", "Agente eliminato.")
 
     def update_active_btn(self, active):
         self.btn_active.setText("🟢 ATTIVO" if active else "🔴 INATTIVO")
@@ -478,7 +518,7 @@ class RobotFactoryTab(QWidget):
             data = self.robots_data[self.current_robot]
             data["name"] = self.current_robot
             self.controller.load_robot_profile(data)
-            QMessageBox.information(self, "OK", f"{self.current_robot} Attivato su {data.get('target_site')}!")
+            QMessageBox.information(self, "OK", f"{self.current_robot} Attivato!\nIstruzioni caricate nel sistema.")
 
 # ============================================================================
 #  MAIN WINDOW
@@ -489,7 +529,7 @@ class MainWindow(QMainWindow):
                  controller=None):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("SuperAgent V5.5 Sentinel")
+        self.setWindowTitle("SuperAgent V5.6 Sentinel")
         self.resize(1100, 750)
         self.setStyleSheet(STYLE_SHEET)
         self.logger_engine, self.qt_handler = setup_logger()
