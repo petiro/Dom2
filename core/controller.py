@@ -544,7 +544,7 @@ class SuperAgentController(QObject):
         """Attiva un robot specifico: cambia Telegram e SELETTORI."""
         self.logger.info(f"🤖 Attivazione Profilo Robot: {robot_data.get('name', 'Unknown')}")
         
-        # 1. Telegram
+        # 1. Aggiorna configurazione Telegram
         tg_channel = robot_data.get("telegram")
         if tg_channel:
             if "telegram" not in self.current_config:
@@ -554,7 +554,7 @@ class SuperAgentController(QObject):
             self.logger.info(f"📡 Canale Telegram impostato su: {tg_channel}")
 
         # 2. Gestione Target Site (Cambio Selettori) -> NUOVO CODICE
-        target_site = robot_data.get("target_site") 
+        target_site = robot_data.get("target_site")  # Es: "goldbet" o "bet365"
         if target_site:
              yaml_file = f"{target_site}.yaml"
              with self._executor_lock:
