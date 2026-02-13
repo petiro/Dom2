@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.5 - SENTINEL EDITION (REAL LOGIC IMPLEMENTED & FIXED)
+SuperAgent Desktop App V5.5 - SENTINEL EDITION (LOGGING FIXED)
 """
 import os
 import sys
@@ -59,7 +59,21 @@ API_FILE = os.path.join(_ROOT_DIR, "config", "api_config.json")
 TRAINING_DATA_FILE = os.path.join(_ROOT_DIR, "data", "learned_patterns.json")
 LOG_FILE = os.path.join(LOG_DIR, "superagent_v5.log")
 
+# --- SETUP GLOBAL FILE HANDLER (CRUCIALE PER I LOG) ---
+_fh = None # Global placeholder
 _logger = logging.getLogger("desktop_app")
+
+try:
+    _fh = RotatingFileHandler(
+        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s")
+    _fh.setFormatter(formatter)
+    _logger.addHandler(_fh)
+    _logger.setLevel(logging.INFO)
+    _logger.info(f"=== SUPERAGENT STARTED === ROOT: {_ROOT_DIR}")
+except Exception as e:
+    print(f"ERRORE CRITICO LOGGER: {e}")
 
 # --- GLOBAL STYLESHEET (MODERN DARK) ---
 STYLE_SHEET = """
@@ -91,36 +105,27 @@ class StatsTab(QWidget):
         super().__init__()
         self.controller = controller
         self.init_ui()
-        
-        # Timer aggiornamento real-time
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_stats)
-        self.timer.start(5000) # Ogni 5 secondi
+        self.timer.start(5000)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-
-        # --- KPI CARDS ---
         kpi_layout = QHBoxLayout()
         self.lbl_bets = self._create_card("TOTAL BETS", "0")
         self.lbl_placed = self._create_card("PLACED", "0", "#2196F3")
         self.lbl_profit = self._create_card("PROFIT", "0.00 u", "#4CAF50")
         self.lbl_winrate = self._create_card("WIN RATE", "0%", "#FFC107")
-        
         kpi_layout.addWidget(self.lbl_bets)
         kpi_layout.addWidget(self.lbl_placed)
         kpi_layout.addWidget(self.lbl_profit)
         kpi_layout.addWidget(self.lbl_winrate)
         layout.addLayout(kpi_layout)
-
-        # --- HISTORY TABLE ---
         layout.addWidget(QLabel("📜 Storico Operazioni"))
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Ora", "Match", "Mercato", "Stake", "Esito"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout.addWidget(self.table)
-        
-        # Pulsante refresh manuale
         btn_ref = QPushButton("Aggiorna Ora")
         btn_ref.clicked.connect(self.refresh_stats)
         layout.addWidget(btn_ref)
@@ -140,36 +145,26 @@ class StatsTab(QWidget):
 
     def refresh_stats(self):
         if not self.controller: return
-
-        # 1. Recupera dati dal Controller
         stats = self.controller.get_stats()
         history = self.controller.get_bet_history()
-
-        # 2. Aggiorna KPI
-        self.lbl_bets.findChild(QLabel, "").setText(str(stats["bets_total"])) 
-        # Fix rapido per accedere al valore corretto:
         self.lbl_bets.layout().itemAt(1).widget().setText(str(stats["bets_total"]))
         self.lbl_placed.layout().itemAt(1).widget().setText(str(stats["bets_placed"]))
         self.lbl_profit.layout().itemAt(1).widget().setText(f"{stats['total_profit']:.2f}")
         self.lbl_winrate.layout().itemAt(1).widget().setText(f"{stats['win_rate']:.1f}%")
-
-        # 3. Aggiorna Tabella
         self.table.setRowCount(len(history))
-        for i, row_data in enumerate(reversed(history)): # Mostra ultimi in alto
+        for i, row_data in enumerate(reversed(history)): 
             ts = datetime.fromtimestamp(row_data.get("timestamp", 0)).strftime("%H:%M:%S")
             self.table.setItem(i, 0, QTableWidgetItem(ts))
             self.table.setItem(i, 1, QTableWidgetItem(str(row_data.get("teams", "?"))))
             self.table.setItem(i, 2, QTableWidgetItem(str(row_data.get("market", "?"))))
             self.table.setItem(i, 3, QTableWidgetItem(str(row_data.get("stake", "0"))))
-            
             res = "✅ PIAZZATA" if row_data.get("placed") else "❌ FALLITA"
             item_res = QTableWidgetItem(res)
             item_res.setForeground(QColor("#4CAF50") if row_data.get("placed") else QColor("#F44336"))
             self.table.setItem(i, 4, item_res)
 
-
 # ============================================================================
-#  2. MONEY TAB (ROSERPINA CONTROLLER - PERSISTENTE ✅)
+#  2. MONEY TAB (PERSISTENTE)
 # ============================================================================
 class MoneyTab(QWidget):
     def __init__(self, controller=None):
@@ -183,49 +178,37 @@ class MoneyTab(QWidget):
         layout = QVBoxLayout(self)
         gb_bank = QGroupBox("💰 Gestione Bankroll (Persistente)")
         form = QFormLayout(gb_bank)
-        
         self.spin_bankroll = QDoubleSpinBox()
         self.spin_bankroll.setRange(0, 1000000)
         self.spin_bankroll.setPrefix("€ ")
-        
         self.combo_strat = QComboBox()
         self.combo_strat.addItems(["Stake Fisso", "Masaniello", "Percentuale"])
-        
         self.spin_stake = QDoubleSpinBox()
         self.spin_stake.setSuffix(" u")
-
         form.addRow("Bankroll Totale:", self.spin_bankroll)
         form.addRow("Strategia:", self.combo_strat)
         form.addRow("Stake Base / %:", self.spin_stake)
-        
         btn_apply = QPushButton("💾 Salva e Applica")
         btn_apply.clicked.connect(self.apply_settings)
         btn_apply.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
         form.addRow(btn_apply)
-        
         layout.addWidget(gb_bank)
         layout.addStretch()
 
     def apply_settings(self):
         if not self.controller: return
-        
         data = {
             "bankroll": self.spin_bankroll.value(),
             "strategy_index": self.combo_strat.currentIndex(),
             "strategy_name": self.combo_strat.currentText(),
             "stake": self.spin_stake.value()
         }
-        
-        # 1. Salva su Disco
         try:
             folder = os.path.dirname(self.config_file)
             if not os.path.exists(folder): os.makedirs(folder, exist_ok=True)
-            with open(self.config_file, "w") as f:
-                json.dump(data, f, indent=4)
+            with open(self.config_file, "w") as f: json.dump(data, f, indent=4)
         except Exception as e:
             _logger.error(f"Errore salvataggio Money: {e}")
-
-        # 2. Applica al Controller
         if hasattr(self.controller, 'table'):
             self.controller.table.bankroll = data["bankroll"]
             self.controller.table.stake = data["stake"]
@@ -243,9 +226,8 @@ class MoneyTab(QWidget):
                     self.spin_stake.setValue(data.get("stake", 1))
             except: pass
 
-
 # ============================================================================
-#  3. SUPERVISOR TAB (REAL KILL SWITCH)
+#  3. SUPERVISOR TAB
 # ============================================================================
 class SupervisorTab(QWidget):
     def __init__(self, controller, factory):
@@ -256,55 +238,34 @@ class SupervisorTab(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-
-        # Header con Kill Switch
         header = QFrame()
         header.setStyleSheet("background-color: #252526; padding: 10px; border-radius: 5px;")
         h_lay = QHBoxLayout(header)
-        
         lbl_stat = QLabel("🛡️ SUPERVISOR SYSTEM")
         lbl_stat.setStyleSheet("font-weight: bold; font-size: 14px; color: #4CAF50;")
-        
         btn_kill = QPushButton("☢️ EMERGENCY STOP")
         btn_kill.setMinimumHeight(40)
-        btn_kill.setStyleSheet("""
-            QPushButton { background-color: #B71C1C; color: white; font-weight: bold; border: 2px solid #FF5252; }
-            QPushButton:hover { background-color: #D32F2F; }
-        """)
+        btn_kill.setStyleSheet("QPushButton { background-color: #B71C1C; color: white; font-weight: bold; }")
         btn_kill.clicked.connect(self.kill_system)
-        
         h_lay.addWidget(lbl_stat)
         h_lay.addStretch()
         h_lay.addWidget(btn_kill)
         layout.addWidget(header)
-
-        # Log Console
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setStyleSheet("background-color: #000; color: #0f0; font-family: 'Consolas'; font-size: 11px;")
         layout.addWidget(self.log)
 
     def kill_system(self):
-        reply = QMessageBox.question(self, "CONFERMA STOP", 
-                                     "SEI SICURO? Questo ucciderà tutti i processi attivi.",
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.log.append("🚨 INIZIO PROCEDURA DI ARRESTO DI EMERGENZA...")
-            
-            # 1. Stop Controller
-            if self.controller:
-                self.controller.shutdown()
-                self.log.append("✅ Controller Shutdown Signal Inviato")
-            
-            # 2. Stop Factory Robots
+        if QMessageBox.question(self, "STOP", "SEI SICURO?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            self.log.append("🚨 EMERGENCY STOP ACTIVATED")
+            if self.controller: self.controller.shutdown()
             for name in self.factory.robots_data:
                 self.factory.robots_data[name]["active"] = False
             self.factory.save_data()
-            self.log.append("✅ Tutti i Robot disattivati")
-
 
 # ============================================================================
-#  4. TRAINER TAB (PERSISTENCE)
+#  4. TRAINER TAB
 # ============================================================================
 class TrainerTab(QWidget):
     def __init__(self, controller=None, logger=None):
@@ -315,65 +276,39 @@ class TrainerTab(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        
         self.display = QTextEdit()
         self.display.setReadOnly(True)
-        self.display.setPlaceholderText("I risultati del training appariranno qui...")
+        self.display.setPlaceholderText("Training output...")
         layout.addWidget(self.display)
-        
         btn_train = QPushButton("🧠 Esegui Training Step")
-        btn_train.setMinimumHeight(50)
-        btn_train.setStyleSheet("background-color: #673AB7; color: white; font-weight: bold;")
         btn_train.clicked.connect(self.run_training)
         layout.addWidget(btn_train)
         
-        btn_save = QPushButton("💾 Salva Conoscenza Acquisita")
-        btn_save.clicked.connect(self.save_knowledge)
-        layout.addWidget(btn_save)
-
     def run_training(self):
         if self.controller:
-            self.display.append("⏳ Training avviato... attendere...")
+            self.display.append("⏳ Training avviato...")
             self.controller.request_training()
-        else:
-            self.display.append("❌ Controller non disponibile.")
 
     @Slot(str)
     def on_training_complete(self, result):
-        self.display.append(f"\n✅ TRAINING COMPLETATO:\n{result}")
-        # Auto-salvataggio opzionale
-        self.save_knowledge(auto=True)
+        self.display.append(f"\n✅ Training Completato:\n{result}")
+        self.save_knowledge(result)
 
-    def save_knowledge(self, auto=False):
-        content = self.display.toPlainText()
-        if not content: return
-        
+    def save_knowledge(self, content):
         try:
-            timestamp = datetime.now().isoformat()
-            entry = {"timestamp": timestamp, "log": content}
-            
-            # Leggi esistente
+            entry = {"timestamp": datetime.now().isoformat(), "log": content}
             data = []
             if os.path.exists(TRAINING_DATA_FILE):
                 with open(TRAINING_DATA_FILE, "r") as f:
                     try: data = json.load(f)
                     except: pass
-            
             data.append(entry)
-            
-            # Scrivi
             os.makedirs(os.path.dirname(TRAINING_DATA_FILE), exist_ok=True)
-            with open(TRAINING_DATA_FILE, "w") as f:
-                json.dump(data, f, indent=4)
-                
-            if not auto: QMessageBox.information(self, "Salvato", "Conoscenza salvata in learned_patterns.json")
-            
-        except Exception as e:
-            if not auto: QMessageBox.critical(self, "Errore", f"Errore salvataggio: {e}")
-
+            with open(TRAINING_DATA_FILE, "w") as f: json.dump(data, f, indent=4)
+        except Exception as e: _logger.error(f"Errore salvataggio training: {e}")
 
 # ============================================================================
-#  5. FACTORY TAB (CONNECTED TO CONTROLLER)
+#  5. FACTORY TAB
 # ============================================================================
 class RobotFactoryTab(QWidget):
     def __init__(self, controller):
@@ -393,51 +328,47 @@ class RobotFactoryTab(QWidget):
 
     def init_ui(self):
         layout = QHBoxLayout(self)
-        
-        # Lista Robot
         left_panel = QVBoxLayout()
         self.list_widget = QListWidget()
         self.list_widget.currentItemChanged.connect(self.load_robot)
-        left_panel.addWidget(QLabel("🤖 I TUOI AGENTI"))
+        left_panel.addWidget(QLabel("🤖 AGENTI"))
         left_panel.addWidget(self.list_widget)
-        
         btn_add = QPushButton("+ Crea Nuovo")
         btn_add.clicked.connect(self.create_robot)
         left_panel.addWidget(btn_add)
         
-        # Dettagli Robot
-        self.right_panel = QGroupBox("Dettagli Agente")
+        self.right_panel = QGroupBox("Dettagli")
         self.right_panel.setVisible(False)
         form = QFormLayout(self.right_panel)
-        
         self.inp_name = QLineEdit()
         self.inp_tg = QLineEdit()
-        self.inp_tg.setPlaceholderText("Es: @MioCanaleSegnali")
-        self.btn_active = QPushButton("ATTIVA QUESTO ROBOT")
+        self.inp_tg.setPlaceholderText("@Canale")
+        self.inp_site = QComboBox() # NUOVO: SELETTORE SITO
+        self.inp_site.addItems(["bet365", "goldbet", "planetwin365"])
+        
+        self.btn_active = QPushButton("ATTIVA")
         self.btn_active.setCheckable(True)
         self.btn_active.clicked.connect(self.toggle_active)
         
         form.addRow("Nome:", self.inp_name)
-        form.addRow("Canale Telegram:", self.inp_tg)
+        form.addRow("Telegram:", self.inp_tg)
+        form.addRow("Sito Target:", self.inp_site) # NUOVO
         form.addRow(self.btn_active)
-        
-        btn_save = QPushButton("Salva Modifiche")
+        btn_save = QPushButton("Salva")
         btn_save.clicked.connect(self.save_robot)
         form.addRow(btn_save)
 
         layout.addLayout(left_panel, 1)
         layout.addWidget(self.right_panel, 2)
-        
         self.refresh_list()
 
     def refresh_list(self):
         self.list_widget.clear()
-        for name in self.robots_data:
-            self.list_widget.addItem(name)
+        for name in self.robots_data: self.list_widget.addItem(name)
 
     def create_robot(self):
-        name = f"Agent_{len(self.robots_data)+1}"
-        self.robots_data[name] = {"telegram": "", "active": False}
+        name = f"Bot_{len(self.robots_data)+1}"
+        self.robots_data[name] = {"telegram": "", "active": False, "target_site": "bet365"}
         self.save_data()
         self.refresh_list()
 
@@ -447,61 +378,47 @@ class RobotFactoryTab(QWidget):
         name = item.text()
         self.current_robot = name
         data = self.robots_data[name]
-        
         self.inp_name.setText(name)
         self.inp_tg.setText(data.get("telegram", ""))
+        idx = self.inp_site.findText(data.get("target_site", "bet365"))
+        if idx >= 0: self.inp_site.setCurrentIndex(idx)
         self.update_active_btn(data.get("active", False))
 
     def save_robot(self):
         if not self.current_robot: return
-        # Gestione rinomina
         new_name = self.inp_name.text()
         old_name = self.current_robot
-        
         data = self.robots_data[old_name]
         data["telegram"] = self.inp_tg.text()
+        data["target_site"] = self.inp_site.currentText() # SALVA IL SITO
         
         if new_name != old_name:
             self.robots_data[new_name] = data
             del self.robots_data[old_name]
             self.current_robot = new_name
-            
         self.save_data()
         self.refresh_list()
-        QMessageBox.information(self, "Salvataggio", "Agente salvato.")
+        QMessageBox.information(self, "Info", "Salvato.")
 
     def update_active_btn(self, active):
-        if active:
-            self.btn_active.setText("🟢 AGENTE ATTIVO (In Controllo)")
-            self.btn_active.setStyleSheet("background-color: #2e7d32; color: white;")
-            self.btn_active.setChecked(True)
-        else:
-            self.btn_active.setText("🔴 AGENTE INATTIVO")
-            self.btn_active.setStyleSheet("background-color: #c62828; color: white;")
-            self.btn_active.setChecked(False)
+        self.btn_active.setText("🟢 ATTIVO" if active else "🔴 INATTIVO")
+        self.btn_active.setChecked(active)
 
     def toggle_active(self):
-        # Logica: Solo un robot attivo alla volta (per ora)
         is_active = self.btn_active.isChecked()
-        
-        # Disattiva tutti gli altri
-        for name in self.robots_data:
-            self.robots_data[name]["active"] = False
-            
+        for name in self.robots_data: self.robots_data[name]["active"] = False
         self.robots_data[self.current_robot]["active"] = is_active
         self.update_active_btn(is_active)
         self.save_data()
         
         if is_active and self.controller:
-            # 🔥 INIEZIONE LOGICA NEL CORE 🔥
             data = self.robots_data[self.current_robot]
             data["name"] = self.current_robot
             self.controller.load_robot_profile(data)
-            QMessageBox.information(self, "Attivazione", f"{self.current_robot} ora controlla il sistema!")
-
+            QMessageBox.information(self, "OK", f"{self.current_robot} Attivato su {data.get('target_site')}!")
 
 # ============================================================================
-#  MAIN WINDOW (ASSEMBLE EVERYTHING)
+#  MAIN WINDOW
 # ============================================================================
 class MainWindow(QMainWindow):
     def __init__(self, vision=None, telegram_learner=None, rpa_healer=None,
@@ -509,24 +426,20 @@ class MainWindow(QMainWindow):
                  controller=None):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("SuperAgent V5.5 - SENTINEL CONTROL PANEL")
+        self.setWindowTitle("SuperAgent V5.5 Sentinel")
         self.resize(1100, 750)
         self.setStyleSheet(STYLE_SHEET)
-
-        # Setup Logger GUI
         self.logger_engine, self.qt_handler = setup_logger()
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        # --- CREAZIONE TAB REALI ---
         self.factory = RobotFactoryTab(controller)
         self.supervisor = SupervisorTab(controller, self.factory)
         self.stats_tab = StatsTab(controller)
         self.money_tab = MoneyTab(controller)
         self.trainer_tab = TrainerTab(controller, logger)
         
-        # Tab Mapping e Telegram (dal file importato o stub)
         try:
             from ui.mapping_tab import MappingTab
             from ui.telegram_tab import TelegramTab
@@ -536,10 +449,6 @@ class MainWindow(QMainWindow):
             self.mapping_tab = QWidget()
             self.telegram_tab = QWidget()
 
-        # Tab RPA (Passiva)
-        self.rpa_tab = QWidget() # Placeholder per RPA Monitor esistente
-
-        # --- AGGIUNTA TAB ORDINE LOGICO ---
         self.tabs.addTab(self.supervisor, "📡 SUPERVISOR")
         self.tabs.addTab(self.factory, "🤖 FACTORY")
         self.tabs.addTab(self.stats_tab, "📊 STATS")
@@ -548,10 +457,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.mapping_tab, "🗺️ MAPPING")
         self.tabs.addTab(self.trainer_tab, "🧠 TRAINER")
         
-        # Collegamento Log
         if self.qt_handler:
             self.qt_handler.log_signal.connect(self.update_gui_log)
-
         if self.controller:
             self.controller.training_complete.connect(self.trainer_tab.on_training_complete)
 
@@ -561,19 +468,9 @@ class MainWindow(QMainWindow):
             color = "#4CAF50" if level == "INFO" else "#F44336" if level in ["ERROR", "CRITICAL"] else "#FFC107"
             self.supervisor.log.append(f"<span style='color:{color}'>[{datetime.now().strftime('%H:%M:%S')}] {msg}</span>")
 
-    # ✅ METODO closeEvent AGGIUNTO PER SHUTDOWN PULITO
     def closeEvent(self, event):
-        # 1. Spegnimento Controller (Telegram, Browser, Thread)
-        if self.controller:
-            self.controller.shutdown()
-            
-        # 2. Spegnimento Worker RPA (UI)
-        if hasattr(self, 'rpa_worker') and self.rpa_worker:
-            self.rpa_worker.stop()
-            self.rpa_worker.wait(2000)
-            
+        if self.controller: self.controller.shutdown()
         super().closeEvent(event)
-
 
 # ============================================================================
 #  GLOBAL SPY
@@ -588,9 +485,6 @@ class GlobalSpy(QObject):
             except: pass
         return super().eventFilter(obj, event)
 
-# ============================================================================
-#  FUNZIONE TEMA SCURO (MANCANTE NEL VECCHIO CODICE) ✅
-# ============================================================================
 def apply_dark_theme(app):
     p = QPalette()
     p.setColor(QPalette.Window, QColor(53, 53, 53))
@@ -608,9 +502,6 @@ def apply_dark_theme(app):
     p.setColor(QPalette.HighlightedText, Qt.black)
     app.setPalette(p)
 
-# ============================================================================
-#  RUN APP
-# ============================================================================
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
             logger=None, executor=None, config=None, monitor=None,
             controller=None):
@@ -621,13 +512,21 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
     
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    
-    # Applico il tema scuro qui, ora che la funzione è definita
     apply_dark_theme(app)
     
     try:
         from core.logger import setup_logger
         logger_engine, _ = setup_logger()
+        
+        # --- FIX CRUCIALE LOG VUOTI ---
+        # Aggancia forzatamente il file handler locale al logger del motore
+        global _fh
+        if '_fh' in globals() and _fh:
+            # Rimuove duplicati se necessario
+            if _fh not in logger_engine.handlers:
+                logger_engine.addHandler(_fh)
+        # ------------------------------
+        
     except:
         logger_engine = logging.getLogger("Fallback")
 
