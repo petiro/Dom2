@@ -2,7 +2,7 @@ import sys
 import os
 import logging
 import threading
-import multiprocessing  # <--- IMPORTANTE
+import multiprocessing
 
 # PySide6 imports
 from PySide6.QtWidgets import QApplication
@@ -48,16 +48,16 @@ def main():
         trainer = AITrainerEngine()
         controller.set_trainer(trainer)
 
-        # Istanza Monitor (Salute)
-        monitor = HealthMonitor()
+        # Istanza Monitor (Salute) - ✅ FIX: Passiamo logger
+        monitor = HealthMonitor(logger)
         controller.set_monitor(monitor)
 
         # Istanza Watchdog (Sicurezza)
         watchdog = SystemWatchdog()
         controller.set_watchdog(watchdog)
         
-        # Parser Comandi
-        parser = CommandParser()
+        # Parser Comandi - ✅ FIX: Passiamo logger
+        parser = CommandParser(logger)
         controller.set_command_parser(parser)
 
         # Avvio Sistema (Boot Async)
