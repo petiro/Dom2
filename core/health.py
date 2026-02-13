@@ -2,12 +2,13 @@
 HealthMonitor — Centralised Immortality Layer for SuperAgent H24.
 
 Manages:
-  - Heartbeat / freeze detection (5 min timeout → hard restart)
+  - Heartbeat / freeze detection (5 min timeout -> hard restart)
   - Browser health check + auto-recovery
-  - Memory guard with averaged samples (>1.5 GB avg → restart)
+  - Memory guard with averaged samples (>1.5 GB avg -> restart)
   - Scheduled maintenance restart (04:00 every day)
   - Internet fail-safe (sleep instead of restart when offline)
   - Double-restart race-condition lock
+  - SystemWatchdog (Qt based) per integrazione GUI
 """
 import os
 import sys
@@ -16,7 +17,58 @@ import socket
 import threading
 from datetime import datetime
 
+# Import Qt per il Watchdog GUI
+try:
+    from PySide6.QtCore import QObject, Signal, QTimer
+    import psutil
+except ImportError:
+    # Mock per ambienti senza GUI/psutil (CI/CD)
+    class QObject: pass
+    def Signal(*args): pass
+    class QTimer: pass
 
+# ============================================================================
+#  CLASS 1: SystemWatchdog (Qt/GUI Integration)
+#  Usato dal Controller per gestire eventi senza killare il processo
+# ============================================================================
+class SystemWatchdog(QObject):
+    """
+    Watchdog specifico per la GUI (Qt) che comunica col Controller via Signals.
+    Monitora RAM e processi in modo 'gentile'.
+    """
+    browser_died = Signal()
+    resource_warning = Signal(str)
+    request_recycle = Signal()
+
+    def __init__(self, interval_ms=30000):
+        super().__init__()
+        # Timer interno Qt che gira nel thread principale
+        self._timer = None
+        if 'QTimer' in globals() and hasattr(QTimer, 'timeout'):
+            self._timer = QTimer()
+            self._timer.timeout.connect(self._check_health)
+            self._timer.start(interval_ms)
+
+    def _check_health(self):
+        """Controllo periodico risorse."""
+        try:
+            # 1. Controllo Memoria Processo Corrente
+            process = psutil.Process(os.getpid())
+            mem_mb = process.memory_info().rss / (1024 * 1024)
+            
+            if mem_mb > 1200: # Warning a 1.2GB
+                self.resource_warning.emit(f"High RAM usage: {mem_mb:.0f} MB")
+            
+            if mem_mb > 1800: # Richiesta Riciclo a 1.8GB
+                self.request_recycle.emit()
+
+        except Exception:
+            pass
+
+# ============================================================================
+#  CLASS 2: HealthMonitor (Legacy/Thread based)
+#  Usato per hard-restart in caso di freeze totale
+# ============================================================================
 class HealthMonitor:
     """Central fault-tolerance coordinator.
 
@@ -143,8 +195,9 @@ class HealthMonitor:
         """Keep `main.last_heartbeat` in sync for backward compatibility."""
         while not self._stop_event.is_set():
             try:
-                import main as _m
-                _m.last_heartbeat = self.last_heartbeat
+                # import main as _m
+                # _m.last_heartbeat = self.last_heartbeat
+                pass # Disabilitato per evitare circular imports in V5.5
             except Exception:
                 pass
             time.sleep(10)
