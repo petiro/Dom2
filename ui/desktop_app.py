@@ -241,8 +241,6 @@ class MoneyTab(QWidget):
                     self.spin_bankroll.setValue(data.get("bankroll", 100))
                     self.combo_strat.setCurrentIndex(data.get("strategy_index", 0))
                     self.spin_stake.setValue(data.get("stake", 1))
-                    # Applica subito silenziosamente
-                    # self.apply_settings() # Decommenta se vuoi applicare auto al load
             except: pass
 
 
@@ -562,6 +560,19 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'supervisor'):
             color = "#4CAF50" if level == "INFO" else "#F44336" if level in ["ERROR", "CRITICAL"] else "#FFC107"
             self.supervisor.log.append(f"<span style='color:{color}'>[{datetime.now().strftime('%H:%M:%S')}] {msg}</span>")
+
+    # ✅ METODO closeEvent AGGIUNTO PER SHUTDOWN PULITO
+    def closeEvent(self, event):
+        # 1. Spegnimento Controller (Telegram, Browser, Thread)
+        if self.controller:
+            self.controller.shutdown()
+            
+        # 2. Spegnimento Worker RPA (UI)
+        if hasattr(self, 'rpa_worker') and self.rpa_worker:
+            self.rpa_worker.stop()
+            self.rpa_worker.wait(2000)
+            
+        super().closeEvent(event)
 
 
 # ============================================================================
