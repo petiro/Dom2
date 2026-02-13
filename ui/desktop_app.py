@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.5 - SENTINEL EDITION (LOGGING FIXED)
+SuperAgent Desktop App V5.5 - SENTINEL EDITION (SCROLL & INPUTS FIXED)
 """
 import os
 import sys
@@ -59,8 +59,8 @@ API_FILE = os.path.join(_ROOT_DIR, "config", "api_config.json")
 TRAINING_DATA_FILE = os.path.join(_ROOT_DIR, "data", "learned_patterns.json")
 LOG_FILE = os.path.join(LOG_DIR, "superagent_v5.log")
 
-# --- SETUP GLOBAL FILE HANDLER (CRUCIALE PER I LOG) ---
-_fh = None # Global placeholder
+# --- SETUP GLOBAL FILE HANDLER ---
+_fh = None
 _logger = logging.getLogger("desktop_app")
 
 try:
@@ -98,7 +98,7 @@ QTextEdit { background-color: #1e1e1e; border: 1px solid #333; font-family: Cons
 """
 
 # ============================================================================
-#  1. STATS TAB (REALE)
+#  1. STATS TAB (REALE + SCROLL)
 # ============================================================================
 class StatsTab(QWidget):
     def __init__(self, controller=None):
@@ -110,7 +110,16 @@ class StatsTab(QWidget):
         self.timer.start(5000)
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        
+        # Scroll Wrapper
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
+        # Content
         kpi_layout = QHBoxLayout()
         self.lbl_bets = self._create_card("TOTAL BETS", "0")
         self.lbl_placed = self._create_card("PLACED", "0", "#2196F3")
@@ -121,14 +130,21 @@ class StatsTab(QWidget):
         kpi_layout.addWidget(self.lbl_profit)
         kpi_layout.addWidget(self.lbl_winrate)
         layout.addLayout(kpi_layout)
+        
         layout.addWidget(QLabel("📜 Storico Operazioni"))
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Ora", "Match", "Mercato", "Stake", "Esito"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setMinimumHeight(300)
         layout.addWidget(self.table)
+        
         btn_ref = QPushButton("Aggiorna Ora")
         btn_ref.clicked.connect(self.refresh_stats)
         layout.addWidget(btn_ref)
+        
+        layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
 
     def _create_card(self, title, val, color="#e0e0e0"):
         frame = QFrame()
@@ -164,7 +180,7 @@ class StatsTab(QWidget):
             self.table.setItem(i, 4, item_res)
 
 # ============================================================================
-#  2. MONEY TAB (PERSISTENTE)
+#  2. MONEY TAB (PERSISTENTE + SCROLL)
 # ============================================================================
 class MoneyTab(QWidget):
     def __init__(self, controller=None):
@@ -175,7 +191,13 @@ class MoneyTab(QWidget):
         self.load_settings()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
         gb_bank = QGroupBox("💰 Gestione Bankroll (Persistente)")
         form = QFormLayout(gb_bank)
         self.spin_bankroll = QDoubleSpinBox()
@@ -192,8 +214,11 @@ class MoneyTab(QWidget):
         btn_apply.clicked.connect(self.apply_settings)
         btn_apply.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
         form.addRow(btn_apply)
+        
         layout.addWidget(gb_bank)
         layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
 
     def apply_settings(self):
         if not self.controller: return
@@ -227,7 +252,7 @@ class MoneyTab(QWidget):
             except: pass
 
 # ============================================================================
-#  3. SUPERVISOR TAB
+#  3. SUPERVISOR TAB (+ SCROLL)
 # ============================================================================
 class SupervisorTab(QWidget):
     def __init__(self, controller, factory):
@@ -237,7 +262,13 @@ class SupervisorTab(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
         header = QFrame()
         header.setStyleSheet("background-color: #252526; padding: 10px; border-radius: 5px;")
         h_lay = QHBoxLayout(header)
@@ -251,10 +282,16 @@ class SupervisorTab(QWidget):
         h_lay.addStretch()
         h_lay.addWidget(btn_kill)
         layout.addWidget(header)
+        
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setStyleSheet("background-color: #000; color: #0f0; font-family: 'Consolas'; font-size: 11px;")
+        self.log.setMinimumHeight(400)
         layout.addWidget(self.log)
+        
+        layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
 
     def kill_system(self):
         if QMessageBox.question(self, "STOP", "SEI SICURO?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
@@ -265,7 +302,7 @@ class SupervisorTab(QWidget):
             self.factory.save_data()
 
 # ============================================================================
-#  4. TRAINER TAB
+#  4. TRAINER TAB (+ SCROLL)
 # ============================================================================
 class TrainerTab(QWidget):
     def __init__(self, controller=None, logger=None):
@@ -275,14 +312,26 @@ class TrainerTab(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
         self.display = QTextEdit()
         self.display.setReadOnly(True)
         self.display.setPlaceholderText("Training output...")
+        self.display.setMinimumHeight(300)
         layout.addWidget(self.display)
+        
         btn_train = QPushButton("🧠 Esegui Training Step")
         btn_train.clicked.connect(self.run_training)
         layout.addWidget(btn_train)
+        
+        layout.addStretch()
+        scroll.setWidget(content)
+        main_layout.addWidget(scroll)
         
     def run_training(self):
         if self.controller:
@@ -308,7 +357,7 @@ class TrainerTab(QWidget):
         except Exception as e: _logger.error(f"Errore salvataggio training: {e}")
 
 # ============================================================================
-#  5. FACTORY TAB
+#  5. FACTORY TAB (+ SCROLL)
 # ============================================================================
 class RobotFactoryTab(QWidget):
     def __init__(self, controller):
@@ -327,23 +376,33 @@ class RobotFactoryTab(QWidget):
         with open(ROBOTS_FILE, "w") as f: json.dump(self.robots_data, f, indent=4)
 
     def init_ui(self):
-        layout = QHBoxLayout(self)
-        left_panel = QVBoxLayout()
+        main_layout = QHBoxLayout(self)
+        
+        # Lista Robot (Sinistra) - No Scroll needed for list usually, but panel yes
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
         self.list_widget = QListWidget()
         self.list_widget.currentItemChanged.connect(self.load_robot)
-        left_panel.addWidget(QLabel("🤖 AGENTI"))
-        left_panel.addWidget(self.list_widget)
+        left_layout.addWidget(QLabel("🤖 AGENTI"))
+        left_layout.addWidget(self.list_widget)
         btn_add = QPushButton("+ Crea Nuovo")
         btn_add.clicked.connect(self.create_robot)
-        left_panel.addWidget(btn_add)
+        left_layout.addWidget(btn_add)
         
-        self.right_panel = QGroupBox("Dettagli")
-        self.right_panel.setVisible(False)
-        form = QFormLayout(self.right_panel)
+        # Dettagli (Destra) - SCROLLABLE
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        right_content = QWidget()
+        right_layout = QVBoxLayout(right_content)
+
+        self.right_group = QGroupBox("Dettagli")
+        self.right_group.setVisible(False)
+        form = QFormLayout(self.right_group)
         self.inp_name = QLineEdit()
         self.inp_tg = QLineEdit()
         self.inp_tg.setPlaceholderText("@Canale")
-        self.inp_site = QComboBox() # NUOVO: SELETTORE SITO
+        self.inp_site = QComboBox() 
         self.inp_site.addItems(["bet365", "goldbet", "planetwin365"])
         
         self.btn_active = QPushButton("ATTIVA")
@@ -352,14 +411,18 @@ class RobotFactoryTab(QWidget):
         
         form.addRow("Nome:", self.inp_name)
         form.addRow("Telegram:", self.inp_tg)
-        form.addRow("Sito Target:", self.inp_site) # NUOVO
+        form.addRow("Sito Target:", self.inp_site)
         form.addRow(self.btn_active)
         btn_save = QPushButton("Salva")
         btn_save.clicked.connect(self.save_robot)
         form.addRow(btn_save)
+        
+        right_layout.addWidget(self.right_group)
+        right_layout.addStretch()
+        scroll.setWidget(right_content)
 
-        layout.addLayout(left_panel, 1)
-        layout.addWidget(self.right_panel, 2)
+        main_layout.addWidget(left_widget, 1)
+        main_layout.addWidget(scroll, 2)
         self.refresh_list()
 
     def refresh_list(self):
@@ -374,7 +437,7 @@ class RobotFactoryTab(QWidget):
 
     def load_robot(self, item, prev):
         if not item: return
-        self.right_panel.setVisible(True)
+        self.right_group.setVisible(True)
         name = item.text()
         self.current_robot = name
         data = self.robots_data[name]
@@ -390,7 +453,7 @@ class RobotFactoryTab(QWidget):
         old_name = self.current_robot
         data = self.robots_data[old_name]
         data["telegram"] = self.inp_tg.text()
-        data["target_site"] = self.inp_site.currentText() # SALVA IL SITO
+        data["target_site"] = self.inp_site.currentText() 
         
         if new_name != old_name:
             self.robots_data[new_name] = data
@@ -517,16 +580,10 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
     try:
         from core.logger import setup_logger
         logger_engine, _ = setup_logger()
-        
-        # --- FIX CRUCIALE LOG VUOTI ---
-        # Aggancia forzatamente il file handler locale al logger del motore
         global _fh
         if '_fh' in globals() and _fh:
-            # Rimuove duplicati se necessario
             if _fh not in logger_engine.handlers:
                 logger_engine.addHandler(_fh)
-        # ------------------------------
-        
     except:
         logger_engine = logging.getLogger("Fallback")
 
