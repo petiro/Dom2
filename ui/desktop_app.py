@@ -19,10 +19,11 @@ from PySide6.QtWidgets import (
     QTextEdit, QPushButton, QLabel, QLineEdit, QGroupBox, QTabWidget,
     QTableWidget, QTableWidgetItem, QCheckBox, QMessageBox, QSpinBox,
     QProgressBar, QComboBox, QFormLayout, QSplitter, QDoubleSpinBox,
-    QListWidget, QListWidgetItem, QFrame, QDialog, QDialogButtonBox
+    QListWidget, QListWidgetItem, QFrame, QDialog, QDialogButtonBox,
+    QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize
-from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon
+from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon, QScreen
 
 # Gestione import opzionali per evitare crash immediati se mancano moduli
 try:
@@ -341,6 +342,7 @@ class RobotFactoryTab(QWidget):
         self.current_robot_name = None
         self.robots_data = _load_json(ROBOTS_FILE)
         self.api_key = _load_json(API_FILE).get("key", "")
+        self._is_busy = False  # --- FIX: SEMAFORO DI INPUT LOCK ---
         self.init_ui()
 
     def init_ui(self):
@@ -472,6 +474,9 @@ class RobotFactoryTab(QWidget):
             self.list.addItem(f"{icon} {name}")
 
     def create_robot(self):
+        # --- FIX: Evita doppio click ---
+        if self._is_busy: return
+        
         dlg = CustomInputDialog("Nuovo Agente", "Nome del Robot:", self)
         if dlg.exec():
             name = dlg.get_text()
@@ -548,11 +553,17 @@ class RobotFactoryTab(QWidget):
 
     # --- Chat ---
     def set_busy(self, busy):
+        self._is_busy = busy # --- FIX: Imposta stato interno
         self.inp.setEnabled(not busy)
         self.btn_send.setEnabled(not busy)
         self.btn_send.setText("..." if busy else "Invia")
 
     def send_msg(self):
+        # --- FIX: Controllo stato Busy ---
+        if self._is_busy:
+            _logger.warning("Tentativo invio doppio bloccato.")
+            return
+            
         txt = self.inp.text().strip()
         if not txt:
             return
@@ -848,20 +859,33 @@ class TrainerTab(QWidget):
     def __init__(self, controller=None, logger=None, parent=None):
         super().__init__(parent)
         self.controller = controller
+        self._is_busy = False # --- FIX: Semaforo locale
+        
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("AI Trainer"))
         self.chat_display = QTextEdit()
         layout.addWidget(self.chat_display)
+        
         self.train_btn = QPushButton("Train Step")
         self.train_btn.clicked.connect(self._on_train_step)
         layout.addWidget(self.train_btn)
 
     def _on_train_step(self):
+        # --- FIX: Controllo busy ---
+        if self._is_busy:
+            return
+            
         if self.controller:
+            self._is_busy = True
+            self.train_btn.setEnabled(False)
+            self.train_btn.setText("Training...")
             self.controller.request_training()
 
     @Slot(str)
     def on_training_complete(self, res):
+        self._is_busy = False
+        self.train_btn.setEnabled(True)
+        self.train_btn.setText("Train Step")
         self.chat_display.append(f"Result: {res}")
 
 
@@ -881,6 +905,12 @@ class MainWindow(QMainWindow):
         # --- FIX RISOLUZIONE (Centra e ridimensiona in base al config) ---
         target_width = config.get("ui", {}).get("window_size", [1280, 800])[0]
         target_height = config.get("ui", {}).get("window_size", [1280, 800])[1]
+        
+        # --- FIX: Ridimensiona in base allo schermo disponibile ---
+        screen = QApplication.primaryScreen().availableGeometry()
+        if target_width > screen.width(): target_width = int(screen.width() * 0.9)
+        if target_height > screen.height(): target_height = int(screen.height() * 0.9)
+        
         self.resize(target_width, target_height)
         self.center_window()
         # -----------------------------------------------------------------
