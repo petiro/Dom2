@@ -541,24 +541,30 @@ class SuperAgentController(QObject):
     #  Factory Logic (Caricamento Profilo Robot) ✅ FIX
     # ------------------------------------------------------------------
     def load_robot_profile(self, robot_data: dict):
-        """Attiva un robot specifico: cambia canali Telegram e Prompts."""
+        """Attiva un robot specifico: cambia Telegram e SELETTORI."""
         self.logger.info(f"🤖 Attivazione Profilo Robot: {robot_data.get('name', 'Unknown')}")
         
-        # 1. Aggiorna configurazione Telegram
+        # 1. Telegram
         tg_channel = robot_data.get("telegram")
         if tg_channel:
-            # Aggiorna la config corrente e riavvia il worker
             if "telegram" not in self.current_config:
                 self.current_config["telegram"] = {}
             self.current_config["telegram"]["selected_chats"] = [tg_channel]
             self.connect_telegram(self.current_config["telegram"])
             self.logger.info(f"📡 Canale Telegram impostato su: {tg_channel}")
 
-        # 2. Gestione Target Site (Cambio Contesto Browser)
+        # 2. Gestione Target Site (Cambio Selettori) -> NUOVO CODICE
         target_site = robot_data.get("target_site") 
         if target_site:
-             self.logger.info(f"🌍 Cambio contesto browser per: {target_site}")
-             # Qui caricheresti i selettori specifici: self.executor.load_selectors(...)
+             yaml_file = f"{target_site}.yaml"
+             with self._executor_lock:
+                 if self.executor:
+                     self.executor.set_selector_file(yaml_file)
+                     self.logger.info(f"🌍 Cambio contesto browser per: {target_site} -> {yaml_file}")
+        else:
+             # Fallback al default se non specificato
+             if self.executor:
+                 self.executor.set_selector_file("selectors.yaml")
         
         self.safe_emit(self.log_message, f"Agente {robot_data.get('name')} ATTIVO")
 
