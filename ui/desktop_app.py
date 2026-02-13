@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QFrame, QDialog, QDialogButtonBox,
     QSizePolicy, QScrollArea
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize, QObject, QEvent
 from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon, QScreen
 
 # --- INTEGRAZIONE LOGGER ---
@@ -847,6 +847,43 @@ def apply_dark_theme(app):
     app.setPalette(p)
 
 
+# ============================================================================
+#  GLOBAL SPY (LOG DI OGNI CLICK)
+# ============================================================================
+class GlobalSpy(QObject):
+    """Intercetta ogni click e tasto nell'applicazione per i log"""
+    def __init__(self, logger):
+        super().__init__()
+        self.logger = logger
+
+    def eventFilter(self, obj, event):
+        # Intercetta Click del Mouse
+        if event.type() == QEvent.MouseButtonPress:
+            try:
+                # Cerca di capire cosa è stato cliccato
+                widget_name = obj.objectName() or obj.metaObject().className()
+                text = ""
+                if hasattr(obj, "text") and callable(obj.text):
+                    text = f" ('{obj.text()}')"
+                
+                self.logger.info(f"🖱️ CLICK UTENTE su: {widget_name}{text}")
+            except:
+                pass # Non bloccare l'app se il log fallisce
+        
+        # Intercetta Pressione Tasti (es. Invio)
+        elif event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+                self.logger.info("⌨️ TASTO INVIO PREMUTO")
+            elif event.key() == Qt.Key_Escape:
+                self.logger.info("⌨️ TASTO ESC PREMUTO")
+
+        # Lascia passare l'evento (altrimenti l'app si blocca)
+        return super().eventFilter(obj, event)
+
+
+# ============================================================================
+#  RUN APP
+# ============================================================================
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
             logger=None, executor=None, config=None, monitor=None,
             controller=None):
@@ -873,6 +910,18 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     apply_dark_theme(app)
+    
+    # --- SETUP LOGGER DI AVVIO ---
+    try:
+        from core.logger import setup_logger
+        logger_engine, _ = setup_logger()
+    except:
+        logger_engine = logging.getLogger("Fallback")
+
+    # --- 🕵️ INSTALLAZIONE SPIA GLOBALE ---
+    spy = GlobalSpy(logger_engine)
+    app.installEventFilter(spy)
+    # -------------------------------------
     
     if config is None:
         config_path = os.path.join(_ROOT_DIR, "config", "config.yaml")
