@@ -145,7 +145,7 @@ class StatsTab(QWidget):
         stats = self.controller.get_stats()
         history = self.controller.get_bet_history()
 
-        # 2. Aggiorna KPI (hacky object access to children labels)
+        # 2. Aggiorna KPI
         self.lbl_bets.findChild(QLabel, "").setText(str(stats["bets_total"])) 
         # Fix rapido per accedere al valore corretto:
         self.lbl_bets.layout().itemAt(1).widget().setText(str(stats["bets_total"]))
@@ -177,7 +177,7 @@ class MoneyTab(QWidget):
         self.controller = controller
         self.config_file = os.path.join(get_project_root(), "config", "money_config.json")
         self.init_ui()
-        self.load_settings() # <--- Carica all'avvio
+        self.load_settings()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -589,6 +589,26 @@ class GlobalSpy(QObject):
         return super().eventFilter(obj, event)
 
 # ============================================================================
+#  FUNZIONE TEMA SCURO (MANCANTE NEL VECCHIO CODICE) ✅
+# ============================================================================
+def apply_dark_theme(app):
+    p = QPalette()
+    p.setColor(QPalette.Window, QColor(53, 53, 53))
+    p.setColor(QPalette.WindowText, Qt.white)
+    p.setColor(QPalette.Base, QColor(25, 25, 25))
+    p.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    p.setColor(QPalette.ToolTipBase, Qt.white)
+    p.setColor(QPalette.ToolTipText, Qt.white)
+    p.setColor(QPalette.Text, Qt.white)
+    p.setColor(QPalette.Button, QColor(53, 53, 53))
+    p.setColor(QPalette.ButtonText, Qt.white)
+    p.setColor(QPalette.BrightText, Qt.red)
+    p.setColor(QPalette.Link, QColor(42, 130, 218))
+    p.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    p.setColor(QPalette.HighlightedText, Qt.black)
+    app.setPalette(p)
+
+# ============================================================================
 #  RUN APP
 # ============================================================================
 def run_app(vision=None, telegram_learner=None, rpa_healer=None,
@@ -601,6 +621,9 @@ def run_app(vision=None, telegram_learner=None, rpa_healer=None,
     
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    
+    # Applico il tema scuro qui, ora che la funzione è definita
+    apply_dark_theme(app)
     
     try:
         from core.logger import setup_logger
