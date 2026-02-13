@@ -26,6 +26,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QSize
 from PySide6.QtGui import QFont, QColor, QPalette, QTextCursor, QIcon, QScreen
 
+# --- INTEGRAZIONE LOGGER ---
+try:
+    from core.logger import setup_logger
+except ImportError:
+    # Fallback se il file core/logger.py non esiste ancora
+    def setup_logger():
+        return logging.getLogger("Fallback"), None
+
 # Gestione import opzionali per evitare crash immediati se mancano moduli
 try:
     from core.money_management import RoserpinaTable
@@ -564,8 +572,8 @@ class SupervisorTab(QWidget):
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(100)
-        self.log.setStyleSheet("background:black; color:#10a37f; font-family:monospace;")
+        self.log.setMaximumHeight(200)
+        self.log.setStyleSheet("background:black; color:#10a37f; font-family:monospace; padding:5px;")
         lay.addWidget(self.log)
 
     def scan(self):
@@ -758,6 +766,12 @@ class MainWindow(QMainWindow):
         # Tabs
         self.factory = RobotFactoryTab(controller)
         self.supervisor = SupervisorTab(controller, self.factory)
+        
+        # --- LOGGER SETUP & CONNECTION ---
+        self.logger_engine, self.qt_handler = setup_logger()
+        if self.qt_handler:
+            self.qt_handler.log_signal.connect(self.update_gui_log)
+        
         self.tabs.addTab(self.factory, "Factory")
         self.tabs.addTab(self.supervisor, "SUPERVISOR")
         self.rpa_tab = RPAMonitorTab(executor, self.rpa_worker, logger)
@@ -781,6 +795,28 @@ class MainWindow(QMainWindow):
 
         if self.controller:
             self.controller.training_complete.connect(self.trainer_tab.on_training_complete)
+        
+        # Log di avvio nella GUI
+        self.logger_engine.info("Sistema avviato correttamente.")
+
+    @Slot(str, str)
+    def update_gui_log(self, level, msg):
+        """Riceve i log da qualsiasi thread e li mostra nel Supervisor"""
+        if not hasattr(self, 'supervisor') or not self.supervisor:
+            return
+            
+        color = "#10a37f" # Verde default
+        if level in ["ERROR", "CRITICAL"]:
+            color = "#ef4444" # Rosso
+        elif level == "WARNING":
+            color = "#eab308" # Giallo/Arancio
+        
+        html = f"<div style='color:{color}; margin-bottom:2px;'><span style='color:#666;'>[{datetime.now().strftime('%H:%M:%S')}]</span> <b>{level}:</b> {msg}</div>"
+        
+        self.supervisor.log.append(html)
+        # Scroll automatico
+        scrollbar = self.supervisor.log.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def closeEvent(self, event):
         if self.rpa_worker:
