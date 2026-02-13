@@ -1,57 +1,78 @@
-import logging
+import sys
 import os
-from queue import Queue
-from threading import Thread
+import logging
+import multiprocessing
 
-from core_loop import CoreLoop
-from core_services import CoreServices
-from ui.desktop_app import run_v6_app
+# PySide6 imports
+from PySide6.QtWidgets import QApplication
+from ui.desktop_app import run_app  # Usa la funzione corretta da desktop_app
 
-logger = logging.getLogger("dom2_v6")
+# Core imports
+from core.controller import SuperAgentController
+from core.dom_executor_playwright import DomExecutorPlaywright
+from core.ai_trainer import AITrainerEngine
+from core.health import HealthMonitor, SystemWatchdog
+from core.command_parser import CommandParser
+from core.logger import setup_logger
 
-def _start_core(core):
-    core.start()
-
+# Configurazione Logger Principale
+logger, _ = setup_logger()
 
 def main():
-    queue = Queue()
-    core = CoreLoop()
-    api_id_raw = (os.getenv("DOM2_API_ID") or "").strip()
-    api_id = None
-    if api_id_raw:
-        try:
-            api_id = int(api_id_raw)
-        except ValueError:
-            logger.warning("Invalid DOM2_API_ID: must be numeric")
-            api_id = None
-    api_hash = os.getenv("DOM2_API_HASH", "")
-    services = CoreServices(core, queue, api_id=api_id, api_hash=api_hash)
+    # --- 1. PROTEZIONE MULTIPROCESSING ---
+    multiprocessing.freeze_support()
+    
+    logger.info("🚀 AVVIO SISTEMA SUPERAGENT V5.6 (MAIN V6)...")
 
-    core_thread = Thread(target=_start_core, args=(core,), daemon=True)
-    core_thread.start()
-
-    services_handle = core.run_async(services.start_all())
-
-    def _report_startup_failure(future):
-        try:
-            exc = future.exception()
-        except Exception as retrieval_exc:
-            queue.put(("core", f"Service startup error: {retrieval_exc}"))
-            return
-        if exc:
-            queue.put(("core", f"Service startup error: {exc}"))
-
-    services_handle.add_done_callback(_report_startup_failure)
-
+    # --- 2. Inizializzazione Core Components ---
     try:
-        return run_v6_app(core, queue)
-    finally:
-        services.request_stop()
-        core.stop()
-        core_thread.join(timeout=5)
-        if core_thread.is_alive():
-            logger.warning("Core thread did not terminate within timeout")
+        config = {
+            "telegram": {}, 
+            "rpa": {"cdp_watchdog": True}
+        }
 
+        # Controller
+        controller = SuperAgentController(logger, config)
+
+        # Executor
+        executor = DomExecutorPlaywright(logger, headless=False, use_real_chrome=True)
+        controller.set_executor(executor)
+
+        # Trainer
+        trainer = AITrainerEngine()
+        controller.set_trainer(trainer)
+
+        # Monitor & Watchdog
+        monitor = HealthMonitor(logger)
+        controller.set_monitor(monitor)
+
+        watchdog = SystemWatchdog()
+        controller.set_watchdog(watchdog)
+        
+        # Parser
+        parser = CommandParser(logger)
+        controller.set_command_parser(parser)
+
+        # Avvio Sistema
+        controller.start_system()
+
+        # --- 3. Avvio UI ---
+        exit_code = run_app(
+            logger=logger,
+            executor=executor,
+            config=config,
+            monitor=monitor,
+            controller=controller
+        )
+
+        # --- 4. Chiusura ---
+        logger.info("🔻 Chiusura Main V6...")
+        controller.shutdown()
+        sys.exit(exit_code)
+
+    except Exception as e:
+        logger.critical(f"❌ ERRORE CRITICO ALL'AVVIO V6: {e}", exc_info=True)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
