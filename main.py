@@ -12,7 +12,7 @@ from ui.desktop_app import run_app
 from core.controller import SuperAgentController
 from core.dom_executor_playwright import DomExecutorPlaywright
 from core.ai_trainer import AITrainerEngine
-from core.anti_detect import AntiDetect
+# from core.anti_detect import AntiDetect  <-- RIMOSSO (Causava l'errore)
 from core.telegram_worker import TelegramWorker
 from core.health import HealthMonitor, SystemWatchdog
 from core.money_management import RoserpinaTable
@@ -26,7 +26,7 @@ def main():
     # --- 1. PROTEZIONE MULTIPROCESSING (CRUCIALE PER EXE) ---
     multiprocessing.freeze_support()  # Blocca la clonazione infinita su Windows
     
-    logger.info("🚀 AVVIO SISTEMA SUPERAGENT V5.5 SENTINEL...")
+    logger.info("🚀 AVVIO SISTEMA SUPERAGENT V5.6 SENTINEL...")
 
     # --- 2. Inizializzazione Core Components ---
     try:
@@ -48,7 +48,7 @@ def main():
         trainer = AITrainerEngine()
         controller.set_trainer(trainer)
 
-        # Istanza Monitor (Salute) - ✅ FIX: Passiamo logger
+        # Istanza Monitor (Salute)
         monitor = HealthMonitor(logger)
         controller.set_monitor(monitor)
 
@@ -56,7 +56,7 @@ def main():
         watchdog = SystemWatchdog()
         controller.set_watchdog(watchdog)
         
-        # Parser Comandi - ✅ FIX: Passiamo logger
+        # Parser Comandi
         parser = CommandParser(logger)
         controller.set_command_parser(parser)
 
