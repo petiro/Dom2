@@ -1,26 +1,9 @@
 """
 SuperAgentController V4 — Central orchestrator with Qt Signals and thread safety.
-
-Single point of coordination between:
-  - StateManager (state machine with Qt Signal)
-  - DomExecutorPlaywright (browser)
-  - AITrainerEngine (AI decisions)
-  - HealthMonitor (immortality)
-  - SystemWatchdog (lifecycle)
-  - UI (dumb display layer)
-
-V4 enhancements:
-  - QObject with log_message/training_complete Signals
-  - _stop_event for graceful shutdown (no zombie threads)
-  - _boot_lock to prevent concurrent boots
-  - _executor_lock for thread-safe browser access
-  - CDP watchdog for browser health
-  - request_training() Slot for async training
-  - Race condition fix (don't reset IDLE during shutdown)
-  - SAFE MODE: OS Fallback disabled (no random mouse clicks)
 """
 import time
 import threading
+import logging  # ✅ LOGGING
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -31,36 +14,22 @@ from core.money_management import RoserpinaTable
 from core.bet_worker import BetWorker
 from core.security import Vault
 
+# ✅ SETUP LOGGER
+logger = logging.getLogger("SuperAgent")
 
 class SuperAgentController(QObject):
-    """Central orchestrator — the brain of SuperAgent V4.
-
-    Emits:
-      - log_message(str): for UI log display
-      - training_complete(str): when AI training finishes
-
-    Usage (from main.py):
-        controller = SuperAgentController(logger, config)
-        controller.set_executor(executor)
-        controller.set_trainer(trainer)
-        controller.set_monitor(monitor)
-        controller.start_system()
-
-    Usage (from UI):
-        controller.handle_signal(signal_data)
-        controller.request_training()
-        state = controller.get_state()
-    """
-
     # Qt Signals for UI binding
     log_message = Signal(str)
     training_complete = Signal(str)
     mapping_ready = Signal(str)
 
-    def __init__(self, logger, config: dict = None):
+    def __init__(self, logger_instance, config: dict = None):
         super().__init__()
-        self.logger = logger
+        # Usiamo il logger globale, ma teniamo compatibilità se passato da main
+        self.logger = logger 
         self.config = config or {}
+
+        logger.info("🧠 Inizializzazione SuperAgentController V4...") # ✅ LOG
 
         # Core components (injected after init)
         self.executor = None
@@ -69,12 +38,12 @@ class SuperAgentController(QObject):
         self.vision = None
         self.telegram_learner = None
         self.rpa_healer = None
-        self.watchdog = None  # SystemWatchdog (lifecycle)
-        self.command_parser = None  # CommandParser (signal → steps)
-        self._os_human = None  # HumanOS for desktop recovery
+        self.watchdog = None 
+        self.command_parser = None 
+        self._os_human = None 
 
         # State machine
-        self.state_manager = StateManager(logger, initial_state=AgentState.BOOT)
+        self.state_manager = StateManager(self.logger, initial_state=AgentState.BOOT)
 
         # V4: Thread safety primitives
         self._stop_event = threading.Event()
@@ -88,7 +57,7 @@ class SuperAgentController(QObject):
 
         # Roserpina / Blind Over
         self.parser = TelegramSignalParser()
-        self.table = RoserpinaTable(table_id=1)  # Default Table 1
+        self.table = RoserpinaTable(table_id=1) 
         self.bet_worker = None
 
         # Secure credential vault
@@ -104,11 +73,11 @@ class SuperAgentController(QObject):
     #  Internal logging (emits Qt Signal + logger)
     # ------------------------------------------------------------------
     def _log(self, msg: str):
-        self.logger.info(msg)
+        # Scrive sia su disco/console che sulla UI
+        logger.info(msg) # ✅ LOG
         self.safe_emit(self.log_message, msg)
 
     def safe_emit(self, signal, *args):
-        """Emit a Qt signal, ignoring RuntimeError if UI is already destroyed."""
         try:
             signal.emit(*args)
         except RuntimeError:
@@ -119,33 +88,30 @@ class SuperAgentController(QObject):
     # ------------------------------------------------------------------
     def set_executor(self, executor):
         self.executor = executor
-        self._log("[Controller] Executor connected")
+        logger.debug("🔗 Executor collegato") # ✅ LOG
 
     def set_trainer(self, trainer):
         self.trainer = trainer
-        # V4: also connect trainer to executor
         if trainer and self.executor:
             trainer.set_executor(self.executor)
-        self._log("[Controller] AITrainer connected")
+        logger.debug("🔗 AITrainer collegato") # ✅ LOG
 
     def set_monitor(self, monitor):
         self.monitor = monitor
-        # Wire browser health check through controller (thread-safe)
         if monitor and hasattr(monitor, 'set_recovery_callback'):
             monitor.set_recovery_callback(self._check_and_recover_browser)
-        self._log("[Controller] HealthMonitor connected")
+        logger.debug("🔗 HealthMonitor collegato") # ✅ LOG
 
     def _check_and_recover_browser(self):
-        """Called from HealthMonitor thread. Uses executor_lock for thread safety."""
         if not self.executor:
             return
         with self._executor_lock:
             try:
                 if not self.executor.check_health():
-                    self._log("[Controller] Browser unresponsive — recovering")
+                    logger.warning("🚑 Browser non risponde — avvio recupero") # ✅ LOG
                     self.executor.recover_session()
             except Exception as e:
-                self._log(f"[Controller] Browser recovery failed: {e}")
+                logger.error(f"❌ Recupero browser fallito: {e}") # ✅ LOG
 
     def set_vision(self, vision):
         self.vision = vision
@@ -157,58 +123,52 @@ class SuperAgentController(QObject):
         self.rpa_healer = rpa_healer
 
     def set_command_parser(self, parser):
-        """Connect CommandParser for Telegram signal → TaskStep conversion."""
         self.command_parser = parser
-        self._log("[Controller] CommandParser connected")
+        logger.debug("🔗 CommandParser collegato")
 
     def set_watchdog(self, watchdog):
-        """Connect SystemWatchdog and wire its signals to Controller recovery."""
         self.watchdog = watchdog
         if watchdog:
             watchdog.browser_died.connect(self.on_browser_died)
             watchdog.resource_warning.connect(self._on_resource_warning)
             if hasattr(watchdog, 'request_recycle'):
                 watchdog.request_recycle.connect(self._handle_recycle_request)
-            self._log("[Controller] SystemWatchdog connected")
+            logger.debug("🔗 SystemWatchdog collegato")
 
     def _handle_recycle_request(self):
         with self._executor_lock:
             if self.executor:
+                logger.info("♻️ Riciclo Browser richiesto dal Watchdog") # ✅ LOG
                 self.executor.recycle_browser()
-                self.executor.launch_browser() # Riavvio interno, non CDP/Desktop
+                self.executor.launch_browser() 
 
     def _init_os_human(self):
-        """Lazy-init HumanOS for desktop-level recovery (SAFE MODE ONLY)."""
         if self._os_human is None:
             try:
                 from core.os_human_interaction import HumanOS
                 self._os_human = HumanOS(self.logger)
-                self._log("[Controller] HumanOS initialized (Safe Mode)")
+                logger.info("🤖 HumanOS inizializzato (Safe Mode)") # ✅ LOG
             except Exception as e:
-                self.logger.warning(f"[Controller] HumanOS not available: {e}")
+                logger.warning(f"⚠️ HumanOS non disponibile: {e}")
 
     # ------------------------------------------------------------------
-    #  Boot sequence (V4: with boot lock + async option)
+    #  Boot sequence
     # ------------------------------------------------------------------
     def boot(self):
-        """V4 boot sequence — transition from BOOT to IDLE.
-        Backward-compatible synchronous boot."""
         with self._boot_lock:
-            self._log("[Controller] V4 Boot sequence starting...")
+            logger.info("🚀 V4 Boot sequence starting...") # ✅ LOG
             self.state_manager.transition(AgentState.IDLE)
-            self._log("[Controller] V4 Boot complete — state: IDLE")
+            logger.info("✅ V4 Boot complete — State: IDLE")
 
     def start_system(self):
-        """V4 async boot — call after UI is visible.
-        Runs boot in background thread so UI doesn't freeze."""
         def _async_boot():
             with self._boot_lock:
                 if self._stop_event.is_set():
                     return
-                self._log("[Controller] V4 async boot starting...")
+                logger.info("🚀 V4 Async Boot starting...") # ✅ LOG
                 self.state_manager.transition(AgentState.IDLE)
-                self._log("[Controller] V4 async boot complete — state: IDLE")
-                # Start CDP watchdog if configured
+                logger.info("✅ V4 Async Boot complete")
+                
                 if self.config.get("rpa", {}).get("cdp_watchdog", False):
                     self.start_cdp_watchdog()
 
@@ -216,11 +176,9 @@ class SuperAgentController(QObject):
         t.start()
 
     # ------------------------------------------------------------------
-    #  CDP Watchdog (V4: browser health monitoring)
+    #  CDP Watchdog
     # ------------------------------------------------------------------
     def start_cdp_watchdog(self, interval: int = 60):
-        """Start a daemon thread that periodically checks browser health.
-        If browser dies, emits signal and attempts recovery."""
         def _watchdog():
             while not self._stop_event.is_set():
                 self._stop_event.wait(interval)
@@ -228,64 +186,53 @@ class SuperAgentController(QObject):
                     break
                 with self._executor_lock:
                     if self.executor and not self.executor.check_health():
-                        self._log("[Controller] CDP Watchdog: browser dead — recovering")
+                        logger.warning("🐕 CDP Watchdog: Browser Dead. Recovering...") # ✅ LOG
                         self.state_manager.set_state(AgentState.RECOVERING)
                         try:
                             self.executor.recover_session()
                             if not self._stop_event.is_set():
                                 self.state_manager.set_state(AgentState.IDLE)
-                            self._log("[Controller] CDP Watchdog: recovery successful")
+                            logger.info("🐕 CDP Watchdog: Recovery Success") # ✅ LOG
                         except Exception as e:
-                            self._log(f"[Controller] CDP Watchdog: recovery failed: {e}")
+                            logger.error(f"🐕 CDP Watchdog: Recovery Failed: {e}") # ✅ LOG
                             self.state_manager.set_state(AgentState.ERROR)
 
         t = threading.Thread(target=_watchdog, name="cdp-watchdog", daemon=True)
         t.start()
-        self._log("[Controller] CDP Watchdog started")
+        logger.info("👀 CDP Watchdog Started") # ✅ LOG
 
     # ------------------------------------------------------------------
-    #  Watchdog Slots (V4: browser death recovery) - FIXED & SAFE
+    #  Watchdog Slots
     # ------------------------------------------------------------------
     @Slot()
     def on_browser_died(self):
-        """
-        Called when SystemWatchdog detects Chrome is dead.
-        Triggers SAFE recovery: internal restart only. No desktop clicking.
-        """
         if self._stop_event.is_set():
             return
-        self._log("[Controller] ⚠️ Browser death detected — starting SAFE recovery")
+        logger.critical("💀 Browser DEATH detected! Starting SAFE recovery...") # ✅ LOG
         self.state_manager.set_state(AgentState.RECOVERING)
 
         def _recover():
             try:
                 with self._executor_lock:
-                    # 1. Close any dead executor state
                     if self.executor:
-                        try:
-                            self.executor.close()
-                        except Exception as close_e:
-                            self.logger.warning(f"[Controller] Cleanup error (expected): {close_e}")
-
-                    # 2. Kill Chrome Processes (OS Command Safe Mode)
-                    # Non usiamo più open_browser_from_desktop() che causava click random
+                        try: self.executor.close()
+                        except Exception: pass
+                    
                     self._init_os_human()
                     if self._os_human:
-                        self._log("[Controller] Cleaning residual Chrome processes...")
-                        self._os_human.kill_chrome_processes() # Safe taskkill
+                        logger.info("🧹 Cleaning residual Chrome processes...")
+                        self._os_human.kill_chrome_processes() 
 
-                    # 3. Internal Recovery (Playwright Persistence)
-                    self._log("[Controller] Relaunching Browser (Internal)...")
+                    logger.info("🔄 Relaunching Browser (Internal)...")
                     if self.executor:
-                        # recover_session usa il profilo persistente interno, non serve l'icona sul desktop
                         self.executor.recover_session() 
                         
                         if not self._stop_event.is_set():
                             self.state_manager.set_state(AgentState.IDLE)
-                        self._log("[Controller] ✅ Browser recuperato con successo (SAFE MODE)")
+                        logger.info("✅ Browser recuperato con successo (SAFE MODE)")
 
             except Exception as e:
-                self._log(f"[Controller] ❌ Critical Recovery Failure: {e}")
+                logger.critical(f"❌ Critical Recovery Failure: {e}")
                 self.state_manager.set_state(AgentState.ERROR)
 
         t = threading.Thread(target=_recover, name="browser-recovery", daemon=True)
@@ -293,40 +240,34 @@ class SuperAgentController(QObject):
 
     @Slot(str)
     def _on_resource_warning(self, msg: str):
-        """Handle resource warnings from SystemWatchdog."""
-        self._log(f"[Watchdog] {msg}")
-        # If executor supports check_and_recycle, trigger it
+        logger.warning(f"⚠️ [Watchdog Resource]: {msg}") # ✅ LOG
         if self.executor and hasattr(self.executor, 'check_and_recycle'):
             try:
                 with self._executor_lock:
                     self.executor.check_and_recycle()
             except Exception as e:
-                self.logger.warning(f"[Controller] Memory check triggered by warning failed: {e}")
+                logger.error(f"Memory check failed: {e}")
 
     # ------------------------------------------------------------------
-    #  V4: Step-based execution (CommandParser pipeline)
+    #  V4: Execution & Signal Handling
     # ------------------------------------------------------------------
     def handle_signal_v4(self, signal_data: dict) -> bool:
-        """V4 signal handler: signal → CommandParser → TaskSteps → execute.
-        Falls back to legacy handle_signal if CommandParser not available."""
         if not self.command_parser:
             return self.handle_signal(signal_data)
 
         steps = self.command_parser.parse(signal_data)
         if not steps:
-            self._log("[Controller] CommandParser returned no steps — skipping")
+            logger.info("ℹ️ CommandParser: Nessuno step generato.") # ✅ LOG
             return False
 
         return self.execute_steps(steps)
 
     def execute_steps(self, steps) -> bool:
-        """Execute an ordered list of TaskStep objects against the executor.
-        Returns True if all steps completed successfully."""
         if self._stop_event.is_set() or not self.executor:
             return False
 
         if not self.state_manager.transition(AgentState.NAVIGATING):
-            self._log("[Controller] Cannot transition to NAVIGATING for step execution")
+            logger.warning("⚠️ Impossibile transitare a NAVIGATING") # ✅ LOG
             return False
 
         if self.monitor:
@@ -337,7 +278,7 @@ class SuperAgentController(QObject):
                 selectors = self.executor._load_selectors()
 
                 for step in steps:
-                    self._log(f"[Controller] Step: {step.description or step.action}")
+                    logger.info(f"▶️ Esecuzione Step: {step.description or step.action}") # ✅ LOG
                     success = False
                     last_err = None
 
@@ -348,20 +289,21 @@ class SuperAgentController(QObject):
                                 break
                         except Exception as e:
                             last_err = e
-                            self._log(f"[Controller] Step {step.action} attempt {attempt+1} failed: {e}")
-                            # Try AI healing if enabled
+                            logger.warning(f"⚠️ Step {step.action} fallito (tentativo {attempt+1}): {e}") # ✅ LOG
+                            
+                            # AI Healing
                             if step.heal_on_fail and self.rpa_healer and attempt < step.retries:
-                                self._log("[Controller] Attempting AI selector healing...")
+                                logger.info("🩹 Tentativo AI Healing...")
                                 self.state_manager.set_state(AgentState.HEALING)
                                 try:
                                     self.rpa_healer.heal()
                                     selectors = self.executor._load_selectors()
                                 except Exception as heal_e:
-                                    self.logger.warning(f"[Controller] AI healing attempt failed: {heal_e}")
+                                    logger.error(f"❌ AI Healing fallito: {heal_e}")
                                 self.state_manager.set_state(AgentState.NAVIGATING)
 
                     if not success:
-                        self._log(f"[Controller] Step {step.action} failed after {step.retries+1} attempts: {last_err}")
+                        logger.error(f"❌ Step {step.action} fallito definitivamente: {last_err}") # ✅ LOG
                         if not self._stop_event.is_set():
                             self.state_manager.set_state(AgentState.IDLE)
                         return False
@@ -371,14 +313,13 @@ class SuperAgentController(QObject):
             return True
 
         except Exception as e:
-            self._log(f"[Controller] Step execution error: {e}")
+            logger.error(f"❌ Errore esecuzione step: {e}") # ✅ LOG
             self.state_manager.set_state(AgentState.ERROR)
             if not self._stop_event.is_set():
                 self.state_manager.set_state(AgentState.IDLE)
             return False
 
     def _execute_single_step(self, step, selectors) -> bool:
-        """Execute one TaskStep. Returns True on success."""
         action = step.action
         params = step.params
 
@@ -398,22 +339,18 @@ class SuperAgentController(QObject):
                 odds, _loc = self.executor.find_odds(teams_p, market_p)
                 amount = self.table.calculate_stake(odds) if odds > 1.0 else 0
             if not amount or amount <= 0:
-                self._log("[Controller] Stake = 0, bet annullata")
+                logger.info("ℹ️ Stake = 0, bet annullata") # ✅ LOG
                 return False
             return self.executor.place_bet(
                 params.get("teams", ""), params.get("market", ""),
                 amount
             )
         else:
-            self._log(f"[Controller] Unknown step action: {action}")
+            logger.warning(f"⚠️ Step sconosciuto: {action}")
             return False
 
-    # ------------------------------------------------------------------
-    #  Signal handling (from Telegram → UI → Controller) [legacy]
-    # ------------------------------------------------------------------
     def handle_signal(self, signal_data: dict) -> bool:
-        """Process a Telegram signal end-to-end.
-        Returns True if bet was placed successfully."""
+        """Legacy handler"""
         if self._stop_event.is_set():
             return False
 
@@ -423,19 +360,17 @@ class SuperAgentController(QObject):
 
         teams = signal_data.get("teams", "")
         market = signal_data.get("market", "")
-        self._log(f"[Controller] Signal #{sig_num}: {teams} / {market}")
+        logger.info(f"📨 Signal #{sig_num} Ricevuto: {teams} / {market}") # ✅ LOG
 
         if not self.executor:
-            self._log("[Controller] No executor available")
+            logger.error("❌ Nessun executor disponibile")
             return False
 
-        # Heartbeat
         if self.monitor:
             self.monitor.heartbeat()
 
-        # State: NAVIGATING
         if not self.state_manager.transition(AgentState.NAVIGATING):
-            self._log("[Controller] Cannot transition to NAVIGATING")
+            logger.warning("⚠️ Impossibile transitare a NAVIGATING")
             return False
 
         try:
@@ -445,32 +380,33 @@ class SuperAgentController(QObject):
                 # Login
                 if not self.executor.ensure_login(selectors):
                     self.state_manager.transition(AgentState.ERROR)
-                    self._log("[Controller] Login failed")
+                    logger.error("❌ Login fallito")
                     self.state_manager.transition(AgentState.IDLE)
                     return False
 
                 # Navigate
                 if teams and not self.executor.navigate_to_match(teams, selectors):
                     self.state_manager.transition(AgentState.ERROR)
-                    self._log(f"[Controller] Match not found: {teams}")
+                    logger.error(f"❌ Match non trovato: {teams}")
                     self.state_manager.transition(AgentState.IDLE)
                     return False
 
                 # Select market
                 if market and not self.executor.select_market(market, selectors):
                     self.state_manager.transition(AgentState.ERROR)
-                    self._log(f"[Controller] Market not found: {market}")
+                    logger.error(f"❌ Mercato non trovato: {market}")
                     self.state_manager.transition(AgentState.IDLE)
                     return False
 
-                # State: BETTING
+                # Betting
                 self.state_manager.transition(AgentState.BETTING)
                 odds, _loc = self.executor.find_odds(teams, market)
                 stake = self.table.calculate_stake(odds) if odds > 1.0 else 0
                 if not stake or stake <= 0:
-                    self._log("[Controller] Stake = 0, bet annullata")
+                    logger.info("ℹ️ Stake calcolato = 0. Bet annullata.")
                     self.state_manager.transition(AgentState.IDLE)
                     return False
+                
                 result = self.executor.place_bet(teams, market, stake)
 
             # Record result
@@ -481,33 +417,36 @@ class SuperAgentController(QObject):
                 "timestamp": time.time(),
             })
 
-            # V4: Race condition guard — don't reset if shutting down
+            if result:
+                logger.info("✅ BET PIAZZATA CON SUCCESSO!") # ✅ LOG
+            else:
+                logger.error("❌ Bet fallita in fase di piazzamento")
+
             if not self._stop_event.is_set():
                 self.state_manager.transition(AgentState.IDLE)
             return result
 
         except Exception as e:
-            self._log(f"[Controller] Signal processing error: {e}")
+            logger.error(f"❌ Errore processamento segnale: {e}") # ✅ LOG
             self.state_manager.transition(AgentState.ERROR)
-            # Try to recover
+            # Recovery
             if self.executor:
                 try:
                     self.state_manager.transition(AgentState.RECOVERING)
                     with self._executor_lock:
                         self.executor.recover_session()
                 except Exception as recovery_err:
-                    self._log(f"[Controller] Recovery during signal processing failed: {recovery_err}")
+                    logger.critical(f"❌ Recovery fallita: {recovery_err}")
             if not self._stop_event.is_set():
                 self.state_manager.transition(AgentState.IDLE)
             return False
 
     # ------------------------------------------------------------------
-    #  AI Trainer interface (from UI)
+    #  AI Trainer interface
     # ------------------------------------------------------------------
     def ask_trainer(self, question: str,
                     include_dom: bool = False,
                     include_screenshot: bool = False) -> str:
-        """Ask the AI trainer a question with optional context."""
         if not self.trainer:
             return "AI Trainer non disponibile."
 
@@ -519,18 +458,19 @@ class SuperAgentController(QObject):
                 with self._executor_lock:
                     dom = self.executor.get_dom_snapshot()
             except Exception as e:
-                self.logger.warning(f"[Controller] DOM snapshot failed: {e}")
+                logger.warning(f"⚠️ DOM snapshot fallito: {e}")
 
         if include_screenshot and self.executor:
             try:
                 with self._executor_lock:
                     screenshot = self.executor.take_screenshot_b64()
             except Exception as e:
-                self.logger.warning(f"[Controller] Screenshot failed: {e}")
+                logger.warning(f"⚠️ Screenshot fallito: {e}")
 
         prev = self.state_manager.state
         self.state_manager.transition(AgentState.ANALYZING)
         try:
+            logger.info(f"🗣️ Chiedo all'AI: {question}") # ✅ LOG
             result = self.trainer.ask(question, dom_snapshot=dom, screenshot_b64=screenshot)
             return result
         finally:
@@ -538,28 +478,25 @@ class SuperAgentController(QObject):
                 self.state_manager.force_state(prev)
 
     # ------------------------------------------------------------------
-    #  V4: Async Training (Slot for UI button)
+    #  Request Training (Async)
     # ------------------------------------------------------------------
     @Slot()
     def request_training(self):
-        """Run a full training step in a background thread.
-        Emits training_complete Signal when done."""
         if not self.trainer:
             self.safe_emit(self.training_complete, "Trainer non disponibile.")
             return
 
         def _train():
             self.state_manager.set_state(AgentState.TRAINING)
-            self._log("[Controller] Training started...")
+            logger.info("🎓 Training AI avviato...") # ✅ LOG
             try:
                 result = self.trainer.train_step()
-                self._log(f"[Controller] Training completed — {len(result)} chars")
+                logger.info(f"✅ Training completato. Risposta: {len(result)} chars") # ✅ LOG
                 self.safe_emit(self.training_complete, result)
             except Exception as e:
-                self._log(f"[Controller] Training error: {e}")
+                logger.error(f"❌ Training fallito: {e}") # ✅ LOG
                 self.safe_emit(self.training_complete, f"Errore training: {e}")
             finally:
-                # V4: Race condition guard
                 if not self._stop_event.is_set():
                     self.state_manager.set_state(AgentState.IDLE)
 
@@ -567,19 +504,17 @@ class SuperAgentController(QObject):
         t.start()
 
     def clear_trainer_memory(self):
-        """Clear the AI trainer conversation memory."""
         if self.trainer:
             self.trainer.clear_memory()
+            logger.info("🧹 Memoria AI Trainer pulita")
 
     # ------------------------------------------------------------------
-    #  Status / Stats (for UI)
+    #  Status / Stats
     # ------------------------------------------------------------------
     def get_state(self) -> str:
-        """Return current state name."""
         return self.state_manager.state.name
 
     def get_stats(self) -> dict:
-        """Return operational statistics."""
         total = len(self._bet_results)
         placed = sum(1 for r in self._bet_results if r.get("placed"))
         return {
@@ -592,51 +527,46 @@ class SuperAgentController(QObject):
         }
 
     def get_state_history(self, n: int = 20) -> list:
-        """Return last N state transitions."""
         return self.state_manager.get_history(n)
 
     # ------------------------------------------------------------------
-    #  Stealth mode management
+    #  Stealth mode
     # ------------------------------------------------------------------
     def set_stealth_mode(self, mode: str):
-        """Set stealth mode on executor: 'slow', 'balanced', 'pro'."""
         if self.executor and hasattr(self.executor, 'stealth_mode'):
             self.executor.stealth_mode = mode
-            self._log(f"[Controller] Stealth mode set to: {mode}")
+            logger.info(f"🥷 Stealth Mode impostata a: {mode}") # ✅ LOG
 
     def get_stealth_mode(self) -> str:
-        """Get current stealth mode."""
         if self.executor and hasattr(self.executor, 'stealth_mode'):
             return self.executor.stealth_mode
         return "balanced"
 
     # ------------------------------------------------------------------
-    #  Auto-Mapping (AI selector generation)
+    #  Auto-Mapping
     # ------------------------------------------------------------------
     def request_auto_mapping(self, url):
-        """Start AI auto-mapping for the given URL."""
         api_key = self.vault.decrypt_data().get("openrouter_api_key")
 
         if not api_key:
+            logger.error("❌ API Key mancante per Auto-Mapping")
             self.safe_emit(self.log_message, "API Key mancante")
             return
 
-        # Stop previous mapper if running
         if hasattr(self, '_mapper_thread') and self._mapper_thread and self._mapper_thread.isRunning():
             self._mapper_thread.quit()
             self._mapper_thread.wait(3000)
 
         with self._executor_lock:
-            # Navigate if needed and extract DOM
             if self.executor and self.executor.page:
                 if self.executor.page.url != url:
+                    logger.info(f"🧭 Navigazione Auto-Map verso: {url}")
                     self.executor.go_to_url(url)
                 dom_data = self.executor.get_dom_snapshot()
             else:
                 self.safe_emit(self.log_message, "Browser non inizializzato")
                 return
 
-        # Create worker/thread outside executor lock
         from core.auto_mapper_worker import AutoMapperWorker
         from PySide6.QtCore import QThread
         self.mapper_worker = AutoMapperWorker(api_key, dom_data)
@@ -644,14 +574,16 @@ class SuperAgentController(QObject):
         self.mapper_worker.moveToThread(self._mapper_thread)
         self._mapper_thread.started.connect(self.mapper_worker.run)
         self.mapper_worker.finished.connect(self.on_mapping_success)
-        self.mapper_worker.error.connect(lambda e: self.safe_emit(self.log_message, e))
+        self.mapper_worker.error.connect(lambda e: logger.error(f"❌ Errore Mapping: {e}"))
         self.mapper_worker.finished.connect(self._mapper_thread.quit)
         self.mapper_worker.error.connect(self._mapper_thread.quit)
         self._mapper_thread.start()
+        logger.info("🗺️ Auto-Mapping avviato...")
 
     def on_mapping_success(self, result_dict):
         import yaml
         yaml_code = yaml.dump(result_dict, default_flow_style=False)
+        logger.info("✅ Auto-Mapping completato con successo")
         self.safe_emit(self.mapping_ready, yaml_code)
 
     def test_mapping_visual(self, yaml_code):
@@ -666,15 +598,15 @@ class SuperAgentController(QObject):
         try:
             with open(yaml_path, "w", encoding="utf-8") as f:
                 f.write(yaml_code)
+            logger.info(f"💾 Selectors salvati in {yaml_path}")
             self.safe_emit(self.log_message, f"selectors.yaml salvato in: {yaml_path}")
         except Exception as e:
-            self.safe_emit(self.log_message, f"Errore salvataggio YAML: {e}")
+            logger.error(f"❌ Errore salvataggio YAML: {e}")
 
     # ------------------------------------------------------------------
-    #  Telegram Secure Connection
+    #  Telegram Connection
     # ------------------------------------------------------------------
     def connect_telegram(self, config):
-        """Save credentials to vault and (re)start Telegram worker."""
         self.vault.encrypt_data(config)
         self.current_config = config
 
@@ -682,24 +614,31 @@ class SuperAgentController(QObject):
             self.telegram_worker.stop()
 
         from core.telegram_worker import TelegramWorker
+        logger.info("🔄 Riavvio TelegramWorker con nuova configurazione...")
         self.telegram_worker = TelegramWorker(config)
         self.telegram_worker.message_received.connect(self.handle_telegram_signal)
         self.telegram_worker.start()
 
     # ------------------------------------------------------------------
-    #  Roserpina / Blind Over (Telegram signal → BetWorker)
+    #  Roserpina Handler
     # ------------------------------------------------------------------
     def handle_telegram_signal(self, text):
+        logger.info(f"📨 Ricevuto da Telegram: {text[:50]}...") # ✅ LOG
+        
         # 1. Check Pendente
         if self.table.is_pending:
+            logger.warning("⚠️ Scommessa in corso, segnale ignorato.")
             self.safe_emit(self.log_message, "⚠️ Scommessa in corso, segnale ignorato.")
             return
 
         # 2. Parsing
         data = self.parser.parse(text)
         if not data['match']:
+            logger.debug("ℹ️ Testo ignorato (non è un segnale valido)")
             return
 
+        logger.info(f"🎯 Segnale parsato: {data}")
+        
         # 3. Avvio Thread Scommessa
         self.table.is_pending = True
         self.bet_worker = BetWorker(self.table, self.executor, data)
@@ -710,16 +649,17 @@ class SuperAgentController(QObject):
     def on_bet_complete(self, result):
         self.table.is_pending = False
         if result:
+            logger.info("✅ BetWorker: Successo")
             self.safe_emit(self.log_message, "Bet Piazzata")
         else:
+            logger.error("❌ BetWorker: Fallimento")
             self.safe_emit(self.log_message, "Errore Bet")
 
     # ------------------------------------------------------------------
-    #  Shutdown (V4: graceful with _stop_event)
+    #  Shutdown
     # ------------------------------------------------------------------
     def shutdown(self):
-        """Graceful shutdown — signals all daemon threads to stop."""
-        self._log("[Controller] Shutdown initiated")
+        logger.info("🔻 Shutdown Sistema Iniziato") # ✅ LOG
         self._stop_event.set()
         self.state_manager.force_state(AgentState.SHUTDOWN)
         with self._executor_lock:
@@ -727,4 +667,5 @@ class SuperAgentController(QObject):
                 try:
                     self.executor.close()
                 except Exception as recovery_exc:
-                    self.logger.error(f"[Controller] Session recovery failed: {recovery_exc}")
+                    logger.error(f"❌ Errore chiusura executor: {recovery_exc}")
+        logger.info("🏁 Shutdown Completato. Bye.")
