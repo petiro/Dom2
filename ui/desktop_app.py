@@ -1,5 +1,5 @@
 """
-SuperAgent Desktop App V5.5 - SENTINEL EDITION (REAL LOGIC IMPLEMENTED)
+SuperAgent Desktop App V5.5 - SENTINEL EDITION (REAL LOGIC IMPLEMENTED & FIXED)
 """
 import os
 import sys
@@ -146,7 +146,7 @@ class StatsTab(QWidget):
         history = self.controller.get_bet_history()
 
         # 2. Aggiorna KPI (hacky object access to children labels)
-        self.lbl_bets.findChild(QLabel, "").setText(str(stats["bets_total"])) # Update value label (second one)
+        self.lbl_bets.findChild(QLabel, "").setText(str(stats["bets_total"])) 
         # Fix rapido per accedere al valore corretto:
         self.lbl_bets.layout().itemAt(1).widget().setText(str(stats["bets_total"]))
         self.lbl_placed.layout().itemAt(1).widget().setText(str(stats["bets_placed"]))
@@ -169,38 +169,36 @@ class StatsTab(QWidget):
 
 
 # ============================================================================
-#  2. MONEY TAB (ROSERPINA CONTROLLER)
+#  2. MONEY TAB (ROSERPINA CONTROLLER - PERSISTENTE ✅)
 # ============================================================================
 class MoneyTab(QWidget):
     def __init__(self, controller=None):
         super().__init__()
         self.controller = controller
+        self.config_file = os.path.join(get_project_root(), "config", "money_config.json")
         self.init_ui()
+        self.load_settings() # <--- Carica all'avvio
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-
-        # --- CONFIGURAZIONE BANKROLL ---
-        gb_bank = QGroupBox("💰 Gestione Bankroll")
+        gb_bank = QGroupBox("💰 Gestione Bankroll (Persistente)")
         form = QFormLayout(gb_bank)
         
         self.spin_bankroll = QDoubleSpinBox()
-        self.spin_bankroll.setRange(0, 100000)
-        self.spin_bankroll.setValue(100.0)
+        self.spin_bankroll.setRange(0, 1000000)
         self.spin_bankroll.setPrefix("€ ")
         
         self.combo_strat = QComboBox()
         self.combo_strat.addItems(["Stake Fisso", "Masaniello", "Percentuale"])
         
         self.spin_stake = QDoubleSpinBox()
-        self.spin_stake.setValue(5.0)
         self.spin_stake.setSuffix(" u")
 
         form.addRow("Bankroll Totale:", self.spin_bankroll)
         form.addRow("Strategia:", self.combo_strat)
         form.addRow("Stake Base / %:", self.spin_stake)
         
-        btn_apply = QPushButton("Applica Configurazione")
+        btn_apply = QPushButton("💾 Salva e Applica")
         btn_apply.clicked.connect(self.apply_settings)
         btn_apply.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
         form.addRow(btn_apply)
@@ -209,26 +207,43 @@ class MoneyTab(QWidget):
         layout.addStretch()
 
     def apply_settings(self):
-        if not self.controller:
-            QMessageBox.warning(self, "Errore", "Controller non connesso")
-            return
+        if not self.controller: return
         
-        bank = self.spin_bankroll.value()
-        strat = self.combo_strat.currentText()
-        stake = self.spin_stake.value()
+        data = {
+            "bankroll": self.spin_bankroll.value(),
+            "strategy_index": self.combo_strat.currentIndex(),
+            "strategy_name": self.combo_strat.currentText(),
+            "stake": self.spin_stake.value()
+        }
         
-        # Aggiorna l'oggetto Roserpina nel controller
+        # 1. Salva su Disco
+        try:
+            folder = os.path.dirname(self.config_file)
+            if not os.path.exists(folder): os.makedirs(folder, exist_ok=True)
+            with open(self.config_file, "w") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            _logger.error(f"Errore salvataggio Money: {e}")
+
+        # 2. Applica al Controller
         if hasattr(self.controller, 'table'):
-            self.controller.table.bankroll = bank
-            self.controller.table.stake = stake
-            
-            # Mapping stringa UI -> logica interna
+            self.controller.table.bankroll = data["bankroll"]
+            self.controller.table.stake = data["stake"]
             strat_map = {"Stake Fisso": "fixed", "Masaniello": "masa", "Percentuale": "percent"}
-            self.controller.table.strategy = strat_map.get(strat, "fixed")
-            
-            QMessageBox.information(self, "Successo", f"Roserpina aggiornata!\nStrategy: {strat}\nBankroll: {bank}")
-        else:
-            QMessageBox.critical(self, "Errore", "Modulo Roserpina non trovato nel controller")
+            self.controller.table.strategy = strat_map.get(data["strategy_name"], "fixed")
+            QMessageBox.information(self, "Salvato", "Configurazione Money salvata e applicata!")
+
+    def load_settings(self):
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, "r") as f:
+                    data = json.load(f)
+                    self.spin_bankroll.setValue(data.get("bankroll", 100))
+                    self.combo_strat.setCurrentIndex(data.get("strategy_index", 0))
+                    self.spin_stake.setValue(data.get("stake", 1))
+                    # Applica subito silenziosamente
+                    # self.apply_settings() # Decommenta se vuoi applicare auto al load
+            except: pass
 
 
 # ============================================================================
@@ -288,9 +303,6 @@ class SupervisorTab(QWidget):
                 self.factory.robots_data[name]["active"] = False
             self.factory.save_data()
             self.log.append("✅ Tutti i Robot disattivati")
-
-            # 3. Forza uccisione processi esterni (opzionale ma sicuro)
-            # os.system("taskkill /f /im chrome.exe") # Solo su Windows, commentato per sicurezza
 
 
 # ============================================================================
