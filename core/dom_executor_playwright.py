@@ -15,7 +15,7 @@ class DomExecutorPlaywright:
         self.pin = pin
         self.use_real_chrome = use_real_chrome
         
-        # Questa variabile decide se piazzare o no (Default = False/Demo)
+        # Variabile per modalità DEMO (False) o LIVE (True)
         self.allow_place = allow_place 
         
         self.pw = None
@@ -26,9 +26,9 @@ class DomExecutorPlaywright:
         self.selector_file = "selectors.yaml"
 
     def set_live_mode(self, enabled: bool):
-        """Abilita o disabilita il piazzamento reale."""
+        """Abilita o disabilita il piazzamento reale (Switch UI)."""
         self.allow_place = enabled
-        mode = "LIVE" if enabled else "DEMO"
+        mode = "LIVE (SOLDI VERI)" if enabled else "DEMO (Simulazione)"
         self.logger.warning(f"🔧 Executor impostato su: {mode}")
 
     def launch_browser(self):
@@ -36,10 +36,17 @@ class DomExecutorPlaywright:
         try:
             self.pw = sync_playwright().start()
             args = ["--disable-blink-features=AutomationControlled", "--start-maximized"]
+            
+            # Setup Browser
             self.browser = self.pw.chromium.launch(headless=self.headless, args=args)
+            
+            # Setup Context
             self.ctx = self.browser.new_context(viewport={"width": 1366, "height": 768})
             self.page = self.ctx.new_page()
+            
+            # Injection Anti-Detect
             self.page.add_init_script(STEALTH_INJECTION_V4)
+            
             self._initialized = True
             return True
         except Exception as e:
@@ -47,6 +54,7 @@ class DomExecutorPlaywright:
             return False
 
     def close(self):
+        """Chiude tutto per liberare risorse."""
         try:
             if self.page: self.page.close()
             if self.ctx: self.ctx.close()
@@ -55,6 +63,20 @@ class DomExecutorPlaywright:
         except: pass
         self._initialized = False
         self.page = None
+
+    def recycle_browser(self):
+        """
+        ✅ METODO CRITICO RICHIESTO DA TESTER_V4
+        Chiude e riapre il browser per pulire la RAM.
+        """
+        self.logger.info("♻️ Recycling browser session (Memory Cleanup)...")
+        self.close()
+        time.sleep(2)
+        self.launch_browser()
+
+    def recover_session(self):
+        """Alias per recycle_browser (compatibilità)"""
+        self.recycle_browser()
 
     def _safe_click(self, selector, timeout=5000):
         if not validate_selector(selector): return False
@@ -76,6 +98,7 @@ class DomExecutorPlaywright:
 
     def ensure_login(self, selectors):
         if not self.launch_browser(): return False
+        
         login_btn = selectors.get("login_btn", "text=Login")
         if self._safe_click(login_btn):
             return True
@@ -83,40 +106,86 @@ class DomExecutorPlaywright:
 
     def navigate_to_match(self, teams, selectors):
         if not self.launch_browser(): return False
-        return True # Stub
+        # Stub navigazione (qui andrebbe la logica di ricerca match)
+        return True
 
-    # --- LOGICA PIAZZAMENTO AVANZATA ---
+    # --- VERIFICA PARANOICA (POST-CLICK) ---
+    def verify_placement(self, teams):
+        """
+        Va su 'Le mie scommesse' -> 'In Corso' e controlla se il match esiste.
+        """
+        self.logger.info("🕵️ VERIFICA: Controllo se la scommessa è realmente 'In Corso'...")
+        
+        selectors = self._load_selectors()
+        
+        # 1. Clicca su "Scommesse" (Menu utente) o "Le mie scommesse"
+        btn_my_bets = selectors.get("my_bets_button", "text=Scommesse") 
+        if not self._safe_click(btn_my_bets):
+            self.logger.warning("⚠️ Impossibile aprire menu 'Le mie scommesse'")
+            return False
+            
+        time.sleep(1.5)
+        
+        # 2. Clicca su "In Corso"
+        btn_running = selectors.get("filter_running", "text=In Corso")
+        self._safe_click(btn_running)
+        
+        time.sleep(1.0)
+        
+        # 3. Cerca il nome della squadra
+        team_keyword = teams.split("-")[0].strip() 
+        
+        try:
+            if self.page.locator(f"text={team_keyword}").count() > 0:
+                self.logger.info(f"✅ CONFERMATO: Trovata scommessa attiva per '{team_keyword}'")
+                self.page.keyboard.press("Escape") # Chiude menu
+                return True
+            else:
+                self.logger.error(f"❌ FALLITO: Nessuna traccia di '{team_keyword}' in 'In Corso'")
+                self.page.keyboard.press("Escape")
+                return False
+        except:
+            return False
+
+    # --- PIAZZAMENTO INTELLIGENTE ---
     def place_bet(self, teams, market, stake):
         """
-        Gestisce sia la modalità DEMO che LIVE in base a self.allow_place
+        Gestisce DEMO vs LIVE e chiama la verifica se necessario.
         """
         self.logger.info(f"🏁 Avvio procedura scommessa: {stake}€ su {teams}")
 
+        # 1. MODALITÀ DEMO
         if not self.allow_place:
-            # MODALITÀ DEMO
-            self.logger.info(f"🛡️ [DEMO] Simulazione click scommessa su {teams} riuscita.")
-            return True
+            self.logger.info(f"🛡️ [DEMO] Simulazione click scommessa riuscita.")
+            return True 
 
-        # MODALITÀ LIVE (SOLDI VERI)
+        # 2. MODALITÀ LIVE
         self.logger.warning(f"💸 [LIVE] Tentativo di piazzamento reale...")
         
         selectors = self._load_selectors()
         input_sel = selectors.get("stake_input", "input.bs-Stake_Input") 
         btn_sel = selectors.get("place_button", ".bs-BtnPlace")
 
-        # 1. Inserimento Stake
+        # Inserimento Stake
         if not self._safe_fill(input_sel, str(stake)):
             self.logger.error("❌ [LIVE] Impossibile inserire lo stake.")
             return False
         
         time.sleep(0.5) 
 
-        # 2. Click Scommetti
-        if self._safe_click(btn_sel):
-            self.logger.info(f"🚀 [LIVE] SCOMMESSA INVIATA CORRETTAMENTE: {stake}€")
+        # Click Scommetti
+        if not self._safe_click(btn_sel):
+            self.logger.error("❌ [LIVE] Click su 'Scommetti' fallito.")
+            return False
+            
+        # 3. VERIFICA REALE
+        self.logger.info("⏳ Attesa elaborazione sito...")
+        time.sleep(3.0) 
+        
+        if self.verify_placement(teams):
             return True
         else:
-            self.logger.error("❌ [LIVE] Click su 'Scommetti' fallito.")
+            self.logger.critical("🚨 Scommessa NON trovata nello storico!")
             return False
 
     def _load_selectors(self):
@@ -128,7 +197,8 @@ class DomExecutorPlaywright:
 
     def set_selector_file(self, f): self.selector_file = f
     def check_health(self): return self.page and not self.page.is_closed()
-    def recover_session(self): self.close(); self.launch_browser()
+    
+    # Stubs
     def set_trainer(self, t): pass
     def set_healer(self, h): pass
     def take_screenshot_b64(self): return ""
