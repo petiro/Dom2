@@ -1,33 +1,44 @@
-import yaml
 import os
+import json
+import logging
+import yaml
 
-def load_secure_config(path="config/config.yaml"):
-    """
-    Carica la configurazione da file YAML e maschera i dati sensibili
-    per evitare che appaiano nei log se la config viene stampata.
-    I dati reali verranno sovrascritti dal Vault nel Controller.
-    """
-    if not os.path.exists(path):
+def get_project_root():
+    import sys
+    if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
+    try: return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    except: return os.getcwd()
+
+def load_secrets():
+    """Carica le chiavi sensibili dal file secrets.json locale."""
+    root = get_project_root()
+    secrets_path = os.path.join(root, "config", "secrets.json")
+    
+    # Se il file non esiste, ritorna vuoto (l'utente deve salvarle dalla UI)
+    if not os.path.exists(secrets_path):
         return {}
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-
-        # Mascheramento preventivo (Security through Obscurity per i log)
-        if "api_key" in data:
-            data["api_key"] = "****************"
-            
-        if "telegram" in data:
-            if "api_id" in data["telegram"]:
-                data["telegram"]["api_id"] = "000000"
-            if "api_hash" in data["telegram"]:
-                data["telegram"]["api_hash"] = "****************"
-        
-        if "pin" in data:
-            data["pin"] = "****"
-            
-        return data
+        with open(secrets_path, "r") as f:
+            data = json.load(f)
+            return {k: str(v).strip() for k, v in data.items()}
     except Exception as e:
-        print(f"Errore caricamento config base: {e}")
+        print(f"❌ Errore lettura secrets.json: {e}")
         return {}
+
+def load_secure_config(path="config/config.yaml"):
+    """unisce config base e secrets"""
+    # 1. Carica secrets
+    secrets = load_secrets()
+    
+    # 2. Carica config base (se esiste)
+    config = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+        except: pass
+    
+    # 3. Merge: i secrets vincono sempre
+    config.update(secrets)
+    return config
