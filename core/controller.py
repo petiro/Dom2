@@ -5,10 +5,16 @@ import os
 import time
 from datetime import datetime
 from PySide6.QtCore import QObject, Signal
-from core.money_management import MoneyManager
-from core.signal_parser import TelegramSignalParser
-from core.ai_parser import AISignalParser 
 
+# Import dei moduli Core
+from core.money_management import MoneyManager
+from core.ai_parser import AISignalParser
+# Importa il loader sicuro
+from core.config_loader import load_secure_config
+try: from core.signal_parser import TelegramSignalParser
+except: TelegramSignalParser = None
+
+# Percorsi
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HISTORY_FILE = os.path.join(_ROOT_DIR, "config", "bet_history.json")
 
@@ -18,11 +24,22 @@ class SuperAgentController(QObject):
     def __init__(self, logger_instance, config=None):
         super().__init__()
         self.logger = logger_instance
-        self.money_manager = MoneyManager()
         
-        # Selettore intelligente del parser
-        self.ai_parser = AISignalParser() # Se hai la chiave, mettila qui o nel file
-        self.simple_parser = TelegramSignalParser()
+        # 1. CARICAMENTO SICURO CHIAVI
+        self.secrets = load_secure_config()
+        api_key = self.secrets.get("openrouter_api_key")
+        
+        if not api_key:
+            self.logger.warning("⚠️ ATTENZIONE: Nessuna chiave OpenRouter trovata. L'AI potrebbe non funzionare.")
+        else:
+            self.logger.info("🔑 Chiavi API caricate con successo.")
+
+        # 2. Inizializza AI con la chiave caricata
+        self.ai_parser = AISignalParser(api_key=api_key)
+        
+        # 3. Altri componenti
+        self.money_manager = MoneyManager()
+        self.legacy_parser = TelegramSignalParser() if TelegramSignalParser else None
         
         self.executor = None
         self._history = self._load_history()
@@ -40,6 +57,18 @@ class SuperAgentController(QObject):
     def reload_money_manager(self):
         self.money_manager.reload()
         self.logger.info("💰 [CONTROLLER] Configurazione Money Management ricaricata.")
+
+    def reload_secrets(self):
+        """Metodo chiamato dalla UI quando si salvano nuove chiavi"""
+        from core.config_loader import load_secure_config
+        self.secrets = load_secure_config()
+        
+        # Aggiorna la chiave dell'AI in tempo reale
+        api_key = self.secrets.get("openrouter_api_key")
+        if self.ai_parser:
+            self.ai_parser.api_key = api_key
+            
+        self.logger.info("🔑 [CONTROLLER] Chiavi di sistema ricaricate dalla UI.")
 
     def handle_telegram_signal(self, text):
         """
@@ -63,14 +92,15 @@ class SuperAgentController(QObject):
             data = self.ai_parser.parse(text)
             
             # 2. Fallback su Parser Semplice se AI fallisce o è vuota
-            if not data or not data.get("teams"):
+            if (not data or not data.get("teams")) and self.legacy_parser:
                 self.logger.info("🤖 AI incerta, uso parser classico...")
-                data = self.simple_parser.parse(text)
+                data = self.legacy_parser.parse(text)
 
-            if not data.get("teams"):
+            if not data or not data.get("teams"):
                 self.logger.warning("⚠️ Dati insufficienti nel segnale.")
                 return
 
+            self.logger.info(f"🎯 TARGET: {data['teams']} -> {data['market']}")
             self._execute_bet_logic(data)
             
         except Exception as e:
@@ -85,21 +115,23 @@ class SuperAgentController(QObject):
             return
 
         # 1. Recupera Quota (Simulata o Live)
-        odds = 2.0 # In futuro: self.executor.get_live_odds()
+        # TODO: Implementare self.executor.get_live_odds()
+        odds = 2.0 
         
-        # 2. Calcolo Stake
+        # 2. Calcola Stake
         stake = self.money_manager.get_stake(odds)
-        strategy = self.money_manager.strategy
+        strategy = self.money_manager.strategy # Dovrebbe essere 'Roserpina' o 'Stake Fisso'
         
-        if stake <= 0:
-            self.logger.warning("⚠️ Stake calcolato 0. Salto.")
+        if stake <= 0.10:
+            self.logger.warning("⚠️ Stake calcolato nullo o ciclo finito. Salto.")
             return
 
         # 3. Piazza & Verifica (Blocking Call, ma siamo in un thread quindi OK)
         success = self.executor.place_bet(data["teams"], data["market"], stake)
         
-        # 4. Registra Esito
-        self.money_manager.record_outcome("win" if success else "lose", stake, odds) # Simuliamo esito immediato per test
+        # 4. Registra Esito (Nota: Roserpina reale richiederebbe esito post-partita)
+        # Qui registriamo l'azione nel Money Manager
+        # self.money_manager.record_outcome("pending", stake, odds) 
         
         # 5. Salva Storico
         record = {
@@ -107,6 +139,8 @@ class SuperAgentController(QObject):
             "teams": data["teams"],
             "market": data["market"],
             "stake": stake,
+            "odds": odds,
+            "strategy": getattr(self.money_manager, 'strategy', 'N/A'),
             "status": "CONFERMATA" if success else "FALLITA"
         }
         self._save_to_history(record)
@@ -141,10 +175,14 @@ class SuperAgentController(QObject):
         try: self.log_message.emit(msg)
         except: pass
 
-    # Stubs per compatibilità
+    # Stubs per compatibilità UI
     def shutdown(self): 
         self.logger.info("🔻 Controller Shutdown...")
         if self.executor: self.executor.close()
     def request_training(self): pass
     def request_auto_mapping(self, u): pass
     def process_robot_chat(self, n, t): pass
+    def set_trainer(self, t): pass
+    def set_monitor(self, m): pass
+    def set_watchdog(self, w): pass
+    def set_command_parser(self, c): pass
