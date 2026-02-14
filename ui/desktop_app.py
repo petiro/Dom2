@@ -20,10 +20,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, Slot, QObject, QEvent
 from PySide6.QtGui import QColor, QPalette, QFont
 
 # --- UTILS ---
-def get_project_root():
-    if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
-    try: return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    except: return os.getcwd()
+from core.utils import get_project_root
 
 _ROOT_DIR = get_project_root()
 ROBOTS_FILE = os.path.join(_ROOT_DIR, "config", "my_robots.json")

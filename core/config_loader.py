@@ -3,16 +3,7 @@ import json
 import logging
 import yaml
 
-
-def get_project_root():
-    import sys
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    try:
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    except Exception:
-        return os.getcwd()
-
+from core.utils import get_project_root
 
 _ROOT_DIR = get_project_root()
 
