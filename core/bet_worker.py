@@ -1,6 +1,7 @@
 import logging
 from PySide6.QtCore import QThread, Signal
 
+
 class BetWorker(QThread):
     finished = Signal(bool)
 
@@ -14,16 +15,17 @@ class BetWorker(QThread):
         self.logger = logging.getLogger("BetWorker")
 
     def run(self):
-        # is_pending is managed by controller.on_bet_complete via finished signal
         try:
-            odds, _locator = self.executor.find_odds(self.match, self.market)
+            # FIX BUG-03: Usa find_odds (ora esiste sull'executor)
+            odds = self.executor.find_odds(self.match, self.market)
 
             if not odds or odds <= 1.0:
                 self.logger.error(f"Quote non valide: {odds}")
                 self.finished.emit(False)
                 return
 
-            stake = self.money_manager.calculate_stake(odds)
+            # FIX BUG-03: Usa get_stake (nome corretto su MoneyManager)
+            stake = self.money_manager.get_stake(odds)
 
             if not stake or stake <= 0:
                 self.logger.warning("Stake = 0. Operazione annullata.")

@@ -1,20 +1,9 @@
 import time
 import threading
 import socket
-import sys
-import os
 
-try:
-    from PySide6.QtCore import QObject, Signal
-except ImportError:
-    class QObject: pass
-    def Signal(*args): pass
 
-class SystemWatchdog(QObject):
-    browser_died = Signal()
-    resource_warning = Signal(str)
-    def __init__(self): super().__init__()
-
+# FIX BUG-06: Solo HealthMonitor qui. SystemWatchdog completo e in core/lifecycle.py
 class HealthMonitor:
     MAX_RESTARTS = 3
     COOLDOWN = 300
@@ -34,34 +23,37 @@ class HealthMonitor:
     def _monitor(self):
         while not self._stop_event.is_set():
             time.sleep(60)
+            if self._stop_event.is_set():
+                break
             self._check_internet()
 
     def _check_internet(self):
         try:
-            # ✅ FIX: Context manager chiude il socket
             with socket.create_connection(("8.8.8.8", 53), timeout=3):
                 pass
-        except:
-            self.logger.warning("Internet down")
+        except Exception:
+            self.logger.warning("⚠️ Internet non raggiungibile.")
 
     def safe_restart(self, restart_fn=None):
         with self._restart_lock:
             now = time.time()
-            if self._restarting: return False
-            
+            if self._restarting:
+                return False
+
             if now - self._last_restart > self.COOLDOWN:
                 self._restart_count = 0
-            
+
             if self._restart_count >= self.MAX_RESTARTS:
-                self.logger.error("Restart limit reached")
+                self.logger.error("❌ Limite riavvii raggiunto.")
                 return False
 
             self._restarting = True
             self._restart_count += 1
             self._last_restart = now
-            
+
         try:
-            if restart_fn: restart_fn()
+            if restart_fn:
+                restart_fn()
         finally:
             with self._restart_lock:
                 self._restarting = False
