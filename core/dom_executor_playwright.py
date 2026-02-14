@@ -50,7 +50,7 @@ class DomExecutorPlaywright:
         except: pass
         
         try:
-            # ✅ FIX: Chiusura Context esplicita
+            # Chiusura Context esplicita
             if self.ctx: self.ctx.close()
         except: pass
         
@@ -68,8 +68,18 @@ class DomExecutorPlaywright:
         self.browser = None
         self.pw = None
 
+    def recycle_browser(self):
+        """
+        ✅ METODO CRITICO RICHIESTO DA TESTER_V4
+        Esegue un ciclo completo di chiusura e riapertura per liberare memoria.
+        """
+        self.logger.info("♻️ Recycling browser session (Memory Cleanup)...")
+        self.close()
+        time.sleep(2)
+        self.launch_browser()
+
     def _safe_click(self, selector, timeout=5000):
-        # ✅ Validazione selector
+        # Validazione selector
         if not validate_selector(selector):
             self.logger.warning(f"Blocked unsafe selector: {selector}")
             return False
@@ -123,9 +133,9 @@ class DomExecutorPlaywright:
     def set_selector_file(self, f): self.selector_file = f
     def check_health(self): return self.page and not self.page.is_closed()
     
-    # Stubs
+    # Stubs e metodi di supporto
     def set_trainer(self, t): pass
     def set_healer(self, h): pass
-    def recover_session(self): self.close(); self.launch_browser()
+    def recover_session(self): self.recycle_browser() # Alias per compatibilità
     def take_screenshot_b64(self): return ""
     def get_dom_snapshot(self): return ""
