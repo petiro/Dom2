@@ -3,7 +3,6 @@ import os
 import logging
 import multiprocessing
 
-# PySide6 imports
 from PySide6.QtWidgets import QApplication
 from ui.desktop_app import run_app
 
@@ -11,62 +10,50 @@ from ui.desktop_app import run_app
 from core.controller import SuperAgentController
 from core.dom_executor_playwright import DomExecutorPlaywright
 from core.ai_trainer import AITrainerEngine
-from core.health import HealthMonitor, SystemWatchdog
+from core.health import HealthMonitor
+from core.lifecycle import SystemWatchdog  # FIX BUG-06: Usa il watchdog completo
 from core.command_parser import CommandParser
-from core.logger import setup_logger # <--- Importa il nuovo logger
+from core.logger import setup_logger
+
 
 def main():
     # 1. Protezione Multiprocessing
     multiprocessing.freeze_support()
-    
-    # 2. Setup Logger (Crea il file)
-    # logger: Oggetto per scrivere su file
-    # log_signaler: Oggetto per mandare i log alla UI
+
+    # FIX BUG-05: QApplication DEVE essere creata PRIMA di qualsiasi QObject
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # 2. Setup Logger (crea QObject, ma ora QApplication esiste gia)
     logger, log_signaler = setup_logger()
-    
     logger.info("🚀 MAIN: Inizializzazione componenti...")
 
     try:
-        app = QApplication(sys.argv)
-
         config = {
-            "telegram": {}, 
+            "telegram": {},
             "rpa": {"cdp_watchdog": True}
         }
 
-        # 3. Passiamo il logger al Controller
+        # 3. Inizializzazione Componenti
         controller = SuperAgentController(logger, config)
-
-        # 4. Passiamo il logger all'Executor
         executor = DomExecutorPlaywright(logger, headless=False, use_real_chrome=True)
-        controller.set_executor(executor)
-
-        # Trainer
-        trainer = AITrainerEngine() # Se il trainer usa log, passagli logger
-        controller.set_trainer(trainer)
-
-        # Monitor
-        monitor = HealthMonitor(logger)
-        controller.set_monitor(monitor)
-
-        # Watchdog
-        watchdog = SystemWatchdog()
-        controller.set_watchdog(watchdog)
-        
-        # Parser
+        trainer = AITrainerEngine(logger=logger)
+        monitor = HealthMonitor(logger, executor)
+        watchdog = SystemWatchdog(executor=executor, logger=logger)
         parser = CommandParser(logger)
+
+        # 4. Collegamento Dipendenze
+        controller.set_executor(executor)
+        controller.set_trainer(trainer)
+        controller.set_monitor(monitor)
+        controller.set_watchdog(watchdog)
         controller.set_command_parser(parser)
 
-        # Avvio Sistema
+        # 5. Avvio Sistema
         controller.start_system()
+        monitor.start()
+        watchdog.start()
 
-        # 5. Avvio UI (Passiamo log_signaler per vedere i log a schermo)
-        # Nota: Ho aggiunto log_signaler ai parametri di run_app se necessario,
-        # ma per ora lo usiamo tramite i segnali del controller.
-        
-        # Colleghiamo il segnale del logger al controller per la UI
-        # (Opzionale: se run_app gestisce i log diversamente)
-        
+        # 6. Avvio UI
         exit_code = run_app(
             logger=logger,
             executor=executor,
@@ -75,17 +62,20 @@ def main():
             controller=controller
         )
 
+        # 7. Chiusura
         logger.info("🔻 Chiusura Main...")
         controller.shutdown()
+        monitor.stop()
+        watchdog.stop()
         sys.exit(exit_code)
 
     except Exception as e:
-        # Se il logger è attivo usa quello, altrimenti print
         if 'logger' in locals():
             logger.critical(f"❌ ERRORE CRITICO MAIN: {e}", exc_info=True)
         else:
             print(f"CRITICAL ERROR: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

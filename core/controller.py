@@ -4,208 +4,309 @@ import json
 import os
 import time
 from datetime import datetime
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QThread
 
-# Import dei moduli Core
+# Import Core
 from core.money_management import MoneyManager
 from core.ai_parser import AISignalParser
 from core.config_loader import load_secure_config
+from core.security import Vault
+from core.state_machine import StateManager, AgentState
+from core.auto_mapper_worker import AutoMapperWorker
 
-# Import opzionale per compatibilità
-try: from core.signal_parser import TelegramSignalParser
-except: TelegramSignalParser = None
+# Import opzionale per compatibilita
+try:
+    from core.signal_parser import TelegramSignalParser
+except Exception:
+    TelegramSignalParser = None
 
-# Percorsi
+try:
+    from core.telegram_worker import TelegramWorker
+except Exception:
+    TelegramWorker = None
+
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HISTORY_FILE = os.path.join(_ROOT_DIR, "config", "bet_history.json")
+SELECTORS_FILE = os.path.join(_ROOT_DIR, "config", "selectors.yaml")
+
 
 class SuperAgentController(QObject):
     log_message = Signal(str)
-    
+    mapping_ready = Signal(str)  # FIX BUG-02: Signal per UI Mapping
+
     def __init__(self, logger_instance, config=None):
         super().__init__()
         self.logger = logger_instance
-        self.config = config
-        
-        # 1. CARICAMENTO SICURO CHIAVI
+        self.config = config or {}
+
+        # --- 1. Sicurezza & Stato (FIX BUG-02/11) ---
+        self.vault = Vault()
+        self.state_manager = StateManager(self.logger, initial_state=AgentState.BOOT)
+
+        # --- 2. Caricamento Chiavi ---
         self.secrets = load_secure_config()
         api_key = self.secrets.get("openrouter_api_key")
-        
-        if not api_key:
-            self.logger.warning("⚠️ Controller: Nessuna chiave OpenRouter trovata. L'AI non funzionerà finché non la salvi nelle Impostazioni.")
-        else:
-            self.logger.info("🔑 Chiavi API caricate con successo.")
 
-        # 2. Inizializza AI con la chiave caricata
+        if not api_key:
+            self.logger.warning("⚠️ Controller: Chiave AI mancante. Funzionalita limitate.")
+        else:
+            self.logger.info("🔑 Chiavi API caricate.")
+
+        # --- 3. Componenti ---
         self.ai_parser = AISignalParser(api_key=api_key)
-        
-        # 3. Altri componenti
         self.money_manager = MoneyManager()
         self.legacy_parser = TelegramSignalParser() if TelegramSignalParser else None
-        
-        # Componenti da collegare via set_...
+
+        # Placeholder componenti esterni
         self.executor = None
         self.trainer = None
         self.monitor = None
         self.watchdog = None
         self.command_parser = None
-        self.ui_window = None # Riferimento alla UI
-        
+        self.ui_window = None
+
+        # Workers
+        self.mapper_worker = None
+        self.mapper_thread = None
+        self.telegram_worker = None
+
+        # Threading
         self._history = self._load_history()
-        
-        # --- THREAD WATCHDOG ---
         self._lock = threading.Lock()
         self._active_threads = 0
-        self._stop_event = threading.Event()
 
-    # --- METODI DI COLLEGAMENTO (FIX PER MAIN.PY) ---
-    # Questi sono i metodi che mancavano e facevano crashare il bot!
-    def set_executor(self, ex): 
+    # --- SETUP & CONNESSIONI ---
+    def set_executor(self, ex):
         self.executor = ex
-        
+
     def set_trainer(self, trainer):
         self.trainer = trainer
+        if self.trainer and self.executor:
+            self.trainer.set_executor(self.executor)
 
     def set_monitor(self, monitor):
         self.monitor = monitor
 
     def set_watchdog(self, watchdog):
         self.watchdog = watchdog
-        
+
     def set_command_parser(self, parser):
         self.command_parser = parser
 
     def start_system(self):
-        """Chiamato da main.py per avviare eventuali thread di background"""
-        self.logger.info("✅ Controller avviato. In attesa di segnali.")
+        self.logger.info("✅ Controller avviato. State: IDLE.")
+        self.state_manager.transition(AgentState.IDLE)
+
+    # --- TELEGRAM INTEGRATION (FIX BUG-04) ---
+    def connect_telegram(self, tg_config):
+        """Metodo chiamato dalla TelegramTab per connettere Telegram."""
+        if TelegramWorker is None:
+            self.logger.error("❌ TelegramWorker non disponibile (telethon mancante)")
+            return
+
+        self.logger.info("📡 Connessione Telegram avviata...")
+        if self.telegram_worker:
+            self.telegram_worker.stop()
+
+        self.telegram_worker = TelegramWorker(tg_config)
+        self.telegram_worker.message_received.connect(self.handle_telegram_signal)
+        self.telegram_worker.error_occurred.connect(
+            lambda e: self.logger.error(f"Telegram Error: {e}"))
+        self.telegram_worker.status_changed.connect(
+            lambda s: self.logger.info(f"Telegram Status: {s}"))
+        self.telegram_worker.start()
+
+    # --- AUTO MAPPING (FIX BUG-02) ---
+    def request_auto_mapping(self, url):
+        """Avvia il mapping AI dei selettori per un URL."""
+        self.logger.info(f"🗺️ Mapping richiesto per: {url}")
+
+        dom_content = ""
+        if self.executor:
+            self.logger.info("Recupero DOM dal browser...")
+            dom_content = self.executor.get_dom_snapshot()
+
+        if not dom_content:
+            dom_content = f"<html><body>URL target: {url} - Browser non attivo</body></html>"
+
+        api_key = self.secrets.get("openrouter_api_key")
+        if not api_key:
+            self.logger.error("❌ Mapping impossibile: Manca API Key OpenRouter")
+            return
+
+        self.mapper_thread = QThread()
+        self.mapper_worker = AutoMapperWorker(api_key, dom_content)
+        self.mapper_worker.moveToThread(self.mapper_thread)
+
+        self.mapper_worker.finished.connect(self._on_mapping_success)
+        self.mapper_worker.error.connect(lambda e: self.logger.error(f"Mapper Error: {e}"))
+        self.mapper_worker.finished.connect(self.mapper_thread.quit)
+        self.mapper_thread.started.connect(self.mapper_worker.run)
+
+        self.mapper_thread.start()
+
+    def _on_mapping_success(self, result):
+        import yaml
+        yaml_str = yaml.dump(result, default_flow_style=False)
+        self.mapping_ready.emit(yaml_str)
+        self.logger.info("✅ Mapping completato!")
+
+    def save_selectors_yaml(self, yaml_content):
+        """Salva i selettori YAML su file. Chiamato dalla MappingTab."""
+        try:
+            os.makedirs(os.path.dirname(SELECTORS_FILE), exist_ok=True)
+            with open(SELECTORS_FILE, "w", encoding="utf-8") as f:
+                f.write(yaml_content)
+            self.logger.info("💾 Selettori salvati su file.")
+        except Exception as e:
+            self.logger.error(f"Errore salvataggio YAML: {e}")
 
     # --- LOGICA OPERATIVA ---
     def set_live_mode(self, enabled):
-        if self.executor: self.executor.set_live_mode(enabled)
+        if self.executor:
+            self.executor.set_live_mode(enabled)
 
     def reload_money_manager(self):
         self.money_manager.reload()
-        self.logger.info("💰 [CONTROLLER] Configurazione Money Management ricaricata.")
+        self.logger.info("💰 Money Manager ricaricato.")
 
     def reload_secrets(self):
-        """Metodo chiamato dalla UI quando si salvano nuove chiavi"""
-        from core.config_loader import load_secure_config
+        """Metodo chiamato dalla UI quando si salvano nuove chiavi."""
         self.secrets = load_secure_config()
-        
-        # Aggiorna la chiave dell'AI in tempo reale
         api_key = self.secrets.get("openrouter_api_key")
         if self.ai_parser:
             self.ai_parser.api_key = api_key
-            
-        self.logger.info("🔑 [CONTROLLER] Chiavi di sistema ricaricate dalla UI.")
+        self.logger.info("🔑 Secrets ricaricati.")
 
     def handle_telegram_signal(self, text):
         """Gestisce il segnale con protezione Threading."""
         with self._lock:
             if self._active_threads > 2:
-                self.logger.warning("⚠️ [WATCHDOG] Troppe operazioni in corso. Segnale ignorato.")
+                self.logger.warning("⚠️ Watchdog: Troppi thread attivi. Skip.")
                 return
             self._active_threads += 1
 
-        threading.Thread(target=self._process_signal_thread, args=(text,), daemon=True).start()
+        threading.Thread(
+            target=self._process_signal_thread, args=(text,), daemon=True
+        ).start()
 
     def _process_signal_thread(self, text):
         try:
-            self.logger.info("📩 Analisi messaggio in corso...")
-            
-            # 1. Prova AI Parser (più intelligente)
+            self.state_manager.set_state(AgentState.ANALYZING)
+            self.logger.info("📩 Analisi segnale...")
+
+            # 1. Prova AI Parser
             data = self.ai_parser.parse(text)
-            
-            # 2. Fallback su Parser Semplice
+
+            # 2. Fallback su Parser classico (FIX BUG-01: ora usa "teams")
             if (not data or not data.get("teams")) and self.legacy_parser:
-                self.logger.info("🤖 AI incerta, uso parser classico...")
+                self.logger.info("🤖 Fallback su parser classico...")
                 data = self.legacy_parser.parse(text)
 
             if not data or not data.get("teams"):
-                self.logger.warning("⚠️ Dati insufficienti nel segnale.")
+                self.logger.warning("⚠️ Dati insufficienti.")
                 return
 
-            self.logger.info(f"🎯 TARGET: {data['teams']} -> {data['market']}")
+            self.logger.info(f"🎯 Target: {data['teams']} -> {data['market']}")
+
+            # FIX BUG-09: Usa CommandParser se disponibile
+            if self.command_parser:
+                steps = self.command_parser.parse(data)
+                self.logger.info(f"📋 Pipeline: {len(steps)} steps generati")
+
             self._execute_bet_logic(data)
-            
+
         except Exception as e:
-            self.logger.error(f"❌ Errore thread segnale: {e}")
+            self.logger.error(f"❌ Errore process signal: {e}")
         finally:
             with self._lock:
                 self._active_threads -= 1
+            self.state_manager.set_state(AgentState.IDLE)
 
     def _execute_bet_logic(self, data):
-        if not self.executor: 
+        if not self.executor:
             self.logger.error("❌ Executor non collegato!")
             return
 
-        # 1. Recupera Quota (Simulata o Live)
-        # TODO: Implementare self.executor.get_live_odds()
-        odds = 2.0 
-        
-        # 2. Calcola Stake
+        self.state_manager.set_state(AgentState.BETTING)
+
+        # FIX BUG-14: Tenta lettura odds reale, fallback a 2.0
+        odds = None
+        try:
+            odds = self.executor.find_odds(data["teams"], data.get("market", ""))
+        except Exception as e:
+            self.logger.warning(f"⚠️ Errore lettura odds: {e}")
+
+        if not odds or odds <= 1.0:
+            self.logger.warning("⚠️ Quota non trovata. Uso fallback 2.0")
+            odds = 2.0
+
         stake = self.money_manager.get_stake(odds)
-        strategy = getattr(self.money_manager, 'strategy', 'N/A')
-        
+
         if stake <= 0.10:
-            self.logger.warning("⚠️ Stake calcolato nullo o ciclo finito. Salto.")
+            self.logger.warning("⚠️ Stake troppo basso.")
             return
 
-        # 3. Piazza & Verifica
         success = self.executor.place_bet(data["teams"], data["market"], stake)
-        
-        # 4. Salva Storico
+
         record = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "teams": data["teams"],
             "market": data["market"],
             "stake": stake,
             "odds": odds,
-            "strategy": strategy,
             "status": "CONFERMATA" if success else "FALLITA"
         }
         self._save_to_history(record)
-        
-        if success:
-            msg = f"✅ BET PIAZZATA: {stake}€ su {data['teams']}"
-            self.logger.info(msg)
-            self.safe_emit(msg)
-        else:
-            msg = f"❌ BET FALLITA: {data['teams']}"
-            self.logger.error(msg)
-            self.safe_emit(msg)
+
+        msg = f"{'✅' if success else '❌'} BET: {stake}€ su {data['teams']} ({data['market']})"
+        self.logger.info(msg)
+        self.safe_emit(msg)
 
     def _load_history(self):
         if os.path.exists(HISTORY_FILE):
-            try: 
-                with open(HISTORY_FILE, 'r') as f: return json.load(f)
-            except: return []
+            try:
+                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                return []
         return []
 
     def _save_to_history(self, record):
         with self._lock:
             self._history.append(record)
             try:
-                with open(HISTORY_FILE, 'w') as f: json.dump(self._history, f, indent=4)
-            except: pass
+                with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(self._history, f, indent=4)
+            except Exception as e:
+                self.logger.error(f"Errore salvataggio history: {e}")
 
-    def get_bet_history(self): return self._history
-    
-    def safe_emit(self, msg): 
-        try: self.log_message.emit(msg)
-        except: pass
+    def get_bet_history(self):
+        with self._lock:
+            return list(self._history)
+
+    def safe_emit(self, msg):
+        try:
+            self.log_message.emit(msg)
+        except Exception:
+            pass
 
     # --- STUBS RICHIESTI DALLA UI ---
-    def shutdown(self): 
-        self.logger.info("🔻 Controller Shutdown...")
-        if self.executor: self.executor.close()
-        
-    def request_training(self): pass
-    
-    def request_auto_mapping(self, url):
-        self.logger.info(f"🗺️ Richiesta mapping per: {url}")
-        
+    def shutdown(self):
+        self.logger.info("🔻 Shutdown...")
+        self.state_manager.set_state(AgentState.SHUTDOWN)
+        if self.executor:
+            self.executor.close()
+        if self.telegram_worker:
+            self.telegram_worker.stop()
+
+    def request_training(self):
+        pass
+
     def process_robot_chat(self, robot_name, text):
         self.logger.info(f"💬 Chat robot {robot_name}: {text}")
-        if hasattr(self, 'ui_window') and hasattr(self.ui_window, 'factory'):
-            self.ui_window.factory.receive_ai_reply(robot_name, "Ricevuto. Sto imparando...")
+        if self.ui_window and hasattr(self.ui_window, 'factory'):
+            try:
+                self.ui_window.factory.receive_ai_reply(robot_name, "Ricevuto. Sto imparando...")
+            except Exception as e:
+                self.logger.error(f"Errore invio reply a UI: {e}")

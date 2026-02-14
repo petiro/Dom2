@@ -3,42 +3,53 @@ import json
 import logging
 import yaml
 
+
 def get_project_root():
     import sys
-    if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
-    try: return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    except: return os.getcwd()
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    try:
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        return os.getcwd()
+
+
+_ROOT_DIR = get_project_root()
+
 
 def load_secrets():
     """Carica le chiavi sensibili dal file secrets.json locale."""
-    root = get_project_root()
-    secrets_path = os.path.join(root, "config", "secrets.json")
-    
-    # Se il file non esiste, ritorna vuoto (l'utente deve salvarle dalla UI)
+    secrets_path = os.path.join(_ROOT_DIR, "config", "secrets.json")
+
     if not os.path.exists(secrets_path):
         return {}
 
     try:
-        with open(secrets_path, "r") as f:
+        with open(secrets_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             return {k: str(v).strip() for k, v in data.items()}
     except Exception as e:
-        print(f"❌ Errore lettura secrets.json: {e}")
+        logging.getLogger("SuperAgent").error(f"Errore lettura secrets.json: {e}")
         return {}
 
-def load_secure_config(path="config/config.yaml"):
-    """unisce config base e secrets"""
+
+def load_secure_config():
+    """Unisce config base YAML e secrets JSON. I secrets hanno priorita."""
+    # FIX BUG-08: Usa percorso assoluto
+    config_path = os.path.join(_ROOT_DIR, "config", "config.yaml")
+
     # 1. Carica secrets
     secrets = load_secrets()
-    
+
     # 2. Carica config base (se esiste)
     config = {}
-    if os.path.exists(path):
+    if os.path.exists(config_path):
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
-        except: pass
-    
+        except Exception as e:
+            logging.getLogger("SuperAgent").error(f"Errore caricamento config.yaml: {e}")
+
     # 3. Merge: i secrets vincono sempre
     config.update(secrets)
     return config
