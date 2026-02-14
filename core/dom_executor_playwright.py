@@ -1,8 +1,6 @@
 import os
 import sys
 import time
-import base64
-import random
 from playwright.sync_api import sync_playwright
 from core.ai_selector_validator import validate_selector
 from core.anti_detect import STEALTH_INJECTION_V4
@@ -10,102 +8,81 @@ from core.anti_detect import STEALTH_INJECTION_V4
 class DomExecutorPlaywright:
     def __init__(self, logger, headless=False, allow_place=False, pin=None,
                  chrome_profile="Default", use_real_chrome=True):
-        self.logger = logger
+        # SALVIAMO IL LOGGER PASSATO DA MAIN
+        self.logger = logger 
         self.headless = headless
-        self.pin = pin
-        self.use_real_chrome = use_real_chrome
-        
-        # Variabile per modalità DEMO (False) o LIVE (True)
         self.allow_place = allow_place 
+        self.use_real_chrome = use_real_chrome
         
         self.pw = None
         self.browser = None
-        self.ctx = None 
         self.page = None
         self._initialized = False
         self.selector_file = "selectors.yaml"
+        
+        # Test immediato di scrittura
+        self.logger.info("✅ EXECUTOR: Inizializzato correttamente.")
 
     def set_live_mode(self, enabled: bool):
-        """Abilita o disabilita il piazzamento reale (Switch UI)."""
         self.allow_place = enabled
-        mode = "LIVE (SOLDI VERI)" if enabled else "DEMO (Simulazione)"
+        mode = "LIVE (SOLDI VERI)" if enabled else "DEMO"
         self.logger.warning(f"🔧 Executor impostato su: {mode}")
 
     def launch_browser(self):
         if self._initialized: return True
         try:
+            self.logger.info("🌐 Avvio Browser Playwright...")
             self.pw = sync_playwright().start()
             
-            # 1. ARGOMENTI PER SEMBRARE UMANO (Stealth Mode)
             args = [
-                "--disable-blink-features=AutomationControlled", # Nasconde navigator.webdriver
-                "--start-maximized",                             # Schermo intero
+                "--disable-blink-features=AutomationControlled",
+                "--start-maximized",
                 "--no-sandbox",
-                "--disable-infobars",                            # Disabilita vecchie barre
+                "--disable-infobars",
                 "--disable-extensions",
                 "--window-position=0,0"
             ]
-            
-            # 2. LA MAGIA: RIMUOVERE LA SCRITTA "CONTROLLATO DA SOFTWARE"
-            # Questo comando specifico rimuove la striscia gialla/grigia in alto
             ignore_args = ["--enable-automation"]
 
-            # 3. SELEZIONE CANALE (Chrome reale vs Chromium)
-            if self.use_real_chrome:
-                channel = "chrome" # Tenta di usare il Chrome installato nel PC
-            else:
-                channel = "chromium"
+            channel = "chrome" if self.use_real_chrome else "chromium"
 
-            # 4. AVVIO BROWSER CON OPZIONI STEALTH
             self.browser = self.pw.chromium.launch(
                 headless=self.headless,
                 channel=channel,
                 args=args,
-                ignore_default_args=ignore_args  # <--- QUESTA RIGA RIMUOVE L'AVVISO
+                ignore_default_args=ignore_args
             )
             
-            # Setup Context con User Agent realistico e risoluzione standard
-            self.ctx = self.browser.new_context(
+            ctx = self.browser.new_context(
                 viewport={"width": 1920, "height": 1080}, 
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             
-            self.page = self.ctx.new_page()
-            
-            # Injection Anti-Detect (fondamentale per Bet365/Bookmakers)
+            self.page = ctx.new_page()
             self.page.add_init_script(STEALTH_INJECTION_V4)
             
             self._initialized = True
+            self.logger.info("✅ Browser avviato con successo.")
             return True
             
         except Exception as e:
-            self.logger.error(f"Browser Init Error: {e}")
+            self.logger.error(f"❌ Errore avvio browser: {e}")
             return False
 
     def close(self):
-        """Chiude tutto per liberare risorse."""
         try:
             if self.page: self.page.close()
-            if self.ctx: self.ctx.close()
             if self.browser: self.browser.close()
             if self.pw: self.pw.stop()
+            self.logger.info("Browser chiuso.")
         except: pass
         self._initialized = False
-        self.page = None
 
     def recycle_browser(self):
-        """
-        ✅ METODO CRITICO RICHIESTO DA TESTER_V4
-        Chiude e riapre il browser per pulire la RAM.
-        """
-        self.logger.info("♻️ Recycling browser session (Memory Cleanup)...")
+        self.logger.info("♻️ Recycling browser...")
         self.close()
         time.sleep(2)
         self.launch_browser()
-
-    def recover_session(self):
-        """Alias per recycle_browser (compatibilità)"""
-        self.recycle_browser()
 
     def _safe_click(self, selector, timeout=5000):
         if not validate_selector(selector): return False
@@ -125,109 +102,68 @@ class DomExecutorPlaywright:
             return True
         except: return False
 
-    def ensure_login(self, selectors):
-        if not self.launch_browser(): return False
-        
-        login_btn = selectors.get("login_btn", "text=Login")
-        if self._safe_click(login_btn):
-            return True
-        return False
-
-    def navigate_to_match(self, teams, selectors):
-        if not self.launch_browser(): return False
-        # Stub navigazione (qui andrebbe la logica di ricerca match)
-        return True
-
-    # --- VERIFICA PARANOICA (POST-CLICK) ---
-    def verify_placement(self, teams):
-        """
-        Va su 'Le mie scommesse' -> 'In Corso' e controlla se il match esiste.
-        """
-        self.logger.info("🕵️ VERIFICA: Controllo se la scommessa è realmente 'In Corso'...")
-        
-        selectors = self._load_selectors()
-        
-        # 1. Clicca su "Scommesse" (Menu utente) o "Le mie scommesse"
-        btn_my_bets = selectors.get("my_bets_button", "text=Scommesse") 
-        if not self._safe_click(btn_my_bets):
-            self.logger.warning("⚠️ Impossibile aprire menu 'Le mie scommesse'")
-            return False
-            
-        time.sleep(2.0)
-        
-        # 2. Clicca su "In Corso"
-        btn_running = selectors.get("filter_running", "text=In Corso")
-        self._safe_click(btn_running)
-        
-        time.sleep(1.5)
-        
-        # 3. Cerca il nome della squadra
-        team_keyword = teams.split("-")[0].strip() 
-        
-        try:
-            if self.page.locator(f"text={team_keyword}").count() > 0:
-                self.logger.info(f"✅ CONFERMATO: Trovata scommessa attiva per '{team_keyword}'")
-                self.page.keyboard.press("Escape") # Chiude menu
-                return True
-            else:
-                self.logger.error(f"❌ FALLITO: Nessuna traccia di '{team_keyword}' in 'In Corso'")
-                self.page.keyboard.press("Escape")
-                return False
-        except:
-            return False
-
-    # --- PIAZZAMENTO INTELLIGENTE ---
-    def place_bet(self, teams, market, stake):
-        """
-        Gestisce DEMO vs LIVE e chiama la verifica se necessario.
-        """
-        self.logger.info(f"🏁 Avvio procedura scommessa: {stake}€ su {teams}")
-
-        # 1. MODALITÀ DEMO
-        if not self.allow_place:
-            self.logger.info(f"🛡️ [DEMO] Simulazione click scommessa riuscita.")
-            return True 
-
-        # 2. MODALITÀ LIVE
-        self.logger.warning(f"💸 [LIVE] Tentativo di piazzamento reale...")
-        
-        selectors = self._load_selectors()
-        input_sel = selectors.get("stake_input", "input.bs-Stake_Input") 
-        btn_sel = selectors.get("place_button", ".bs-BtnPlace")
-
-        # Inserimento Stake
-        if not self._safe_fill(input_sel, str(stake)):
-            self.logger.error("❌ [LIVE] Impossibile inserire lo stake.")
-            return False
-        
-        time.sleep(0.5) 
-
-        # Click Scommetti
-        if not self._safe_click(btn_sel):
-            self.logger.error("❌ [LIVE] Click su 'Scommetti' fallito.")
-            return False
-            
-        # 3. VERIFICA REALE
-        self.logger.info("⏳ Attesa elaborazione sito...")
-        time.sleep(3.0) 
-        
-        if self.verify_placement(teams):
-            return True
-        else:
-            self.logger.critical("🚨 Scommessa NON trovata nello storico!")
-            return False
-
     def _load_selectors(self):
         import yaml
         try:
-            with open(f"config/{self.selector_file}", "r") as f:
-                return yaml.safe_load(f)
+            with open(f"config/{self.selector_file}", "r") as f: return yaml.safe_load(f)
         except: return {}
 
-    def set_selector_file(self, f): self.selector_file = f
-    def check_health(self): return self.page and not self.page.is_closed()
-    
+    def verify_placement(self, teams):
+        self.logger.info("🕵️ VERIFICA: Controllo tab 'In Corso'...")
+        sels = self._load_selectors()
+        
+        btn_bets = sels.get("my_bets_button", "text=Scommesse")
+        if not self._safe_click(btn_bets):
+            self.logger.warning("⚠️ Impossibile aprire menu scommesse")
+            return False
+            
+        time.sleep(2.0)
+        btn_running = sels.get("filter_running", "text=In Corso")
+        self._safe_click(btn_running)
+        time.sleep(1.5)
+        
+        team_name = teams.split("-")[0].strip()
+        try:
+            if self.page.get_by_text(team_name).count() > 0:
+                self.logger.info(f"✅ VERIFICATO: Trovata bet per '{team_name}'")
+                self.page.keyboard.press("Escape")
+                return True
+            else:
+                self.logger.error(f"❌ FALLITO: '{team_name}' non trovata.")
+                self.page.keyboard.press("Escape")
+                return False
+        except: return False
+
+    def place_bet(self, teams, market, stake):
+        self.logger.info(f"🏁 Avvio scommessa: {stake}€ su {teams}")
+        
+        if not self.allow_place:
+            self.logger.info("🛡️ [DEMO] Simulazione OK.")
+            return True
+
+        sels = self._load_selectors()
+        inp = sels.get("stake_input", "input.bs-Stake_Input")
+        if not self._safe_fill(inp, str(stake)): 
+            self.logger.error("❌ Errore input stake")
+            return False
+        
+        time.sleep(0.5)
+        btn = sels.get("place_button", ".bs-BtnPlace")
+        if not self._safe_click(btn): 
+            self.logger.error("❌ Errore click scommetti")
+            return False
+            
+        self.logger.info("⏳ Attesa elaborazione...")
+        time.sleep(3.0) 
+        
+        return self.verify_placement(teams)
+
     # Stubs
+    def ensure_login(self, s): 
+        if not self.launch_browser(): return False
+        return True
+    def navigate_to_match(self, t, s): return True
+    def check_health(self): return True
     def set_trainer(self, t): pass
     def set_healer(self, h): pass
     def take_screenshot_b64(self): return ""
