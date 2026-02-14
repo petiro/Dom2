@@ -2,18 +2,9 @@ import json
 import os
 import logging
 
+from core.utils import get_project_root
+
 logger = logging.getLogger("SuperAgent")
-
-
-def get_project_root():
-    import sys
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    try:
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    except Exception:
-        return os.getcwd()
-
 
 _ROOT_DIR = get_project_root()
 CONFIG_FILE = os.path.join(_ROOT_DIR, "config", "money_config.json")

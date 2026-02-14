@@ -1,8 +1,19 @@
 """
-Utility functions for PyInstaller compatibility and resource management
+Utility functions for PyInstaller compatibility and resource management.
+Centralizes get_project_root() — IMP-02: single source of truth.
 """
 import sys
 import os
+
+
+def get_project_root():
+    """Get absolute path to project root, works for dev and PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    try:
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        return os.getcwd()
 
 
 def resource_path(relative_path):
