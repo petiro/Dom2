@@ -14,6 +14,10 @@ class DomExecutorPlaywright:
         self.headless = headless
         self.pin = pin
         self.use_real_chrome = use_real_chrome
+        
+        # Questa variabile decide se piazzare o no (Default = False/Demo)
+        self.allow_place = allow_place 
+        
         self.pw = None
         self.browser = None
         self.ctx = None 
@@ -21,22 +25,21 @@ class DomExecutorPlaywright:
         self._initialized = False
         self.selector_file = "selectors.yaml"
 
+    def set_live_mode(self, enabled: bool):
+        """Abilita o disabilita il piazzamento reale."""
+        self.allow_place = enabled
+        mode = "LIVE" if enabled else "DEMO"
+        self.logger.warning(f"🔧 Executor impostato su: {mode}")
+
     def launch_browser(self):
         if self._initialized: return True
         try:
             self.pw = sync_playwright().start()
             args = ["--disable-blink-features=AutomationControlled", "--start-maximized"]
-            
-            # Setup Browser
             self.browser = self.pw.chromium.launch(headless=self.headless, args=args)
-            
-            # Setup Context
             self.ctx = self.browser.new_context(viewport={"width": 1366, "height": 768})
             self.page = self.ctx.new_page()
-            
-            # Injection
             self.page.add_init_script(STEALTH_INJECTION_V4)
-            
             self._initialized = True
             return True
         except Exception as e:
@@ -44,53 +47,23 @@ class DomExecutorPlaywright:
             return False
 
     def close(self):
-        """Cleanup completo risorse per evitare Memory Leak."""
         try:
             if self.page: self.page.close()
-        except: pass
-        
-        try:
-            # Chiusura Context esplicita
             if self.ctx: self.ctx.close()
-        except: pass
-        
-        try:
             if self.browser: self.browser.close()
-        except: pass
-        
-        try:
             if self.pw: self.pw.stop()
         except: pass
-        
         self._initialized = False
         self.page = None
-        self.ctx = None
-        self.browser = None
-        self.pw = None
-
-    def recycle_browser(self):
-        """
-        ✅ METODO CRITICO RICHIESTO DA TESTER_V4
-        Esegue un ciclo completo di chiusura e riapertura per liberare memoria.
-        """
-        self.logger.info("♻️ Recycling browser session (Memory Cleanup)...")
-        self.close()
-        time.sleep(2)
-        self.launch_browser()
 
     def _safe_click(self, selector, timeout=5000):
-        # Validazione selector
-        if not validate_selector(selector):
-            self.logger.warning(f"Blocked unsafe selector: {selector}")
-            return False
-
+        if not validate_selector(selector): return False
         try:
             loc = self.page.locator(selector).first
             loc.wait_for(state="visible", timeout=timeout)
             loc.click()
             return True
-        except Exception:
-            return False
+        except: return False
 
     def _safe_fill(self, selector, text, timeout=5000):
         if not validate_selector(selector): return False
@@ -103,25 +76,48 @@ class DomExecutorPlaywright:
 
     def ensure_login(self, selectors):
         if not self.launch_browser(): return False
-        
-        # Logica Login semplificata
         login_btn = selectors.get("login_btn", "text=Login")
-        
-        if self.pin:
-            pass # Qui logica futura inserimento PIN
-            
         if self._safe_click(login_btn):
             return True
         return False
 
     def navigate_to_match(self, teams, selectors):
         if not self.launch_browser(): return False
-        # Stub navigazione
-        return True
+        return True # Stub
 
+    # --- LOGICA PIAZZAMENTO AVANZATA ---
     def place_bet(self, teams, market, stake):
-        self.logger.info(f"💰 Betting {stake} on {teams}")
-        return True
+        """
+        Gestisce sia la modalità DEMO che LIVE in base a self.allow_place
+        """
+        self.logger.info(f"🏁 Avvio procedura scommessa: {stake}€ su {teams}")
+
+        if not self.allow_place:
+            # MODALITÀ DEMO
+            self.logger.info(f"🛡️ [DEMO] Simulazione click scommessa su {teams} riuscita.")
+            return True
+
+        # MODALITÀ LIVE (SOLDI VERI)
+        self.logger.warning(f"💸 [LIVE] Tentativo di piazzamento reale...")
+        
+        selectors = self._load_selectors()
+        input_sel = selectors.get("stake_input", "input.bs-Stake_Input") 
+        btn_sel = selectors.get("place_button", ".bs-BtnPlace")
+
+        # 1. Inserimento Stake
+        if not self._safe_fill(input_sel, str(stake)):
+            self.logger.error("❌ [LIVE] Impossibile inserire lo stake.")
+            return False
+        
+        time.sleep(0.5) 
+
+        # 2. Click Scommetti
+        if self._safe_click(btn_sel):
+            self.logger.info(f"🚀 [LIVE] SCOMMESSA INVIATA CORRETTAMENTE: {stake}€")
+            return True
+        else:
+            self.logger.error("❌ [LIVE] Click su 'Scommetti' fallito.")
+            return False
 
     def _load_selectors(self):
         import yaml
@@ -132,10 +128,8 @@ class DomExecutorPlaywright:
 
     def set_selector_file(self, f): self.selector_file = f
     def check_health(self): return self.page and not self.page.is_closed()
-    
-    # Stubs e metodi di supporto
+    def recover_session(self): self.close(); self.launch_browser()
     def set_trainer(self, t): pass
     def set_healer(self, h): pass
-    def recover_session(self): self.recycle_browser() # Alias per compatibilità
     def take_screenshot_b64(self): return ""
     def get_dom_snapshot(self): return ""
