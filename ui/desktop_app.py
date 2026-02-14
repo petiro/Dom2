@@ -136,6 +136,10 @@ class SupervisorTab(QWidget):
         if QMessageBox.question(self, "STOP", "SEI SICURO? Questo arresterà tutto.", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.log.append("🚨 EMERGENCY STOP ACTIVATED")
             if self.controller: self.controller.shutdown()
+            if self.factory:
+                for name in self.factory.robots_data:
+                    self.factory.robots_data[name]["active"] = False
+                self.factory.save_data()
 
 # ============================================================================
 #  2. MONEY TAB (Roserpina)
