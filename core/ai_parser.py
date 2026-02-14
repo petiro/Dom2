@@ -1,49 +1,33 @@
 import json
 import requests
 import logging
-import re
-
-# CONFIGURA QUI LA TUA CHIAVE OPENROUTER
-OPENROUTER_API_KEY = "INSERISCI_QUI_LA_TUA_CHIAVE_SK_OR_..." 
 
 class AISignalParser:
     def __init__(self, api_key=None):
         self.logger = logging.getLogger("SuperAgent")
-        self.api_key = api_key or OPENROUTER_API_KEY
+        self.api_key = api_key
         self.model = "google/gemini-2.0-flash-001" 
 
     def parse(self, telegram_text):
-        """Analizza il testo Telegram e restituisce dati strutturati."""
         if not telegram_text or len(telegram_text) < 5: return {}
         
-        if "INSERISCI_QUI" in self.api_key or not self.api_key:
-            self.logger.error("❌ ERRORE: Manca API KEY in core/ai_parser.py")
+        if not self.api_key:
+            self.logger.warning("⚠️ AI PARSER: API Key mancante! Vai in 'IMPOSTAZIONI' e salva la chiave.")
             return {}
 
         system_instructions = """
         Sei un parser di scommesse algoritmico.
+        REGOLE:
+        1. Estrai squadre (es. "Squadra A - Squadra B").
+        2. Estrai punteggio (es. "6 - 0").
+        3. Calcola Mercato: Somma punteggio + 0.5 (es. 6+0=6 -> "Over 6.5").
         
-        TUE REGOLE DI ESTRAZIONE E CALCOLO:
-        1. SQUADRE: Cerca la riga con icone '🆚' o 'v'. Estrai le squadre come "Squadra A - Squadra B".
-        2. PUNTEGGIO: Cerca il risultato attuale (es. "⚽ 6 - 0").
-        3. CALCOLO MERCATO (CRUCIALE):
-           - Prendi i due numeri del punteggio (X e Y).
-           - Fai la somma: X + Y.
-           - Aggiungi 0.5 alla somma.
-           - Il mercato è: "Over [Somma+0.5]".
-           
-           Esempio: "⚽ 6 - 0" -> 6+0=6 -> Mercato "Over 6.5".
-
-        OUTPUT: Restituisci SOLO un JSON valido:
-        {
-            "teams": "SquadraCasa - SquadraOspite",
-            "market": "Over X.5",
-            "score_detected": "X-Y"
-        }
+        OUTPUT JSON:
+        {"teams": "...", "market": "Over X.5", "score_detected": "X-Y"}
         """
 
         try:
-            self.logger.info("🧠 AI: Analisi messaggio in corso...")
+            # self.logger.info("🧠 AI: Invio richiesta...")
             response = requests.post(
                 url="https://openrouter.ai/api/v1/chat/completions",
                 headers={
