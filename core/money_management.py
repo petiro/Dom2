@@ -1,60 +1,147 @@
 import json
 import os
+import math
 
-_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# --- FUNZIONI DI UTILITÀ PER I PERCORSI ---
+def get_project_root():
+    import sys
+    if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
+    try: return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    except: return os.getcwd()
 
-class RoserpinaTable:
-    def __init__(self, table_id=1, bankroll=100.0, target_pct=3.0, max_bets=10):
-        self.config_path = os.path.join(_ROOT_DIR, "config", f"money_table_{table_id}.json")
-        self.bankroll = bankroll
-        self.target_profit = (bankroll * target_pct) / 100
-        self.max_bets = max_bets
-        self.data = self._load_or_init()
-        self.is_pending = False
+_ROOT_DIR = get_project_root()
+# File di configurazione salvato dalla UI (Money Tab)
+CONFIG_FILE = os.path.join(_ROOT_DIR, "config", "money_config.json")
+# File di stato per memorizzare il ciclo in corso (Resa residua, Prese mancanti)
+STATE_FILE = os.path.join(_ROOT_DIR, "config", "roserpina_real_state.json")
 
-    def _load_or_init(self):
-        if os.path.exists(self.config_path):
-            with open(self.config_path, 'r') as f:
-                return json.load(f)
-        return self._reset_data()
+# ============================================================================
+#  MOTORE ROSERPINA REALE (Logica Sitiscommesse.com)
+# ============================================================================
+class RoserpinaRealEngine:
+    def __init__(self):
+        self.load_config()
+        self.load_state()
 
-    def _reset_data(self):
-        data = {
-            "current_debt": 0.0,
-            "bets_count": 0,
-            "consecutive_losses": 0
+    def load_config(self):
+        """Carica Capitale, Target % e Prese dalla configurazione UI"""
+        self.bankroll = 100.0
+        self.target_pct = 45.0 # Esempio: voglio guadagnare il 45% del capitale
+        self.wins_needed = 3   # In 3 scommesse vincenti
+        
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.bankroll = float(data.get("bankroll", 100.0))
+                    self.target_pct = float(data.get("target_pct", 45.0))
+                    self.wins_needed = int(data.get("wins_needed", 3))
+            except Exception as e:
+                print(f"Errore caricamento config Roserpina: {e}")
+            
+        # Calcolo il Profitto Totale Obiettivo in Euro (es. 45€ su 100€)
+        self.target_profit_eur = (self.bankroll * self.target_pct) / 100
+
+    def load_state(self):
+        """Carica lo stato del ciclo attuale (se esiste) o ne crea uno nuovo"""
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, 'r') as f:
+                    self.state = json.load(f)
+            except: 
+                self.reset_cycle()
+        else:
+            self.reset_cycle()
+
+    def reset_cycle(self):
+        """Azzera il ciclo: si riparte con tutto il target da raggiungere"""
+        self.state = {
+            "current_target": self.target_profit_eur, # Quanto manca da guadagnare (Resa Residua)
+            "wins_left": self.wins_needed,            # Quante vittorie mancano (Prese Mancanti)
+            "current_loss": 0.0                       # Soldi persi accumulati nel ciclo
         }
-        self._save(data)
-        return data
+        self.save_state()
 
-    def _save(self, data=None):
-        if data: self.data = data
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, 'w') as f:
-            json.dump(self.data, f, indent=4)
+    def save_state(self):
+        """Salva lo stato su disco"""
+        try:
+            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+            with open(STATE_FILE, 'w') as f:
+                json.dump(self.state, f, indent=4)
+        except Exception: pass
 
     def calculate_stake(self, odds):
+        """
+        APPLICA LA FORMULA ROSERPINA ORIGINALE:
+        Stake = (Target Residuo + Perdite Accumulate) / (Prese Rimaste * (Quota - 1))
+        """
+        # Controlli di sicurezza
         if odds <= 1.0: return 0.0
-        # Formula Roserpina: (Obiettivo + Debito) / (Quota - 1)
-        needed = self.target_profit + self.data["current_debt"]
-        stake = needed / (odds - 1)
-        # Safety: Max 50% del bankroll
-        return round(min(stake, self.bankroll * 0.5), 2)
+        if self.state["wins_left"] <= 0: return 0.0 # Ciclo finito
 
-    def record_result(self, result, stake):
-        """ result: 'win' o 'lose' """
-        if result == "win":
-            self._reset_data() # Ciclo chiuso, profitto incassato
-        elif result == "lose":
-            self.data["current_debt"] += stake
-            self.data["bets_count"] += 1
-            self.data["consecutive_losses"] += 1
-            
-            # Reset forzato se troppe perdite o fine ciclo
-            if (self.data["bets_count"] >= self.max_bets or 
-                self.data["consecutive_losses"] >= 3):
-                self._reset_data()
-            else:
-                self._save()
+        numerator = self.state["current_target"] + self.state["current_loss"]
+        denominator = self.state["wins_left"] * (odds - 1)
         
-        self.is_pending = False
+        if denominator <= 0: return 0.0 
+        
+        stake = numerator / denominator
+        
+        # --- PROTEZIONE BANKROLL ---
+        # Evita che il bot punti tutto in una volta se le cose vanno male.
+        # Max Stake = 25% del Bankroll totale
+        max_stake = self.bankroll * 0.25
+        final_stake = round(min(stake, max_stake), 2)
+        
+        return max(final_stake, 0.10) # Minimo 10 centesimi
+
+    def record_result(self, result, stake, odds):
+        """Gestisce l'esito: WIN abbassa il target, LOSE alza il debito"""
+        
+        if result == "win":
+            # Calcolo profitto netto reale
+            profit = (stake * odds) - stake
+            
+            # 1. Abbasso il target residuo di quanto ho appena guadagnato
+            self.state["current_target"] -= profit
+            # 2. Tolgo una "Presa" (vittoria) dalle mancanti
+            self.state["wins_left"] -= 1
+            
+            # CONTROLLO FINE CICLO
+            # Se ho finito le prese O se ho raggiunto l'obiettivo economico (target <= 0)
+            if self.state["wins_left"] <= 0 or self.state["current_target"] <= 0.1:
+                print(f"🏆 CICLO ROSERPINA COMPLETATO! Profitto incassato.")
+                self.reset_cycle()
+                return
+
+        elif result == "lose":
+            # Ho perso: Aggiungo lo stake perso al mucchio da recuperare
+            self.state["current_loss"] += stake
+            # Nota: Le "Prese Mancanti" (wins_left) NON cambiano quando perdi.
+            # Devi ancora fare lo stesso numero di vittorie, ma recuperando più soldi.
+        
+        self.save_state()
+
+# ============================================================================
+#  MANAGER DI INTERFACCIA (Per il Controller)
+# ============================================================================
+class MoneyManager:
+    def __init__(self, config=None):
+        # Inizializzo il motore reale
+        self.engine = RoserpinaRealEngine()
+
+    def reload(self):
+        """Ricarica la configurazione (chiamato quando premi Salva in UI)"""
+        self.engine.load_config()
+        # Se i parametri cambiano drasticamente, potresti voler resettare il ciclo,
+        # ma per ora manteniamo lo stato per non perdere i progressi.
+
+    def get_stake(self, strategy_name, odds, fixed_amount=None):
+        """
+        Il controller chiama questo metodo. Ignoriamo 'strategy_name' 
+        perché in questa versione usiamo forzatamente Roserpina Reale.
+        """
+        return self.engine.calculate_stake(odds)
+
+    def record_outcome(self, strategy_name, result, stake, odds=2.0):
+        """Registra l'esito nel motore matematico"""
+        self.engine.record_result(result, stake, odds)
