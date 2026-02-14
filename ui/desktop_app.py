@@ -1,7 +1,7 @@
 """
-SuperAgent Desktop App V5.8 - SCROLLABLE EDITION
-- Aggiunta QScrollArea a tutte le Tab per schermi piccoli.
-- Include: Supervisor (Live), Factory (Agenti), Money (Roserpina), Trainer (AI), Stats, Mapping.
+SuperAgent Desktop App V5.9 - UI Secrets Edition
+- Include SettingsTab per gestire le chiavi API direttamente dalla UI.
+- ScrollArea ovunque per schermi piccoli.
 """
 import os
 import sys
@@ -28,7 +28,7 @@ def get_project_root():
 _ROOT_DIR = get_project_root()
 ROBOTS_FILE = os.path.join(_ROOT_DIR, "config", "my_robots.json")
 
-# --- STYLESHEET (Aggiornato per ScrollArea) ---
+# --- STYLESHEET ---
 STYLE_SHEET = """
 QMainWindow, QWidget { background-color: #1e1e1e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; }
 QTabWidget::pane { border: 1px solid #333; }
@@ -43,7 +43,7 @@ QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color:
 QHeaderView::section { background-color: #2d2d2d; padding: 4px; border: 1px solid #333; }
 QTableWidget { gridline-color: #333; }
 
-/* ScrollArea Trasparente per integrarsi col tema */
+/* ScrollArea Trasparente */
 QScrollArea { border: none; background-color: transparent; }
 QScrollArea > QWidget > QWidget { background-color: transparent; }
 QScrollBar:vertical { border: none; background: #2d2d2d; width: 10px; margin: 0px; }
@@ -55,7 +55,6 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 #  HELPER: SCROLL WRAPPER
 # ============================================================================
 def create_scroll_layout(parent_widget):
-    """Crea una ScrollArea avvolgente e restituisce il layout interno dove aggiungere i widget."""
     outer_layout = QVBoxLayout(parent_widget)
     outer_layout.setContentsMargins(0, 0, 0, 0)
     
@@ -65,7 +64,6 @@ def create_scroll_layout(parent_widget):
     
     content_widget = QWidget()
     content_layout = QVBoxLayout(content_widget)
-    # content_layout.setContentsMargins(10, 10, 10, 10)
     
     scroll.setWidget(content_widget)
     outer_layout.addWidget(scroll)
@@ -83,10 +81,8 @@ class SupervisorTab(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        # Usa il wrapper scrollabile
         layout = create_scroll_layout(self)
         
-        # --- HEADER ---
         header = QFrame()
         header.setStyleSheet("background-color: #252526; padding: 10px; border-radius: 5px;")
         h_lay = QHBoxLayout(header)
@@ -94,11 +90,9 @@ class SupervisorTab(QWidget):
         lbl_stat = QLabel("🛡️ SUPERVISOR SYSTEM")
         lbl_stat.setStyleSheet("font-weight: bold; font-size: 14px; color: #4CAF50;")
         
-        # --- SWITCH DEMO/LIVE ---
         self.mode_group = QButtonGroup(self)
         self.rb_demo = QRadioButton("🛡️ DEMO (Safe)")
         self.rb_live = QRadioButton("💸 LIVE (Soldi Veri)")
-        
         self.rb_demo.setChecked(True)
         self.rb_demo.setStyleSheet("color: #4CAF50; font-weight: bold;")
         self.rb_live.setStyleSheet("color: #F44336; font-weight: bold;")
@@ -114,7 +108,6 @@ class SupervisorTab(QWidget):
         h_lay.addWidget(self.rb_live)
         h_lay.addStretch()
 
-        # --- EMERGENCY STOP ---
         btn_kill = QPushButton("☢️ EMERGENCY STOP")
         btn_kill.setMinimumHeight(40)
         btn_kill.setStyleSheet("QPushButton { background-color: #B71C1C; color: white; font-weight: bold; }")
@@ -123,10 +116,9 @@ class SupervisorTab(QWidget):
         
         layout.addWidget(header)
         
-        # --- LOG CONSOLE ---
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(300) # Altezza minima per vedere qualcosa
+        self.log.setMinimumHeight(300)
         self.log.setStyleSheet("background-color: #000; color: #0f0; font-family: 'Consolas'; font-size: 11px;")
         layout.addWidget(self.log)
 
@@ -136,18 +128,14 @@ class SupervisorTab(QWidget):
             if self.controller and hasattr(self.controller, "set_live_mode"):
                 self.controller.set_live_mode(is_live)
                 if is_live:
-                    self.log.append("<span style='color:red'>⚠️ ATTENZIONE: MODALITÀ LIVE ATTIVATA. IL BOT ORA PIAZZA SCOMMESSE REALI.</span>")
+                    self.log.append("<span style='color:red'>⚠️ ATTENZIONE: MODALITÀ LIVE ATTIVATA.</span>")
                 else:
-                    self.log.append("<span style='color:green'>🛡️ MODALITÀ DEMO ATTIVATA. Scommesse simulate.</span>")
+                    self.log.append("<span style='color:green'>🛡️ MODALITÀ DEMO ATTIVATA.</span>")
 
     def kill_system(self):
         if QMessageBox.question(self, "STOP", "SEI SICURO? Questo arresterà tutto.", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.log.append("🚨 EMERGENCY STOP ACTIVATED")
             if self.controller: self.controller.shutdown()
-            if self.factory:
-                for name in self.factory.robots_data:
-                    self.factory.robots_data[name]["active"] = False
-                self.factory.save_data()
 
 # ============================================================================
 #  2. MONEY TAB (Roserpina)
@@ -166,7 +154,6 @@ class MoneyTab(QWidget):
         lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #FFD700;")
         layout.addWidget(lbl_title)
 
-        # Selezione Strategia
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItems(["Stake Fisso", "Roserpina"])
         self.cmb_mode.currentTextChanged.connect(self.toggle_inputs)
@@ -176,20 +163,17 @@ class MoneyTab(QWidget):
         group_params = QGroupBox("Parametri")
         form_params = QFormLayout(group_params)
 
-        # 1. Capitale
         self.sb_bankroll = QDoubleSpinBox()
         self.sb_bankroll.setRange(10, 100000)
         self.sb_bankroll.setValue(100.0)
         self.sb_bankroll.setPrefix("€ ")
         self.sb_bankroll.setStyleSheet("font-weight: bold; font-size: 14px; color: #FFF;")
 
-        # 2. Parametri Variabili
-        self.sb_target_pct = QDoubleSpinBox() # Usato anche come stake fisso
+        self.sb_target_pct = QDoubleSpinBox()
         self.sb_target_pct.setRange(0.1, 500)
         self.sb_target_pct.setValue(1.0)
         self.lbl_target = QLabel("Target/Importo:")
         
-        # 3. Wins Needed (Solo Roserpina)
         self.sb_wins_needed = QSpinBox()
         self.sb_wins_needed.setRange(1, 20)
         self.sb_wins_needed.setValue(3)
@@ -216,7 +200,7 @@ class MoneyTab(QWidget):
         btn_reset.clicked.connect(self.reset_cycle_data)
         layout.addWidget(btn_reset)
 
-        layout.addStretch() # Spinge tutto in alto
+        layout.addStretch()
 
     def toggle_inputs(self, text):
         if text == "Roserpina":
@@ -225,22 +209,22 @@ class MoneyTab(QWidget):
             self.sb_target_pct.setValue(45.0)
             self.sb_wins_needed.setVisible(True)
             self.lbl_wins.setVisible(True)
-            self.lbl_info.setText("ℹ️ Roserpina: Calcola lo stake per ottenere la % di resa nel numero di prese indicato.")
+            self.lbl_info.setText("ℹ️ Roserpina: Calcola lo stake per ottenere la % di resa.")
         else:
             self.lbl_target.setText("Importo Fisso:")
             self.sb_target_pct.setSuffix(" €")
             self.sb_target_pct.setValue(1.0)
             self.sb_wins_needed.setVisible(False)
             self.lbl_wins.setVisible(False)
-            self.lbl_info.setText("ℹ️ Stake Fisso: Punta sempre lo stesso importo su ogni scommessa.")
+            self.lbl_info.setText("ℹ️ Stake Fisso: Punta sempre lo stesso importo.")
 
     def save_config(self):
         data = {
             "strategy": self.cmb_mode.currentText(),
             "bankroll": self.sb_bankroll.value(),
-            "target_pct": self.sb_target_pct.value(), # Usato anche come fixed_amount
+            "target_pct": self.sb_target_pct.value(),
             "wins_needed": self.sb_wins_needed.value(),
-            "fixed_amount": self.sb_target_pct.value() # Ridondanza per sicurezza
+            "fixed_amount": self.sb_target_pct.value()
         }
         try:
             os.makedirs("config", exist_ok=True)
@@ -253,7 +237,7 @@ class MoneyTab(QWidget):
             QMessageBox.critical(self, "Errore", f"Impossibile salvare: {e}")
 
     def reset_cycle_data(self):
-        if QMessageBox.question(self, "Reset", "Resettare il ciclo? Si riparte da zero.", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+        if QMessageBox.question(self, "Reset", "Resettare il ciclo?", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
             try:
                 if os.path.exists("config/roserpina_real_state.json"):
                     os.remove("config/roserpina_real_state.json")
@@ -268,13 +252,11 @@ class MoneyTab(QWidget):
                     self.sb_bankroll.setValue(float(data.get("bankroll", 100.0)))
                     strat = data.get("strategy", "Stake Fisso")
                     self.cmb_mode.setCurrentText(strat)
-                    self.toggle_inputs(strat) # Aggiorna UI
-                    
+                    self.toggle_inputs(strat)
                     if strat == "Roserpina":
                         self.sb_target_pct.setValue(float(data.get("target_pct", 45.0)))
                     else:
                         self.sb_target_pct.setValue(float(data.get("fixed_amount", 1.0)))
-                        
                     self.sb_wins_needed.setValue(int(data.get("wins_needed", 3)))
             except: pass
 
@@ -291,50 +273,43 @@ class RobotFactoryTab(QWidget):
         self.load_data()
 
     def init_ui(self):
-        # Wrapper scroll per tutta la tab (utile se i pannelli sono alti)
         main_layout = create_scroll_layout(self)
-        
-        # Container orizzontale dentro lo scroll
         h_container = QWidget()
         layout = QHBoxLayout(h_container)
         main_layout.addWidget(h_container)
         
-        # --- PANNELLO SINISTRO ---
+        # SX
         left_panel = QFrame()
         left_panel.setFixedWidth(250)
         left_panel.setStyleSheet("background-color: #252526; border-radius: 5px;")
         left_layout = QVBoxLayout(left_panel)
-        
         left_layout.addWidget(QLabel("🤖 AGENTI ATTIVI"))
         self.robot_list = QListWidget()
         self.robot_list.setStyleSheet("background-color: #333; border: none;")
         self.robot_list.currentItemChanged.connect(self.on_robot_select)
         left_layout.addWidget(self.robot_list)
-        
         btn_add = QPushButton("+ NUOVO AGENTE")
         btn_add.setStyleSheet("background-color: #2E7D32; color: white;")
         btn_add.clicked.connect(self.new_robot)
         left_layout.addWidget(btn_add)
-        
         btn_del = QPushButton("🗑 ELIMINA")
         btn_del.setStyleSheet("background-color: #B71C1C; color: white;")
         btn_del.clicked.connect(self.delete_robot)
         left_layout.addWidget(btn_del)
-        
         layout.addWidget(left_panel)
         
-        # --- PANNELLO DESTRO ---
+        # DX
         self.right_panel = QTabWidget()
         self.right_panel.setStyleSheet("QTabWidget::pane { border: 1px solid #444; }")
         
-        # 1. CHAT MEMORY
+        # Chat
         self.tab_chat = QWidget()
         chat_layout = QVBoxLayout(self.tab_chat)
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
         self.chat_display.setStyleSheet("background-color: #1e1e1e; color: #00E676; font-family: Consolas;")
         self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("Parla con questo robot... (es: 'Impara che su Bet365...')")
+        self.chat_input.setPlaceholderText("Parla con questo robot...")
         self.chat_input.returnPressed.connect(self.send_to_robot)
         btn_send_chat = QPushButton("INVIA AL CERVELLO 🧠")
         btn_send_chat.clicked.connect(self.send_to_robot)
@@ -342,7 +317,7 @@ class RobotFactoryTab(QWidget):
         chat_layout.addWidget(self.chat_input)
         chat_layout.addWidget(btn_send_chat)
         
-        # 2. CONFIG
+        # Config
         self.tab_config = QWidget()
         conf_layout = QFormLayout(self.tab_config)
         self.inp_name = QLineEdit()
@@ -356,7 +331,7 @@ class RobotFactoryTab(QWidget):
         btn_save.clicked.connect(self.save_current)
         conf_layout.addWidget(btn_save)
         
-        # 3. SITO
+        # Sito
         self.tab_site = QWidget()
         site_layout = QVBoxLayout(self.tab_site)
         self.txt_selectors = QTextEdit()
@@ -418,7 +393,6 @@ class RobotFactoryTab(QWidget):
     def save_current(self):
         if not self.current_robot_name: return
         new_name = self.inp_name.text().strip()
-        # Gestione cambio nome
         if new_name != self.current_robot_name:
             self.robots_data[new_name] = self.robots_data.pop(self.current_robot_name)
             self.current_robot_name = new_name
@@ -451,25 +425,21 @@ class RobotFactoryTab(QWidget):
         self.save_data()
 
 # ============================================================================
-#  4. TRAINER TAB (Generico)
+#  4. TRAINER TAB
 # ============================================================================
 class TrainerTab(QWidget):
     def __init__(self, controller, logger):
         super().__init__()
         self.controller = controller
         layout = create_scroll_layout(self)
-        
         layout.addWidget(QLabel("🧠 AI TRAINER (Generico)"))
-        
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
-        self.chat_display.setPlaceholderText("Qui puoi addestrare l'AI generale del sistema (non specifica per agente).")
+        self.chat_display.setPlaceholderText("Qui puoi addestrare l'AI generale del sistema.")
         layout.addWidget(self.chat_display)
-        
         self.inp = QLineEdit()
         self.inp.setPlaceholderText("Scrivi istruzioni globali...")
         layout.addWidget(self.inp)
-        
         btn = QPushButton("INVIA")
         layout.addWidget(btn)
 
@@ -482,7 +452,7 @@ class MappingTab(QWidget):
         layout = create_scroll_layout(self)
         layout.addWidget(QLabel("🗺️ AI MAPPING"))
         self.inp = QLineEdit()
-        self.inp.setPlaceholderText("URL del sito (es. https://www.goldbet.it)")
+        self.inp.setPlaceholderText("URL del sito")
         layout.addWidget(self.inp)
         btn = QPushButton("Avvia Mappatura Automatica")
         btn.clicked.connect(lambda: controller.request_auto_mapping(self.inp.text()) if controller else None)
@@ -495,13 +465,11 @@ class StatsTab(QWidget):
         self.controller = controller
         layout = create_scroll_layout(self)
         layout.addWidget(QLabel("📊 STATISTICHE SCOMMESSE"))
-        
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Data", "Match", "Mercato", "Stake", "Esito"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setMinimumHeight(400) # Per evitare che collassi nello scroll
+        self.table.setMinimumHeight(400)
         layout.addWidget(self.table)
-        
         btn = QPushButton("Aggiorna")
         btn.clicked.connect(self.refresh)
         layout.addWidget(btn)
@@ -510,12 +478,103 @@ class StatsTab(QWidget):
         if self.controller and hasattr(self.controller, "get_bet_history"):
             hist = self.controller.get_bet_history()
             self.table.setRowCount(len(hist))
-            for i, h in enumerate(reversed(hist)): # Mostra le ultime per prime
+            for i, h in enumerate(reversed(hist)): 
                 self.table.setItem(i, 0, QTableWidgetItem(h.get("timestamp", "")))
                 self.table.setItem(i, 1, QTableWidgetItem(h.get("teams", "")))
                 self.table.setItem(i, 2, QTableWidgetItem(h.get("market", "")))
                 self.table.setItem(i, 3, QTableWidgetItem(f"{h.get('stake', 0)}€"))
                 self.table.setItem(i, 4, QTableWidgetItem(h.get("status", "")))
+
+# ============================================================================
+#  6. SETTINGS TAB (NUOVA)
+# ============================================================================
+class SettingsTab(QWidget):
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content_widget = QWidget()
+        self.layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        main_layout.addWidget(scroll)
+
+        self.init_ui()
+        self.load_keys()
+
+    def init_ui(self):
+        lbl_title = QLabel("⚙️ IMPOSTAZIONI E CHIAVI API")
+        lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #FFD700;")
+        self.layout.addWidget(lbl_title)
+
+        group_api = QGroupBox("Credenziali di Accesso")
+        form_api = QFormLayout(group_api)
+
+        self.inp_openrouter = QLineEdit()
+        self.inp_openrouter.setPlaceholderText("sk-or-v1-...")
+        self.inp_openrouter.setEchoMode(QLineEdit.Password)
+        
+        self.inp_tg_id = QLineEdit()
+        self.inp_tg_id.setEchoMode(QLineEdit.Password)
+        
+        self.inp_tg_hash = QLineEdit()
+        self.inp_tg_hash.setEchoMode(QLineEdit.Password)
+
+        self.chk_show = QCheckBox("Mostra Chiavi")
+        self.chk_show.stateChanged.connect(self.toggle_visibility)
+
+        form_api.addRow("OpenRouter API Key (AI):", self.inp_openrouter)
+        form_api.addRow("Telegram API ID:", self.inp_tg_id)
+        form_api.addRow("Telegram API Hash:", self.inp_tg_hash)
+        form_api.addRow("", self.chk_show)
+
+        self.layout.addWidget(group_api)
+
+        btn_save = QPushButton("💾 SALVA CHIAVI")
+        btn_save.setStyleSheet("background-color: #2196F3; font-weight: bold; padding: 10px;")
+        btn_save.clicked.connect(self.save_keys)
+        self.layout.addWidget(btn_save)
+
+        self.layout.addStretch()
+
+    def toggle_visibility(self, state):
+        mode = QLineEdit.Normal if state else QLineEdit.Password
+        self.inp_openrouter.setEchoMode(mode)
+        self.inp_tg_id.setEchoMode(mode)
+        self.inp_tg_hash.setEchoMode(mode)
+
+    def load_keys(self):
+        secrets_path = os.path.join("config", "secrets.json")
+        if os.path.exists(secrets_path):
+            try:
+                with open(secrets_path, "r") as f:
+                    data = json.load(f)
+                    self.inp_openrouter.setText(data.get("openrouter_api_key", ""))
+                    self.inp_tg_id.setText(data.get("telegram_api_id", ""))
+                    self.inp_tg_hash.setText(data.get("telegram_api_hash", ""))
+            except: pass
+
+    def save_keys(self):
+        secrets_path = os.path.join("config", "secrets.json")
+        os.makedirs("config", exist_ok=True)
+        
+        data = {
+            "openrouter_api_key": self.inp_openrouter.text().strip(),
+            "telegram_api_id": self.inp_tg_id.text().strip(),
+            "telegram_api_hash": self.inp_tg_hash.text().strip()
+        }
+        try:
+            with open(secrets_path, "w") as f:
+                json.dump(data, f, indent=4)
+            if self.controller and hasattr(self.controller, "reload_secrets"):
+                self.controller.reload_secrets()
+            QMessageBox.information(self, "Successo", "✅ Chiavi salvate e caricate nel bot!")
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Impossibile salvare: {e}")
 
 # ============================================================================
 #  MAIN WINDOW
@@ -525,10 +584,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.logger = logger
         self.controller = controller
-        # Salviamo riferimento per la factory nel controller
         if self.controller: self.controller.ui_window = self
             
-        self.setWindowTitle("SuperAgent V5.8 - Scrollable")
+        self.setWindowTitle("SuperAgent V5.9 - UI Secrets")
         self.resize(1200, 800)
         self.setStyleSheet(STYLE_SHEET)
 
@@ -537,16 +595,18 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
 
         self.tabs = QTabWidget()
-        self.factory = RobotFactoryTab(controller) # Factory prima per riferimento
+        self.factory = RobotFactoryTab(controller)
         self.supervisor = SupervisorTab(controller, self.factory)
         self.money = MoneyTab(controller)
         self.trainer = TrainerTab(controller, logger)
         self.mapping = MappingTab(controller)
         self.stats = StatsTab(controller)
+        self.settings = SettingsTab(controller) # Nuova Tab
 
         self.tabs.addTab(self.supervisor, "🛡️ SUPERVISOR")
         self.tabs.addTab(self.factory, "🏭 FACTORY")
         self.tabs.addTab(self.money, "💰 MONEY")
+        self.tabs.addTab(self.settings, "⚙️ IMPOSTAZIONI")
         self.tabs.addTab(self.trainer, "🧠 TRAINER")
         self.tabs.addTab(self.mapping, "🗺️ MAPPING")
         self.tabs.addTab(self.stats, "📊 STATS")
