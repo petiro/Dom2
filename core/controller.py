@@ -9,8 +9,9 @@ from PySide6.QtCore import QObject, Signal
 # Import dei moduli Core
 from core.money_management import MoneyManager
 from core.ai_parser import AISignalParser
-# Importa il loader sicuro
 from core.config_loader import load_secure_config
+
+# Import opzionale per compatibilità
 try: from core.signal_parser import TelegramSignalParser
 except: TelegramSignalParser = None
 
@@ -31,7 +32,7 @@ class SuperAgentController(QObject):
         api_key = self.secrets.get("openrouter_api_key")
         
         if not api_key:
-            self.logger.warning("⚠️ ATTENZIONE: Nessuna chiave OpenRouter trovata. L'AI potrebbe non funzionare.")
+            self.logger.warning("⚠️ Controller: Nessuna chiave OpenRouter trovata. L'AI non funzionerà finché non la salvi nelle Impostazioni.")
         else:
             self.logger.info("🔑 Chiavi API caricate con successo.")
 
@@ -42,12 +43,13 @@ class SuperAgentController(QObject):
         self.money_manager = MoneyManager()
         self.legacy_parser = TelegramSignalParser() if TelegramSignalParser else None
         
-        # Componenti da collegare
+        # Componenti da collegare via set_...
         self.executor = None
         self.trainer = None
         self.monitor = None
         self.watchdog = None
         self.command_parser = None
+        self.ui_window = None # Riferimento alla UI
         
         self._history = self._load_history()
         
@@ -57,11 +59,21 @@ class SuperAgentController(QObject):
         self._stop_event = threading.Event()
 
     # --- METODI DI COLLEGAMENTO (FIX PER MAIN.PY) ---
-    def set_executor(self, ex): self.executor = ex
-    def set_trainer(self, trainer): self.trainer = trainer
-    def set_monitor(self, monitor): self.monitor = monitor
-    def set_watchdog(self, watchdog): self.watchdog = watchdog
-    def set_command_parser(self, parser): self.command_parser = parser
+    # Questi sono i metodi che mancavano e facevano crashare il bot!
+    def set_executor(self, ex): 
+        self.executor = ex
+        
+    def set_trainer(self, trainer):
+        self.trainer = trainer
+
+    def set_monitor(self, monitor):
+        self.monitor = monitor
+
+    def set_watchdog(self, watchdog):
+        self.watchdog = watchdog
+        
+    def set_command_parser(self, parser):
+        self.command_parser = parser
 
     def start_system(self):
         """Chiamato da main.py per avviare eventuali thread di background"""
@@ -88,17 +100,13 @@ class SuperAgentController(QObject):
         self.logger.info("🔑 [CONTROLLER] Chiavi di sistema ricaricate dalla UI.")
 
     def handle_telegram_signal(self, text):
-        """
-        Gestisce il segnale con protezione Threading.
-        """
-        # WATCHDOG: Se ci sono troppi thread attivi, ignora per evitare freeze
+        """Gestisce il segnale con protezione Threading."""
         with self._lock:
             if self._active_threads > 2:
                 self.logger.warning("⚠️ [WATCHDOG] Troppe operazioni in corso. Segnale ignorato.")
                 return
             self._active_threads += 1
 
-        # Lancia il thread
         threading.Thread(target=self._process_signal_thread, args=(text,), daemon=True).start()
 
     def _process_signal_thread(self, text):
@@ -108,7 +116,7 @@ class SuperAgentController(QObject):
             # 1. Prova AI Parser (più intelligente)
             data = self.ai_parser.parse(text)
             
-            # 2. Fallback su Parser Semplice se AI fallisce o è vuota
+            # 2. Fallback su Parser Semplice
             if (not data or not data.get("teams")) and self.legacy_parser:
                 self.logger.info("🤖 AI incerta, uso parser classico...")
                 data = self.legacy_parser.parse(text)
@@ -143,13 +151,10 @@ class SuperAgentController(QObject):
             self.logger.warning("⚠️ Stake calcolato nullo o ciclo finito. Salto.")
             return
 
-        # 3. Piazza & Verifica (Blocking Call, ma siamo in un thread quindi OK)
+        # 3. Piazza & Verifica
         success = self.executor.place_bet(data["teams"], data["market"], stake)
         
-        # 4. Registra Esito (Nota: Roserpina reale richiederebbe esito post-partita)
-        # self.money_manager.record_outcome("pending", stake, odds) 
-        
-        # 5. Salva Storico
+        # 4. Salva Storico
         record = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "teams": data["teams"],
@@ -187,7 +192,6 @@ class SuperAgentController(QObject):
     def get_bet_history(self): return self._history
     
     def safe_emit(self, msg): 
-        """Emette il segnale UI in modo sicuro."""
         try: self.log_message.emit(msg)
         except: pass
 
