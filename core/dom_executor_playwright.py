@@ -16,11 +16,13 @@ class DomExecutorPlaywright:
         
         self.pw = None
         self.browser = None
+        self.ctx = None
         self.page = None
         self._initialized = False
+        self.is_attached = False # Flag per sapere se siamo collegati a Chrome esistente
         self.selector_file = "selectors.yaml"
         
-        # Test immediato di scrittura
+        # Test immediato di scrittura log
         self.logger.info("✅ EXECUTOR: Inizializzato correttamente.")
 
     def set_live_mode(self, enabled: bool):
@@ -30,10 +32,38 @@ class DomExecutorPlaywright:
 
     def launch_browser(self):
         if self._initialized: return True
+        
+        self.logger.info("🌐 Inizializzazione Playwright...")
+        self.pw = sync_playwright().start()
+
+        # --- TENTATIVO 1: AGGANCIO A CHROME ESISTENTE (Porta 9222) ---
         try:
-            self.logger.info("🌐 Avvio Browser Playwright...")
-            self.pw = sync_playwright().start()
+            # Prova a collegarsi a un Chrome aperto manualmente dall'utente
+            # Richiede che Chrome sia stato avviato con: --remote-debugging-port=9222
+            self.browser = self.pw.chromium.connect_over_cdp("http://localhost:9222")
             
+            # Recupera il contesto e la pagina esistente
+            self.ctx = self.browser.contexts[0]
+            if self.ctx.pages:
+                self.page = self.ctx.pages[0] # Usa la scheda già aperta
+                self.logger.info("✅ AGGANCIATO alla scheda esistente.")
+            else:
+                self.page = self.ctx.new_page()
+                self.logger.info("✅ AGGANCIATO a Chrome (Nuova Tab).")
+            
+            self.is_attached = True
+            self._initialized = True
+            
+            # Iniezione Stealth anche qui per sicurezza
+            self.page.add_init_script(STEALTH_INJECTION_V4)
+            return True
+            
+        except Exception:
+            self.logger.info("ℹ️ Nessun Chrome aperto sulla porta 9222. Avvio nuova sessione...")
+            self.is_attached = False
+
+        # --- TENTATIVO 2: AVVIO NUOVO BROWSER (Se il primo fallisce) ---
+        try:
             args = [
                 "--disable-blink-features=AutomationControlled",
                 "--start-maximized",
@@ -53,16 +83,16 @@ class DomExecutorPlaywright:
                 ignore_default_args=ignore_args
             )
             
-            ctx = self.browser.new_context(
+            self.ctx = self.browser.new_context(
                 viewport={"width": 1920, "height": 1080}, 
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             
-            self.page = ctx.new_page()
+            self.page = self.ctx.new_page()
             self.page.add_init_script(STEALTH_INJECTION_V4)
             
             self._initialized = True
-            self.logger.info("✅ Browser avviato con successo.")
+            self.logger.info("✅ Nuovo Browser avviato con successo.")
             return True
             
         except Exception as e:
@@ -70,15 +100,24 @@ class DomExecutorPlaywright:
             return False
 
     def close(self):
+        """Chiude il browser o si disconnette."""
         try:
-            if self.page: self.page.close()
-            if self.browser: self.browser.close()
+            if self.is_attached:
+                self.logger.info("🔌 Disconnessione dal tuo Chrome (la finestra resta aperta).")
+                if self.browser: self.browser.close() # Disconnette solo il CDP
+            else:
+                # Se l'abbiamo aperto noi, lo chiudiamo davvero
+                if self.page: self.page.close()
+                if self.browser: self.browser.close()
+            
             if self.pw: self.pw.stop()
-            self.logger.info("Browser chiuso.")
         except: pass
         self._initialized = False
 
     def recycle_browser(self):
+        if self.is_attached:
+            self.logger.info("♻️ Skip Recycle: Sto usando il tuo Chrome, non posso riavviarlo.")
+            return
         self.logger.info("♻️ Recycling browser...")
         self.close()
         time.sleep(2)
@@ -112,16 +151,20 @@ class DomExecutorPlaywright:
         self.logger.info("🕵️ VERIFICA: Controllo tab 'In Corso'...")
         sels = self._load_selectors()
         
+        # 1. Menu Scommesse
         btn_bets = sels.get("my_bets_button", "text=Scommesse")
         if not self._safe_click(btn_bets):
             self.logger.warning("⚠️ Impossibile aprire menu scommesse")
             return False
             
         time.sleep(2.0)
+        
+        # 2. Tab In Corso
         btn_running = sels.get("filter_running", "text=In Corso")
         self._safe_click(btn_running)
         time.sleep(1.5)
         
+        # 3. Cerca Team
         team_name = teams.split("-")[0].strip()
         try:
             if self.page.get_by_text(team_name).count() > 0:
@@ -141,14 +184,17 @@ class DomExecutorPlaywright:
             self.logger.info("🛡️ [DEMO] Simulazione OK.")
             return True
 
+        # LIVE
         sels = self._load_selectors()
         inp = sels.get("stake_input", "input.bs-Stake_Input")
+        
         if not self._safe_fill(inp, str(stake)): 
             self.logger.error("❌ Errore input stake")
             return False
         
         time.sleep(0.5)
         btn = sels.get("place_button", ".bs-BtnPlace")
+        
         if not self._safe_click(btn): 
             self.logger.error("❌ Errore click scommetti")
             return False
