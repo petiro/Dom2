@@ -12,7 +12,7 @@ def get_project_root():
         return os.path.dirname(sys.executable)
     try:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    except Exception:
+    except (NameError, TypeError):
         return os.getcwd()
 
 
