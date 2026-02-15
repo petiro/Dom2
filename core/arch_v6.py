@@ -48,6 +48,7 @@ class PlaywrightWorker:
                 fn, args, kwargs = self.queue.get(timeout=1)
                 fn(*args, **kwargs)
                 self.queue.task_done()
+                self.logger.debug(f"Worker task completato: {fn.__name__}")
             except queue.Empty:
                 continue
             except Exception as e:
@@ -69,12 +70,18 @@ class SessionGuardian:
 
     def _loop(self):
         self.logger.info("Session Guardian attivo.")
-        while not self.stop_event.is_set():
-            time.sleep(30)
+        while not self.stop_event.wait(30):
             try:
                 if not self.executor.check_health():
                     self.logger.warning("Browser morto rilevato! Tentativo recovery...")
-                    self.executor.recycle_browser()
+                    if getattr(self.executor, "is_attached", False):
+                        self.logger.warning(
+                            "Session Guardian: impossibile eseguire auto-recovery "
+                            "in modalita attached. Verifica la connessione al browser "
+                            "o riavvialo manualmente."
+                        )
+                    else:
+                        self.executor.recycle_browser()
             except Exception as e:
                 self.logger.error(f"Guardian Error: {e}")
 
@@ -93,10 +100,22 @@ class PlaywrightWatchdog:
         threading.Thread(target=self._loop, daemon=True, name="PW_Watchdog").start()
 
     def _loop(self):
-        while not self.stop_event.is_set():
-            time.sleep(20)
+        while not self.stop_event.wait(20):
             if not self.worker.thread.is_alive():
-                self.logger.critical("ALLARME: Il thread Playwright Worker e' morto!")
+                self.logger.critical("ALLARME: Il thread Playwright Worker è morto! Riavvio...")
+                self._restart_worker()
+
+    def _restart_worker(self):
+        """Tenta di riavviare il Worker thread."""
+        try:
+            self.worker.running = True
+            self.worker.thread = threading.Thread(
+                target=self.worker._loop, daemon=True, name="PW_Worker"
+            )
+            self.worker.thread.start()
+            self.logger.info("Worker Playwright riavviato dal Watchdog.")
+        except Exception as e:
+            self.logger.error(f"Watchdog: impossibile riavviare Worker: {e}")
 
     def stop(self):
         self.stop_event.set()
