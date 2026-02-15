@@ -16,10 +16,20 @@ class Vault:
         self.vault_path = os.path.join(get_project_root(), "config", "vault.bin")
 
     def _generate_machine_key(self):
-        """Genera una chiave univoca basata sull'hardware della macchina."""
+        """Genera una chiave univoca basata su multipli identificatori della macchina."""
         if os.environ.get("GITHUB_ACTIONS") == "true":
             serial = "CI_TEST_ID"
-        elif platform.system().lower() == "windows":
+            hash_key = hashlib.sha256(serial.encode()).digest()
+            return base64.urlsafe_b64encode(hash_key[:32])
+
+        # Raccoglie piu identificatori per una chiave piu resistente
+        identifiers = []
+
+        # 1. Hostname
+        identifiers.append(platform.node() or "")
+
+        # 2. UUID macchina (Windows) o machine-id (Linux)
+        if platform.system().lower() == "windows":
             try:
                 result = subprocess.run(
                     ["wmic", "csproduct", "get", "uuid"],
@@ -27,13 +37,31 @@ class Vault:
                     stderr=subprocess.DEVNULL, text=True
                 )
                 output = result.stdout.splitlines()
-                serial = output[1].strip() if len(output) > 1 else "DEFAULT_MACHINE_FALLBACK"
+                if len(output) > 1 and output[1].strip():
+                    identifiers.append(output[1].strip())
             except (OSError, subprocess.CalledProcessError):
-                serial = platform.node() or "FALLBACK_ID"
+                pass
         else:
-            serial = platform.node() or "FALLBACK_ID"
+            # Linux/Mac: /etc/machine-id o /var/lib/dbus/machine-id
+            for mid_path in ["/etc/machine-id", "/var/lib/dbus/machine-id"]:
+                try:
+                    with open(mid_path, "r") as f:
+                        mid = f.read().strip()
+                        if mid:
+                            identifiers.append(mid)
+                            break
+                except (FileNotFoundError, PermissionError):
+                    pass
 
-        hash_key = hashlib.sha256(serial.encode()).digest()
+        # 3. Username come sale aggiuntivo
+        identifiers.append(os.getenv("USERNAME", os.getenv("USER", "")))
+
+        # 4. Combina tutti gli identificatori
+        combined = "|".join(identifiers)
+        if not combined.replace("|", ""):
+            combined = "FALLBACK_MACHINE_ID"
+
+        hash_key = hashlib.sha256(combined.encode()).digest()
         return base64.urlsafe_b64encode(hash_key[:32])
 
     def encrypt_data(self, data_dict):

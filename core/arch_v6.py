@@ -64,26 +64,50 @@ class SessionGuardian:
         self.executor = executor
         self.logger = logger
         self.stop_event = threading.Event()
+        self._consecutive_failures = 0
+        self._max_failures = 3  # 3 check falliti prima di recovery
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True, name="SessionGuardian").start()
 
     def _loop(self):
-        self.logger.info("Session Guardian attivo.")
-        while not self.stop_event.wait(30):
+        self.logger.info("Session Guardian attivo (check ogni 15s, recovery dopo 3 fail).")
+        while not self.stop_event.wait(15):
             try:
                 if not self.executor.check_health():
-                    self.logger.warning("Browser morto rilevato! Tentativo recovery...")
-                    if getattr(self.executor, "is_attached", False):
-                        self.logger.warning(
-                            "Session Guardian: impossibile eseguire auto-recovery "
-                            "in modalita attached. Verifica la connessione al browser "
-                            "o riavvialo manualmente."
-                        )
-                    else:
-                        self.executor.recycle_browser()
+                    self._consecutive_failures += 1
+                    self.logger.warning(
+                        f"Browser unhealthy ({self._consecutive_failures}/{self._max_failures})"
+                    )
+                    if self._consecutive_failures >= self._max_failures:
+                        self._do_recovery()
+                        self._consecutive_failures = 0
+                else:
+                    # Reset counter se il browser risponde
+                    if self._consecutive_failures > 0:
+                        self.logger.info("Browser tornato healthy.")
+                    self._consecutive_failures = 0
             except Exception as e:
                 self.logger.error(f"Guardian Error: {e}")
+
+    def _do_recovery(self):
+        """Esegue recovery adattivo: attached mode vs standalone."""
+        self.logger.warning("Recovery automatico in corso...")
+        try:
+            if hasattr(self.executor, 'recover_session'):
+                self.executor.recover_session()
+            elif getattr(self.executor, "is_attached", False):
+                # Attached: tenta ri-aggancio senza chiudere Chrome
+                self.executor._initialized = False
+                self.executor.pw = None
+                self.executor.browser = None
+                self.executor.page = None
+                self.executor.human = None
+                self.executor.launch_browser()
+            else:
+                self.executor.recycle_browser()
+        except Exception as e:
+            self.logger.error(f"Recovery fallito: {e}")
 
     def stop(self):
         self.stop_event.set()
