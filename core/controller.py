@@ -238,7 +238,9 @@ class SuperAgentController(QObject):
                 self.logger.warning("⚠️ Dati insufficienti.")
                 return
 
-            self.logger.info(f"🎯 Target: {data['teams']} -> {data['market']}")
+            teams = data.get("teams", "")
+            market = data.get("market", "")
+            self.logger.info(f"🎯 Target: {teams} -> {market}")
 
             # FIX BUG-09: Usa CommandParser se disponibile
             if self.command_parser:
@@ -257,14 +259,40 @@ class SuperAgentController(QObject):
     def _execute_bet_logic(self, data):
         if not self.executor:
             self.logger.error("❌ Executor non collegato!")
+            self.state_manager.set_state(AgentState.ERROR)
+            self.event_bus.emit("BET_ERROR", {"reason": "no_executor"})
             return
 
-        self.state_manager.set_state(AgentState.BETTING)
+        teams = data.get("teams", "")
+        market = data.get("market", "")
 
-        # FIX BUG-14: Tenta lettura odds reale, fallback a 2.0
+        # --- STEP 1: LOGIN ---
+        self.state_manager.set_state(AgentState.NAVIGATING)
+        self.event_bus.emit("BET_STEP", {"step": "LOGIN", "teams": teams})
+        selectors = self.executor._load_selectors()
+
+        if not self.executor.ensure_login(selectors):
+            self.logger.error("❌ Login fallito. Bet annullata.")
+            self.state_manager.set_state(AgentState.ERROR)
+            self.event_bus.emit("BET_ERROR", {"reason": "login_failed", "teams": teams})
+            return
+
+        self.event_bus.emit("LOGIN_SUCCESS", {"teams": teams})
+
+        # --- STEP 2: NAVIGAZIONE AL MATCH ---
+        self.event_bus.emit("BET_STEP", {"step": "NAVIGATE", "teams": teams})
+        if not self.executor.navigate_to_match(teams, selectors):
+            self.logger.warning("⚠️ Navigazione al match fallita.")
+            self.state_manager.set_state(AgentState.ERROR)
+            self.event_bus.emit("BET_ERROR", {"reason": "navigate_failed", "teams": teams})
+            return
+
+        # --- STEP 3: LETTURA ODDS ---
+        self.state_manager.set_state(AgentState.BETTING)
+        self.event_bus.emit("BET_STEP", {"step": "FIND_ODDS", "teams": teams})
         odds = None
         try:
-            odds = self.executor.find_odds(data["teams"], data.get("market", ""))
+            odds = self.executor.find_odds(teams, market)
         except Exception as e:
             self.logger.warning(f"⚠️ Errore lettura odds: {e}")
 
@@ -272,27 +300,41 @@ class SuperAgentController(QObject):
             self.logger.warning("⚠️ Quota non trovata. Uso fallback 2.0")
             odds = 2.0
 
+        # --- STEP 4: CALCOLO STAKE ---
         stake = self.money_manager.get_stake(odds)
-
         if stake <= 0.10:
             self.logger.warning("⚠️ Stake troppo basso.")
+            self.state_manager.set_state(AgentState.IDLE)
             return
 
-        success = self.executor.place_bet(data["teams"], data["market"], stake)
+        # --- STEP 5: PIAZZAMENTO ---
+        self.event_bus.emit("BET_STEP", {"step": "PLACE", "teams": teams, "stake": stake})
+        success = self.executor.place_bet(teams, market, stake)
 
+        # --- STEP 6: REGISTRAZIONE ---
         record = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "teams": data["teams"],
-            "market": data["market"],
+            "teams": teams,
+            "market": market,
             "stake": stake,
             "odds": odds,
             "status": "CONFERMATA" if success else "FALLITA"
         }
         self._save_to_history(record)
 
-        msg = f"{'✅' if success else '❌'} BET: {stake}€ su {data['teams']} ({data['market']})"
+        # Registra risultato nel MoneyManager per aggiornare Roserpina
+        result = "win" if success else "lose"
+        self.money_manager.record_outcome(result, stake, odds)
+
+        msg = f"{'✅' if success else '❌'} BET: {stake}€ su {teams} ({market})"
         self.logger.info(msg)
         self.safe_emit(msg)
+
+        event_name = "BET_PLACED" if success else "BET_FAILED"
+        self.event_bus.emit(event_name, {
+            "teams": teams, "market": market,
+            "stake": stake, "odds": odds, "success": success
+        })
 
     def _load_history(self):
         if os.path.exists(HISTORY_FILE):

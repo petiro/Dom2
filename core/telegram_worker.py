@@ -24,11 +24,13 @@ class TelegramWorker(QThread):
         
         # --- CONFIG VALIDATION SAFE ---
         try:
-            self.api_id = int(config.get('api_id', 0))
-            if self.api_id == 0: raise ValueError("API ID mancante o 0")
+            raw_id = config.get('api_id', 0)
+            self.api_id = int(raw_id) if raw_id else 0
         except (ValueError, TypeError):
-            self.api_id = None 
-            logger.error("❌ Configurazione: API ID non valido") # ✅ LOG
+            self.api_id = 0
+        if not self.api_id:
+            self.api_id = None
+            logger.error("❌ Configurazione: API ID non valido o mancante")
             
         self.api_hash = config.get('api_hash', '')
 

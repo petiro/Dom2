@@ -5,13 +5,12 @@ from PySide6.QtCore import QThread, Signal
 class BetWorker(QThread):
     finished = Signal(bool)
 
-    def __init__(self, table, executor, match_data):
+    def __init__(self, money_manager, executor, match_data):
         super().__init__()
-        self.table = table
         self.executor = executor
-        self.match = match_data['match']
-        self.market = match_data['market']
-        self.money_manager = table
+        self.match = match_data.get('match', match_data.get('teams', ''))
+        self.market = match_data.get('market', '')
+        self.money_manager = money_manager
         self.logger = logging.getLogger("BetWorker")
 
     def run(self):
