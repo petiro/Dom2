@@ -15,6 +15,7 @@ from core.state_machine import StateManager, AgentState
 from core.auto_mapper_worker import AutoMapperWorker
 from core.arch_v6 import PlaywrightWorker, SessionGuardian, PlaywrightWatchdog, EventBusV6
 from core.execution_engine import ExecutionEngine
+from core.events import AppEvent
 from core.event_bus import bus
 
 # Import opzionale per compatibilita
@@ -91,10 +92,10 @@ class SuperAgentController(QObject):
         self.pw_worker = PlaywrightWorker(self.executor, self.logger)
         self.session_guardian = SessionGuardian(self.executor, self.logger)
         self.pw_watchdog = PlaywrightWatchdog(self.pw_worker, self.logger)
-        # V7: ExecutionEngine event-driven
-        self.execution_engine = ExecutionEngine(self.executor, self.pw_worker, self.logger)
-        bus.subscribe("BET_SUCCESS", self._on_bet_success)
-        bus.subscribe("BET_FAILED", self._on_bet_failed)
+        # V7: ExecutionEngine event-driven (bus + executor, no leaky abstractions)
+        self.execution_engine = ExecutionEngine(bus, self.executor)
+        bus.subscribe(AppEvent.BET_SUCCESS, self._on_bet_success)
+        bus.subscribe(AppEvent.BET_FAILED, self._on_bet_failed)
 
     def set_trainer(self, trainer):
         self.trainer = trainer

@@ -78,6 +78,14 @@ class DomExecutorPlaywright:
         self._initialized = True
         return True
 
+    def _reset_connection(self):
+        """Resets internal connection state to allow re-initialization."""
+        self._initialized = False
+        self.pw = None
+        self.browser = None
+        self.page = None
+        self.human = None
+
     def close(self):
         """Chiude solo la connessione, MAI il browser dell'utente."""
         try:
@@ -88,10 +96,7 @@ class DomExecutorPlaywright:
                 self.pw.stop()
         except Exception:
             pass
-        self._initialized = False
-        self.pw = None
-        self.browser = None
-        self.human = None
+        self._reset_connection()
 
     def recycle_browser(self):
         """Ignora il recycle se siamo agganciati per evitare crash."""
@@ -242,7 +247,8 @@ class DomExecutorPlaywright:
             pass
 
         # 2. Cerca messaggi di errore noti
-        error_keywords = ["Rifiutata", "Errore", "Non disponibile", "Quota cambiata"]
+        error_keywords = selectors.get("bet_error_keywords",
+                                       ["Rifiutata", "Errore", "Non disponibile", "Quota cambiata"])
         for kw in error_keywords:
             try:
                 if self.page.get_by_text(kw).first.is_visible(timeout=500):
@@ -451,13 +457,8 @@ class DomExecutorPlaywright:
         """V6: Tenta il ripristino della sessione browser."""
         self.logger.warning("🔄 [RECOVERY] Tentativo ripristino sessione...")
         if self.is_attached:
-            # Attached mode: tenta di ri-agganciare senza chiudere Chrome
             try:
-                self._initialized = False
-                self.pw = None
-                self.browser = None
-                self.page = None
-                self.human = None
+                self._reset_connection()
                 return self.launch_browser()
             except Exception as e:
                 self.logger.error(f"Recovery attached fallito: {e}")

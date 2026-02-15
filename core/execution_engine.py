@@ -1,120 +1,199 @@
+import logging
 import time
 from enum import Enum
-from core.event_bus import bus
+from typing import Any
+
+from core.events import AppEvent
+from core.event_bus import EventBus
 
 
-class State(Enum):
+# ==========================================================
+# Custom Exceptions
+# ==========================================================
+
+class PipelineError(Exception):
+    """Base class for pipeline-related errors."""
+    pass
+
+
+class LoginFailedError(PipelineError):
+    pass
+
+
+class NavigationFailedError(PipelineError):
+    pass
+
+
+class PlacementFailedError(PipelineError):
+    pass
+
+
+class VerificationFailedError(PipelineError):
+    pass
+
+
+# ==========================================================
+# Execution State Enum
+# ==========================================================
+
+class ExecutionState(Enum):
     IDLE = 0
-    LOGIN_CHECK = 1
-    NAVIGATING = 2
-    ANALYZING_MARKET = 3
-    PLACING_BET = 4
-    VERIFYING = 5
-    RETRY_WAIT = 98
-    ERROR_FATAL = 99
+    LOGIN = 1
+    NAVIGATION = 2
+    ANALYSIS = 3
+    PLACEMENT = 4
+    VERIFICATION = 5
+    COMPLETED = 6
+    FAILED = 7
+    RETRY_WAIT = 99
 
+
+# ==========================================================
+# Execution Engine (Senior Grade)
+# ==========================================================
 
 class ExecutionEngine:
+    """
+    Event-driven state machine pipeline.
+    Orchestrates the workflow without knowing implementation details.
+
+    The executor is responsible for loading its own config/selectors.
+    The engine only passes business data (teams, market, stake).
+    """
 
     MAX_RETRIES = 3
-    RETRY_DELAY = 5
+    RETRY_DELAY = 3.0
 
-    def __init__(self, executor, worker, logger):
+    def __init__(self, bus: EventBus, executor: Any):
+        self.bus = bus
         self.executor = executor
-        self.worker = worker
-        self.logger = logger
-        self.current_state = State.IDLE
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.state = ExecutionState.IDLE
 
-    def process_signal(self, bet_data, money_manager):
-        self.worker.submit(self._pipeline_task, bet_data, money_manager)
+    # ======================================================
+    # Public API
+    # ======================================================
 
-    def _pipeline_task(self, bet_data, money_manager):
-        executor = self.executor
+    def process_signal(self, bet_data: dict, money_manager: Any):
+        """
+        Entry point for the execution pipeline.
+        Should be called inside a worker thread to avoid blocking UI.
+        """
+        teams = bet_data.get("teams", "")
+        market = bet_data.get("market", "")
+
         try:
-            selectors = executor._load_selectors()
+            # 1. Login
+            self._execute_step_with_retry(
+                ExecutionState.LOGIN,
+                self._login
+            )
 
-            # LOGIN
-            if not self._execute_step(
-                State.LOGIN_CHECK,
-                executor.ensure_login,
-                selectors
-            ):
-                raise Exception("Login failed after retries")
+            # 2. Navigation
+            self._execute_step_with_retry(
+                ExecutionState.NAVIGATION,
+                self._navigate,
+                teams
+            )
 
-            # NAVIGAZIONE
-            teams = bet_data.get("teams", "")
-            market = bet_data.get("market", "")
+            # 3. Analysis (Odds)
+            self._change_state(ExecutionState.ANALYSIS)
+            odds = self._analyze(teams, market)
 
-            if not self._execute_step(
-                State.NAVIGATING,
-                executor.navigate_to_match,
-                teams,
-                selectors
-            ):
-                home = selectors.get("home_logo", "a.logo")
-                executor.human_click(home)
-                raise Exception("Navigation failed")
-
-            # ANALISI QUOTA
-            self._set_state(State.ANALYZING_MARKET)
-
-            odds = executor.find_odds(teams, market)
-
-            if not odds or odds <= 1.0:
-                raise Exception("Invalid odds")
-
+            # 4. Money Management
             stake = money_manager.get_stake(odds)
             if stake <= 0:
-                self.logger.warning("Stake 0. Skip.")
+                self.logger.warning("Stake calculated as 0 or negative. Aborting.")
+                self._change_state(ExecutionState.IDLE)
                 return
 
-            # PIAZZAMENTO
-            self._set_state(State.PLACING_BET)
+            # 5. Placement
+            self._change_state(ExecutionState.PLACEMENT)
+            self._place(teams, market, stake)
 
-            if not executor.place_bet(teams, market, stake):
-                raise Exception("Bet placement failed")
+            # 6. Verification
+            self._change_state(ExecutionState.VERIFICATION)
+            self._verify(teams)
 
-            # VERIFICA
-            self._set_state(State.VERIFYING)
+            # Success
+            self._change_state(ExecutionState.COMPLETED)
+            self.bus.emit(AppEvent.BET_SUCCESS, {
+                "data": bet_data,
+                "stake": stake,
+                "odds": odds
+            })
 
-            if executor.verify_bet_success(teams):
-                bus.emit("BET_SUCCESS", {
-                    "data": bet_data,
-                    "stake": stake,
-                    "odds": odds
-                })
-            else:
-                bus.emit("BET_UNKNOWN", "Placed but not confirmed")
+        except PipelineError as e:
+            self._handle_failure(str(e))
 
         except Exception as e:
-            self.logger.error(f"Pipeline Error: {e}")
-            bus.emit("BET_FAILED", str(e))
+            self.logger.exception("Unexpected pipeline crash")
+            self.bus.emit(AppEvent.BET_ERROR, {"reason": str(e)})
+            self._change_state(ExecutionState.FAILED)
 
         finally:
-            self._set_state(State.IDLE)
+            if self.state != ExecutionState.IDLE:
+                self._change_state(ExecutionState.IDLE)
 
-    def _execute_step(self, state, func, *args):
-        self._set_state(state)
+    # ======================================================
+    # Atomic Steps (Encapsulated)
+    # ======================================================
 
+    def _login(self):
+        """The executor loads its own selectors internally."""
+        if not self.executor.ensure_login():
+            raise LoginFailedError("Login check returned False")
+
+    def _navigate(self, teams: str):
+        if not self.executor.navigate_to_match(teams):
+            raise NavigationFailedError(f"Could not navigate to match: {teams}")
+
+    def _analyze(self, teams: str, market: str) -> float:
+        odds = self.executor.find_odds(teams, market)
+        if not odds or odds <= 1.0:
+            raise PipelineError(f"Invalid odds found: {odds}")
+        return odds
+
+    def _place(self, teams: str, market: str, stake: float):
+        if not self.executor.place_bet(teams, market, stake):
+            raise PlacementFailedError("Executor failed to interact for placement")
+
+    def _verify(self, teams: str):
+        if not self.executor.verify_bet_success(teams):
+            self.bus.emit(AppEvent.BET_UNKNOWN, "Placed but not confirmed")
+            raise VerificationFailedError("Verification failed")
+
+    # ======================================================
+    # Infrastructure
+    # ======================================================
+
+    def _execute_step_with_retry(self, state: ExecutionState, func, *args):
+        """Generic retry logic wrapper."""
+        self._change_state(state)
+
+        last_error = None
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
-                if func(*args):
-                    return True
+                func(*args)
+                return  # Success
             except Exception as e:
-                self.logger.warning(
-                    f"Step {state.name} error: {e}"
-                )
+                last_error = e
+                self.logger.warning(f"Step {state.name} failed (Attempt {attempt}): {e}")
 
             if attempt < self.MAX_RETRIES:
-                self.logger.info(
-                    f"Retry {state.name} ({attempt}/{self.MAX_RETRIES})"
-                )
-                self._set_state(State.RETRY_WAIT)
+                self._change_state(ExecutionState.RETRY_WAIT)
                 time.sleep(self.RETRY_DELAY)
-                self._set_state(state)
+                self._change_state(state)
 
-        return False
+        # Propagate the last exception after retries exhausted
+        if last_error:
+            raise last_error
 
-    def _set_state(self, new_state):
-        self.current_state = new_state
-        bus.emit("STATE_CHANGE", new_state.name)
+    def _change_state(self, new_state: ExecutionState):
+        self.state = new_state
+        self.bus.emit(AppEvent.STATE_CHANGE, {"state": new_state.name})
+
+    def _handle_failure(self, reason: str):
+        self.logger.error(f"Pipeline Terminated: {reason}")
+        self._change_state(ExecutionState.FAILED)
+        self.bus.emit(AppEvent.BET_FAILED, {"reason": reason})

@@ -46,6 +46,10 @@ class EventBusV6:
 
     def stop(self):
         self._running = False
+        try:
+            self._dispatcher.join(timeout=2)
+        except Exception as e:
+            self.logger.warning(f"Error stopping EventBusV6 dispatcher: {e}")
 
 
 # --- 2. PLAYWRIGHT WORKER (Anti-Freeze) ---
@@ -112,21 +116,17 @@ class SessionGuardian:
                 self.logger.error(f"Guardian Error: {e}")
 
     def _do_recovery(self):
-        """Esegue recovery adattivo: attached mode vs standalone."""
+        """Delega il processo di recovery all'executor."""
         self.logger.warning("Recovery automatico in corso...")
         try:
             if hasattr(self.executor, 'recover_session'):
                 self.executor.recover_session()
-            elif getattr(self.executor, "is_attached", False):
-                # Attached: tenta ri-aggancio senza chiudere Chrome
-                self.executor._initialized = False
-                self.executor.pw = None
-                self.executor.browser = None
-                self.executor.page = None
-                self.executor.human = None
-                self.executor.launch_browser()
             else:
-                self.executor.recycle_browser()
+                self.logger.warning("L'executor non implementa 'recover_session'. Fallback a 'recycle_browser'.")
+                if not getattr(self.executor, "is_attached", False):
+                    self.executor.recycle_browser()
+                else:
+                    self.logger.error("Recovery automatico non possibile in modalita 'attached' con un executor obsoleto.")
         except Exception as e:
             self.logger.error(f"Recovery fallito: {e}")
 
