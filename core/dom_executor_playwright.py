@@ -479,14 +479,7 @@ class DomExecutorPlaywright:
                 return self.launch_browser()
 
             # Launched mode: properly close and relaunch the browser.
-            if hasattr(self, "recycle_browser"):
-                return self.recycle_browser()
-
-            self.logger.error(
-                "Executor does not implement 'recycle_browser'. "
-                "Cannot perform recovery in launched mode."
-            )
-            return False
+            return self.recycle_browser()
 
         except Exception as e:
             self.logger.error(f"Session recovery failed: {e}", exc_info=True)
