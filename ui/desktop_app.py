@@ -417,7 +417,7 @@ class RobotFactoryTab(QWidget):
         self.robots_data[new_name]["telegram_filter"] = self.inp_telegram_filter.text()
         try:
             self.robots_data[new_name]["selectors"] = json.loads(self.txt_selectors.toPlainText())
-        except Exception as e:
+        except json.JSONDecodeError as e:
             logging.getLogger("SuperAgent").error(f"Invalid JSON in selectors for robot {new_name}: {e}")
             QMessageBox.warning(self, "Errore JSON", "Il formato dei selettori non è un JSON valido. Le modifiche ai selettori non sono state salvate.")
         self.save_data()
