@@ -220,6 +220,41 @@ class DomExecutorPlaywright:
         except Exception:
             return False
 
+    def verify_bet_success(self, teams, selectors=None):
+        """Verifica che la scommessa sia stata accettata (non solo cliccata).
+
+        Controlla 3 segnali:
+        1. Messaggio di conferma visibile (es. "Scommessa piazzata")
+        2. Assenza di errori visibili (es. "Errore", "Rifiutata")
+        3. Fallback: verify_placement nella tab scommesse
+        """
+        if selectors is None:
+            selectors = self._load_selectors()
+
+        # 1. Cerca messaggio di conferma
+        confirm_sel = selectors.get("bet_confirm_msg", "text=Scommessa piazzata")
+        try:
+            confirm_loc = self.page.locator(confirm_sel).first
+            if confirm_loc.is_visible(timeout=3000):
+                self.logger.info("✅ [VERIFY] Conferma scommessa trovata.")
+                return True
+        except Exception:
+            pass
+
+        # 2. Cerca messaggi di errore noti
+        error_keywords = ["Rifiutata", "Errore", "Non disponibile", "Quota cambiata"]
+        for kw in error_keywords:
+            try:
+                if self.page.get_by_text(kw).first.is_visible(timeout=500):
+                    self.logger.error(f"❌ [VERIFY] Scommessa rifiutata: '{kw}' trovato.")
+                    return False
+            except Exception:
+                pass
+
+        # 3. Fallback: controlla nella tab scommesse
+        self.logger.info("🔍 [VERIFY] Nessuna conferma diretta, controllo tab scommesse...")
+        return self.verify_placement(teams)
+
     def place_bet(self, teams, market, stake):
         self.logger.info(f"🏁 Avvio scommessa: {stake}€ su {teams}")
 
@@ -267,7 +302,8 @@ class DomExecutorPlaywright:
         self.logger.info("⏳ Attesa elaborazione...")
         time.sleep(random.uniform(2.5, 4.0))
 
-        return self.verify_placement(teams)
+        # Verifica conferma reale prima di dichiarare successo
+        return self.verify_bet_success(teams, sels)
 
     def ensure_login(self, selectors=None):
         """Verifica login reale: controlla saldo, altrimenti clicca login e attende."""

@@ -266,23 +266,39 @@ class SuperAgentController(QObject):
         teams = data.get("teams", "")
         market = data.get("market", "")
 
-        # --- STEP 1: LOGIN ---
+        # --- STEP 1: LOGIN (con retry) ---
         self.state_manager.set_state(AgentState.NAVIGATING)
         self.event_bus.emit("BET_STEP", {"step": "LOGIN", "teams": teams})
         selectors = self.executor._load_selectors()
 
-        if not self.executor.ensure_login(selectors):
-            self.logger.error("❌ Login fallito. Bet annullata.")
+        login_ok = False
+        for attempt in range(1, 4):  # Max 3 tentativi
+            if self.executor.ensure_login(selectors):
+                login_ok = True
+                break
+            self.logger.warning(f"Login tentativo {attempt}/3 fallito. Retry...")
+            time.sleep(2 * attempt)  # Backoff: 2s, 4s
+
+        if not login_ok:
+            self.logger.error("❌ Login fallito dopo 3 tentativi. Bet annullata.")
             self.state_manager.set_state(AgentState.ERROR)
             self.event_bus.emit("BET_ERROR", {"reason": "login_failed", "teams": teams})
             return
 
         self.event_bus.emit("LOGIN_SUCCESS", {"teams": teams})
 
-        # --- STEP 2: NAVIGAZIONE AL MATCH ---
+        # --- STEP 2: NAVIGAZIONE AL MATCH (con retry) ---
         self.event_bus.emit("BET_STEP", {"step": "NAVIGATE", "teams": teams})
-        if not self.executor.navigate_to_match(teams, selectors):
-            self.logger.warning("⚠️ Navigazione al match fallita.")
+        nav_ok = False
+        for attempt in range(1, 4):  # Max 3 tentativi
+            if self.executor.navigate_to_match(teams, selectors):
+                nav_ok = True
+                break
+            self.logger.warning(f"Navigazione tentativo {attempt}/3 fallita. Retry...")
+            time.sleep(2 * attempt)
+
+        if not nav_ok:
+            self.logger.warning("⚠️ Navigazione al match fallita dopo 3 tentativi.")
             self.state_manager.set_state(AgentState.ERROR)
             self.event_bus.emit("BET_ERROR", {"reason": "navigate_failed", "teams": teams})
             return
@@ -375,6 +391,8 @@ class SuperAgentController(QObject):
             self.session_guardian.stop()
         if self.pw_worker:
             self.pw_worker.stop()
+        if self.event_bus:
+            self.event_bus.stop()
         if self.executor:
             self.executor.close()
         if self.telegram_worker:
