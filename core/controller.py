@@ -150,18 +150,14 @@ class SuperAgentController(QObject):
             lambda s: self.logger.info(f"Telegram Status: {s}"))
         self.telegram_worker.start()
 
-    # --- AUTO MAPPING (FIX BUG-02) ---
+    # --- AUTO MAPPING V7.2 (Scanner + AI + Physical Verify) ---
     def request_auto_mapping(self, url):
-        """Avvia il mapping AI dei selettori per un URL."""
-        self.logger.info(f"🗺️ Mapping richiesto per: {url}")
+        """V7.2: Auto-Discovery pipeline (scan DOM -> AI predict -> verify on page)."""
+        self.logger.info(f"🕵️ Auto-Discovery avviato per: {url}")
 
-        dom_content = ""
-        if self.executor:
-            self.logger.info("Recupero DOM dal browser...")
-            dom_content = self.executor.get_dom_snapshot()
-
-        if not dom_content:
-            dom_content = f"<html><body>URL target: {url} - Browser non attivo</body></html>"
+        if not self.executor:
+            self.logger.error("❌ Mapping impossibile: Executor non impostato.")
+            return
 
         api_key = self.secrets.get("openrouter_api_key")
         if not api_key:
@@ -169,11 +165,12 @@ class SuperAgentController(QObject):
             return
 
         self.mapper_thread = QThread()
-        self.mapper_worker = AutoMapperWorker(api_key, dom_content)
+        self.mapper_worker = AutoMapperWorker(self.executor, url)
         self.mapper_worker.moveToThread(self.mapper_thread)
 
         self.mapper_worker.finished.connect(self._on_mapping_success)
         self.mapper_worker.error.connect(lambda e: self.logger.error(f"Mapper Error: {e}"))
+        self.mapper_worker.status.connect(lambda s: self.logger.info(f"🗺️ {s}"))
         self.mapper_worker.finished.connect(self.mapper_thread.quit)
         self.mapper_thread.started.connect(self.mapper_worker.run)
 
@@ -181,9 +178,12 @@ class SuperAgentController(QObject):
 
     def _on_mapping_success(self, result):
         import yaml
-        yaml_str = yaml.dump(result, default_flow_style=False)
-        self.mapping_ready.emit(yaml_str)
-        self.logger.info("✅ Mapping completato!")
+        if result:
+            yaml_str = yaml.dump(result, default_flow_style=False)
+            self.mapping_ready.emit(yaml_str)
+            self.logger.info(f"✅ Auto-Discovery completato! Trovati: {list(result.keys())}")
+        else:
+            self.logger.warning("⚠️ Auto-Discovery terminato senza risultati validi.")
 
     def save_selectors_yaml(self, yaml_content):
         """Salva i selettori YAML su file. Chiamato dalla MappingTab."""
