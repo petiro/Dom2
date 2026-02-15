@@ -50,13 +50,10 @@ class Vault:
             return False
 
     def decrypt_data(self):
-        """Decripta vault.bin e ritorna il dizionario."""
+        """Decripta vault.bin e ritorna il dizionario. Raises on error."""
         if not os.path.exists(self.vault_path):
             return {}
-        try:
-            with open(self.vault_path, "rb") as f:
-                encrypted_data = f.read()
-            decrypted_data = self.cipher.decrypt(encrypted_data)
-            return json.loads(decrypted_data.decode())
-        except Exception:
-            return {}
+        with open(self.vault_path, "rb") as f:
+            encrypted_data = f.read()
+        decrypted_data = self.cipher.decrypt(encrypted_data)
+        return json.loads(decrypted_data.decode())
