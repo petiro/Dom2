@@ -1,71 +1,101 @@
 import threading
 import queue
 import logging
+from typing import Callable, Dict, List, Any
 
 
 class EventBus:
-    _instance = None
-    _instance_lock = threading.Lock()
+    """
+    Thread-safe asynchronous event bus.
 
-    def __new__(cls):
-        with cls._instance_lock:
-            if cls._instance is None:
-                cls._instance = super(EventBus, cls).__new__(cls)
-                cls._instance.listeners = {}
-                cls._instance.event_queue = queue.Queue()
-                cls._instance.logger = logging.getLogger("SuperAgent")
-                cls._instance.running = True
+    Features:
+    - Background dispatcher thread
+    - Safe shutdown with join
+    - No silent exception swallowing
+    - Multiple subscribers per event
+    """
 
-                cls._instance.dispatcher_thread = threading.Thread(
-                    target=cls._instance._dispatch_loop,
-                    daemon=True,
-                    name="EventBus_Dispatcher"
-                )
-                cls._instance.dispatcher_thread.start()
+    def __init__(self):
+        self._subscribers: Dict[Any, List[Callable]] = {}
+        self._queue: queue.Queue = queue.Queue()
+        self._running: bool = False
+        self._dispatcher: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self.logger = logging.getLogger(self.__class__.__name__)
 
-        return cls._instance
+    # -------------------------
+    # Public API
+    # -------------------------
 
-    def subscribe(self, event_type, callback):
-        with self._instance_lock:
-            if event_type not in self.listeners:
-                self.listeners[event_type] = []
-            self.listeners[event_type].append(callback)
+    def subscribe(self, event: Any, callback: Callable):
+        """Subscribe a callback to an event."""
+        with self._lock:
+            if event not in self._subscribers:
+                self._subscribers[event] = []
+            self._subscribers[event].append(callback)
 
-    def emit(self, event_type, data=None):
-        if not self.running:
+    def emit(self, event: Any, payload=None):
+        """Emit an event asynchronously."""
+        if not self._running:
             return
-        self.event_queue.put((event_type, data))
+        self._queue.put((event, payload or {}))
+
+    def start(self):
+        """Start dispatcher thread."""
+        if self._running:
+            return
+
+        self._running = True
+        self._dispatcher = threading.Thread(
+            target=self._dispatch_loop,
+            daemon=True,
+            name="EventBus_Dispatcher"
+        )
+        self._dispatcher.start()
+
+    def stop(self):
+        """Stops the dispatcher thread safely and idempotently."""
+        if not self._running:
+            return
+
+        self._running = False
+        try:
+            if self._dispatcher and self._dispatcher.is_alive():
+                self._dispatcher.join(timeout=2.0)
+        except Exception as e:
+            self.logger.warning(
+                f"Error stopping EventBus dispatcher thread: {e}"
+            )
+
+    # -------------------------
+    # Internal
+    # -------------------------
 
     def _dispatch_loop(self):
-        while self.running:
+        """Background dispatch loop."""
+        while self._running:
             try:
-                event_type, data = self.event_queue.get(timeout=1)
+                event, payload = self._queue.get(timeout=0.5)
 
-                with self._instance_lock:
-                    callbacks = list(self.listeners.get(event_type, []))
+                with self._lock:
+                    callbacks = list(self._subscribers.get(event, []))
 
                 for callback in callbacks:
                     try:
-                        callback(data)
+                        callback(payload)
                     except Exception as e:
                         self.logger.error(
-                            f"EventBus Dispatch Error [{event_type}]: {e}"
+                            f"Error in event callback for {event}: {e}"
                         )
 
-                self.event_queue.task_done()
+                self._queue.task_done()
 
             except queue.Empty:
                 continue
             except Exception as e:
-                self.logger.critical(f"EventBus Loop Critical Error: {e}")
-
-    def stop(self):
-        self.running = False
-        try:
-            self.dispatcher_thread.join(timeout=2)
-        except Exception as e:
-            self.logger.warning(f"Error stopping EventBus dispatcher thread: {e}")
+                self.logger.error(f"EventBus dispatch error: {e}")
 
 
-# Singleton
+# Singleton instance (auto-started)
 bus = EventBus()
+bus.start()
