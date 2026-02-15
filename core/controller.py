@@ -110,8 +110,18 @@ class SuperAgentController(QObject):
         # V6: Avvia Guardian e Watchdog
         if self.session_guardian:
             self.session_guardian.start()
+        else:
+            self.logger.warning(
+                "SessionGuardian non inizializzato: chiamare set_executor "
+                "prima di start_system per abilitare la protezione V6."
+            )
         if self.pw_watchdog:
             self.pw_watchdog.start()
+        else:
+            self.logger.warning(
+                "PlaywrightWatchdog non inizializzato: chiamare set_executor "
+                "prima di start_system per abilitare il watchdog V6."
+            )
         self.logger.info("Controller V6 avviato. State: IDLE.")
 
     # --- TELEGRAM INTEGRATION (FIX BUG-04) ---
@@ -197,15 +207,16 @@ class SuperAgentController(QObject):
 
     def handle_telegram_signal(self, text):
         """V6: Invia il lavoro al Worker (NON BLOCCA GUI)."""
+        # Protezione watchdog comune a worker e fallback
+        with self._lock:
+            if self._active_threads > 2:
+                self.logger.warning("Watchdog: Troppi thread attivi. Skip.")
+                return
+            self._active_threads += 1
         if self.pw_worker:
             self.pw_worker.submit(self._process_signal_thread, text)
         else:
-            # Fallback: thread diretto con protezione
-            with self._lock:
-                if self._active_threads > 2:
-                    self.logger.warning("Watchdog: Troppi thread attivi. Skip.")
-                    return
-                self._active_threads += 1
+            # Fallback: thread diretto
             threading.Thread(
                 target=self._process_signal_thread, args=(text,), daemon=True
             ).start()
@@ -315,13 +326,13 @@ class SuperAgentController(QObject):
     def shutdown(self):
         self.logger.info("Shutdown V6...")
         self.state_manager.set_state(AgentState.SHUTDOWN)
-        # V6: Ferma Worker, Guardian, Watchdog
-        if self.pw_worker:
-            self.pw_worker.stop()
-        if self.session_guardian:
-            self.session_guardian.stop()
+        # V6: Ferma monitor prima, poi worker
         if self.pw_watchdog:
             self.pw_watchdog.stop()
+        if self.session_guardian:
+            self.session_guardian.stop()
+        if self.pw_worker:
+            self.pw_worker.stop()
         if self.executor:
             self.executor.close()
         if self.telegram_worker:

@@ -287,10 +287,14 @@ class DomExecutorPlaywright:
             return False
 
     def human_fill(self, selector, text):
-        """Simula digitazione umana lettera per lettera."""
+        """Simula digitazione umana, utilizzando HumanInput se disponibile."""
         if not self.launch_browser():
             return False
         try:
+            # Usa HumanInput se disponibile (ritmi biologici avanzati)
+            if hasattr(self, "human") and self.human:
+                return self.human.type_in_field(selector, text)
+            # Fallback: digitazione diretta lettera per lettera
             loc = self.page.locator(selector).first
             loc.wait_for(state="visible", timeout=5000)
             loc.click()
