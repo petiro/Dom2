@@ -25,11 +25,11 @@ class EventBusV6:
             self.listeners[event].append(fn)
 
     def emit(self, event, data=None):
-        """Accoda l'evento; il dispatcher lo consegna ai listener."""
+        """Enqueues the event; the dispatcher delivers it to listeners."""
         self._queue.put((event, data))
 
     def _dispatch_loop(self):
-        """Singolo thread che processa tutti gli eventi in ordine."""
+        """Single thread that processes all events in order."""
         while self._running:
             try:
                 event, data = self._queue.get(timeout=1)
@@ -63,17 +63,17 @@ class PlaywrightWorker:
         self.thread.start()
 
     def submit(self, fn, *args, **kwargs):
-        """Aggiunge un task alla coda di Playwright."""
+        """Adds a task to the Playwright queue."""
         self.queue.put((fn, args, kwargs))
 
     def _loop(self):
-        self.logger.info("Worker Playwright avviato.")
+        self.logger.info("Playwright Worker started.")
         while self.running:
             try:
                 fn, args, kwargs = self.queue.get(timeout=1)
                 fn(*args, **kwargs)
                 self.queue.task_done()
-                self.logger.debug(f"Worker task completato: {fn.__name__}")
+                self.logger.debug(f"Worker task completed: {fn.__name__}")
             except queue.Empty:
                 continue
             except Exception as e:
@@ -96,7 +96,7 @@ class SessionGuardian:
         threading.Thread(target=self._loop, daemon=True, name="SessionGuardian").start()
 
     def _loop(self):
-        self.logger.info("Session Guardian attivo (check ogni 15s, recovery dopo 3 fail).")
+        self.logger.info("Session Guardian active (check every 15s, recovery after 3 fails).")
         while not self.stop_event.wait(15):
             try:
                 if not self.executor.check_health():
@@ -108,9 +108,8 @@ class SessionGuardian:
                         self._do_recovery()
                         self._consecutive_failures = 0
                 else:
-                    # Reset counter se il browser risponde
                     if self._consecutive_failures > 0:
-                        self.logger.info("Browser tornato healthy.")
+                        self.logger.info("Browser back to healthy.")
                     self._consecutive_failures = 0
             except Exception as e:
                 self.logger.error(f"Guardian Error: {e}")
@@ -162,19 +161,19 @@ class PlaywrightWatchdog:
     def _loop(self):
         while not self.stop_event.wait(20):
             if self.worker.running and not self.worker.thread.is_alive():
-                self.logger.critical("ALLARME: Il thread Playwright Worker è morto! Riavvio...")
+                self.logger.critical("ALERT: Playwright Worker thread is dead! Restarting...")
                 self._restart_worker()
 
     def _restart_worker(self):
-        """Tenta di riavviare il Worker thread."""
+        """Attempts to restart the Worker thread."""
         try:
             self.worker.thread = threading.Thread(
                 target=self.worker._loop, daemon=True, name="PW_Worker"
             )
             self.worker.thread.start()
-            self.logger.info("Worker Playwright riavviato dal Watchdog.")
+            self.logger.info("Playwright Worker restarted by Watchdog.")
         except Exception as e:
-            self.logger.error(f"Watchdog: impossibile riavviare Worker: {e}")
+            self.logger.error(f"Watchdog: cannot restart Worker: {e}")
 
     def stop(self):
         self.stop_event.set()

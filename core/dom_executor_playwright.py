@@ -6,7 +6,7 @@ import threading
 from playwright.sync_api import sync_playwright
 from core.ai_selector_validator import validate_selector
 from core.anti_detect import STEALTH_INJECTION_V4
-from core.human_behavior import HumanInput  # FIX BUG-10: Usa HumanInput
+from core.human_behavior import HumanInput
 from core.human_mouse import HumanMouse     # V7.2: Bezier mouse simulation
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,40 +27,40 @@ class DomExecutorPlaywright:
         self._initialized = False
         self.is_attached = False
         self.selector_file = "selectors.yaml"
-        self.human = None  # FIX BUG-10
-        self.mouse = None  # V7.2: HumanMouse (Bezier curves)
-        self._internal_lock = threading.Lock()  # Thread safety per operazioni Playwright
+        self.human = None
+        self.mouse = None
+        self._internal_lock = threading.Lock()
 
     def set_live_mode(self, enabled: bool):
         self.allow_place = enabled
-        mode = "LIVE (SOLDI VERI)" if enabled else "DEMO"
-        self.logger.warning(f"🔧 Executor impostato su: {mode}")
+        mode = "LIVE (REAL MONEY)" if enabled else "DEMO"
+        self.logger.warning(f"🔧 Executor set to: {mode}")
 
     # --- BROWSER GUARDIAN ---
     def launch_browser(self):
         if self._initialized and self.page and not self.page.is_closed():
             return True
 
-        self.logger.info("🌐 [GUARDIAN] Inizializzazione Playwright...")
+        self.logger.info("🌐 [GUARDIAN] Initializing Playwright...")
         if not self.pw:
             self.pw = sync_playwright().start()
 
         try:
-            # 1. Tentativo aggancio Chrome CDP (Porta 9222)
+            # 1. Try attaching to Chrome CDP (port 9222)
             self.browser = self.pw.chromium.connect_over_cdp("http://localhost:9222")
             self.ctx = self.browser.contexts[0]
 
             if self.ctx.pages:
                 self.page = self.ctx.pages[0]
-                self.logger.info("✅ [GUARDIAN] Agganciato alla sessione Chrome esistente.")
+                self.logger.info("✅ [GUARDIAN] Attached to existing Chrome session.")
             else:
                 self.page = self.ctx.new_page()
-                self.logger.info("✅ [GUARDIAN] Nuova tab aperta su Chrome esistente.")
+                self.logger.info("✅ [GUARDIAN] New tab opened on existing Chrome.")
 
             self.is_attached = True
 
         except Exception as e:
-            self.logger.info(f"ℹ️ Chrome CDP non disponibile ({e}). Avvio nuovo browser...")
+            self.logger.info(f"ℹ️ Chrome CDP unavailable ({e}). Launching new browser...")
             try:
                 args = ["--disable-blink-features=AutomationControlled", "--start-maximized"]
                 channel = "chrome" if self.use_real_chrome else "chromium"
@@ -71,13 +71,18 @@ class DomExecutorPlaywright:
                 self.page = self.ctx.new_page()
                 self.is_attached = False
             except Exception as e2:
-                self.logger.critical(f"❌ [GUARDIAN] Impossibile avviare browser: {e2}")
+                self.logger.critical(f"❌ [GUARDIAN] Cannot start browser: {e2}")
+                # Cleanup Playwright to prevent resource leak
+                try:
+                    self.pw.stop()
+                except Exception:
+                    pass
+                self.pw = None
                 return False
 
-        # Iniezione Anti-Detect
         self.page.add_init_script(STEALTH_INJECTION_V4)
-        self.human = HumanInput(self.page, self.logger)  # FIX BUG-10
-        self.mouse = HumanMouse(self.page, self.logger)  # V7.2
+        self.human = HumanInput(self.page, self.logger)
+        self.mouse = HumanMouse(self.page, self.logger)
         self._initialized = True
         return True
 
@@ -93,10 +98,10 @@ class DomExecutorPlaywright:
         self.mouse = None
 
     def close(self):
-        """Chiude solo la connessione, MAI il browser dell'utente."""
+        """Closes the Playwright connection only, never the user's browser."""
         try:
             if self.browser:
-                self.logger.info("🔌 [GUARDIAN] Disconnessione sicura.")
+                self.logger.info("🔌 [GUARDIAN] Safe disconnect.")
                 self.browser.close()
             if self.pw:
                 self.pw.stop()
@@ -104,15 +109,14 @@ class DomExecutorPlaywright:
             pass
         self._reset_connection()
 
-    def recycle_browser(self):
-        """Ignora il recycle se siamo agganciati per evitare crash."""
+    def recycle_browser(self) -> bool:
+        """Closes and relaunches the browser. Skips if attached to external Chrome."""
         if self.is_attached:
-            self.logger.info("♻️ [SKIP] Recycle ignorato su sessione persistente.")
-            return
+            self.logger.info("♻️ [SKIP] Recycle skipped on persistent session.")
+            return True
         self.close()
         return self.launch_browser()
 
-    # --- FIX BUG-08: Percorso assoluto per selectors ---
     def _load_selectors(self):
         import yaml
         sel_path = os.path.join(_ROOT_DIR, "config", self.selector_file)
@@ -122,35 +126,33 @@ class DomExecutorPlaywright:
         except Exception:
             return {}
 
-    # --- FIX BUG-13: Metodi mancanti per AITrainer ---
     def get_dom_snapshot(self):
-        """Ritorna l'HTML completo della pagina corrente."""
+        """Returns the full HTML of the current page."""
         if not self.launch_browser():
             return ""
         try:
             return self.page.content()
         except Exception as e:
-            self.logger.error(f"Errore snapshot DOM: {e}")
+            self.logger.error(f"DOM snapshot error: {e}")
             return ""
 
     def take_screenshot_b64(self):
-        """Cattura screenshot e ritorna come base64."""
+        """Captures a screenshot and returns it as base64."""
         if not self.launch_browser():
             return ""
         try:
             screenshot_bytes = self.page.screenshot(type='jpeg', quality=50)
             return base64.b64encode(screenshot_bytes).decode('utf-8')
         except Exception as e:
-            self.logger.error(f"Errore screenshot: {e}")
+            self.logger.error(f"Screenshot error: {e}")
             return ""
 
-    # --- FIX BUG-03/14: Ricerca Odds ---
     def find_odds(self, match_name, market_name):
-        """Cerca la quota reale sulla pagina. Ritorna float o None."""
+        """Finds the real odds on the page. Returns float or None."""
         if not self.launch_browser():
             return None
 
-        self.logger.info(f"🔎 Cerco quota per {match_name} - {market_name}...")
+        self.logger.info(f"🔎 Looking for odds: {match_name} - {market_name}...")
 
         sels = self._load_selectors()
         odds_selector = sels.get("odds_value", ".gl-ParticipantOddsOnly_Odds")
@@ -161,7 +163,7 @@ class DomExecutorPlaywright:
                 odds_text = odds_elements.first.inner_text().strip()
                 return float(odds_text)
         except Exception as e:
-            self.logger.warning(f"⚠️ Impossibile leggere odds: {e}")
+            self.logger.warning(f"⚠️ Cannot read odds: {e}")
 
         return None
 
@@ -209,12 +211,13 @@ class DomExecutorPlaywright:
                 return False
 
     def verify_placement(self, teams):
-        self.logger.info("🕵️ [VERIFY] Controllo tab 'In Corso'...")
+        """Checks the 'Running' tab to verify the bet was placed."""
+        self.logger.info("🕵️ [VERIFY] Checking 'Running' bets tab...")
         sels = self._load_selectors()
 
         btn_bets = self.page.locator(sels.get("my_bets_button", "text=Scommesse")).first
         if not self._human_move_and_click(btn_bets):
-            self.logger.warning("⚠️ Impossibile aprire menu scommesse")
+            self.logger.warning("⚠️ Cannot open bets menu")
             return False
 
         time.sleep(1.5)
@@ -226,104 +229,102 @@ class DomExecutorPlaywright:
         team_name = teams.split("-")[0].strip()
         try:
             if self.page.get_by_text(team_name).count() > 0:
-                self.logger.info(f"✅ [VERIFY] Scommessa TROVATA: {team_name}")
+                self.logger.info(f"✅ [VERIFY] Bet FOUND: {team_name}")
                 self.page.keyboard.press("Escape")
                 return True
             else:
-                self.logger.error(f"❌ [VERIFY] Scommessa NON trovata: {team_name}")
+                self.logger.error(f"❌ [VERIFY] Bet NOT found: {team_name}")
                 self.page.keyboard.press("Escape")
                 return False
         except Exception:
             return False
 
     def verify_bet_success(self, teams, selectors=None):
-        """Verifica che la scommessa sia stata accettata (non solo cliccata).
+        """Verifies the bet was accepted (not just clicked).
 
-        Controlla 3 segnali:
-        1. Messaggio di conferma visibile (es. "Scommessa piazzata")
-        2. Assenza di errori visibili (es. "Errore", "Rifiutata")
-        3. Fallback: verify_placement nella tab scommesse
+        Checks 3 signals:
+        1. Confirmation message visible
+        2. No known error messages visible
+        3. Fallback: verify_placement in the bets tab
         """
         if selectors is None:
             selectors = self._load_selectors()
 
-        # 1. Cerca messaggio di conferma
+        # 1. Look for confirmation message
         confirm_sel = selectors.get("bet_confirm_msg", "text=Scommessa piazzata")
         try:
             confirm_loc = self.page.locator(confirm_sel).first
             if confirm_loc.is_visible(timeout=3000):
-                self.logger.info("✅ [VERIFY] Conferma scommessa trovata.")
+                self.logger.info("✅ [VERIFY] Bet confirmation found.")
                 return True
         except Exception:
             pass
 
-        # 2. Cerca messaggi di errore noti
+        # 2. Look for known error messages
         error_keywords = selectors.get("bet_error_keywords",
                                        ["Rifiutata", "Errore", "Non disponibile", "Quota cambiata"])
         for kw in error_keywords:
             try:
                 if self.page.get_by_text(kw).first.is_visible(timeout=500):
-                    self.logger.error(f"❌ [VERIFY] Scommessa rifiutata: '{kw}' trovato.")
+                    self.logger.error(f"❌ [VERIFY] Bet rejected: '{kw}' found.")
                     return False
             except Exception:
                 pass
 
-        # 3. Fallback: controlla nella tab scommesse
-        self.logger.info("🔍 [VERIFY] Nessuna conferma diretta, controllo tab scommesse...")
+        # 3. Fallback: check in the bets tab
+        self.logger.info("🔍 [VERIFY] No direct confirmation, checking bets tab...")
         return self.verify_placement(teams)
 
     def place_bet(self, teams, market, stake):
-        self.logger.info(f"🏁 Avvio scommessa: {stake}€ su {teams}")
+        self.logger.info(f"🏁 Placing bet: {stake}$ on {teams}")
 
         if not self.launch_browser():
             return False
 
         if not self.allow_place:
-            self.logger.info("🛡️ [DEMO] Simulazione OK.")
+            self.logger.info("🛡️ [DEMO] Simulation OK.")
             return True
 
-        # LIVE MODE
         sels = self._load_selectors()
 
-        # Idle behavior prima di inserire lo stake (sembra umano)
+        # Idle behavior before entering stake (human-like)
         if self.human:
             self.human.idle_fidget()
             time.sleep(random.uniform(0.3, 0.8))
 
-        # Input Stake (usa HumanInput se disponibile)
+        # Stake input (use HumanInput if available)
         stake_sel = sels.get("stake_input", "input.bs-Stake_Input")
         if self.human:
             if not self.human.type_in_field(stake_sel, str(stake)):
                 if not self._safe_fill(stake_sel, str(stake)):
-                    self.logger.error("❌ Errore input stake")
+                    self.logger.error("❌ Stake input error")
                     return False
         else:
             if not self._safe_fill(stake_sel, str(stake)):
-                self.logger.error("❌ Errore input stake")
+                self.logger.error("❌ Stake input error")
                 return False
 
-        # Pausa umana: ricontrollo visivo prima di cliccare
+        # Human pause: visual recheck before clicking
         time.sleep(random.uniform(0.5, 1.2))
 
-        # Scroll casuale leggero (simula utente che verifica)
+        # Random light scroll (simulates user verifying)
         if self.human and random.random() > 0.5:
             self.human.scroll_random()
             time.sleep(random.uniform(0.2, 0.5))
 
-        # Click "Scommetti" con movimento umano
+        # Click place button with human movement
         btn_place = self.page.locator(sels.get("place_button", ".bs-BtnPlace")).first
         if not self._human_move_and_click(btn_place):
-            self.logger.error("❌ Errore click scommetti")
+            self.logger.error("❌ Place button click error")
             return False
 
-        self.logger.info("⏳ Attesa elaborazione...")
+        self.logger.info("⏳ Waiting for processing...")
         time.sleep(random.uniform(2.5, 4.0))
 
-        # Verifica conferma reale prima di dichiarare successo
         return self.verify_bet_success(teams, sels)
 
     def ensure_login(self, selectors=None):
-        """Verifica login reale: controlla saldo, altrimenti clicca login e attende."""
+        """Verifies real login: checks balance, otherwise clicks login and waits."""
         if not self.launch_browser():
             return False
         if selectors is None:
@@ -332,73 +333,69 @@ class DomExecutorPlaywright:
         balance_sel = selectors.get("balance_selector")
         logged_in_sel = selectors.get("logged_in_indicator")
 
-        # 1. Check se gia loggato (saldo visibile O indicatore loggato)
+        # 1. Check if already logged in (balance visible or logged-in indicator)
         for check_sel in [balance_sel, logged_in_sel]:
             if check_sel:
                 try:
                     loc = self.page.locator(check_sel).first
                     if loc.is_visible():
-                        self.logger.info("Gia loggato (indicatore visibile).")
+                        self.logger.info("Already logged in (indicator visible).")
                         return True
                 except Exception:
                     pass
 
-        # 2. Cerca e clicca il bottone login
+        # 2. Find and click login button
         login_btn = selectors.get("login_button", "text=Login")
         try:
             login_loc = self.page.locator(login_btn).first
             if not login_loc.is_visible():
-                # Nessun bottone login e nessun indicatore = forse gia loggato
-                self.logger.info("Nessun bottone login trovato. Potrebbe essere gia loggato.")
+                self.logger.info("No login button found. Possibly already logged in.")
                 return True
         except Exception:
-            self.logger.info("Nessun bottone login trovato. Potrebbe essere gia loggato.")
+            self.logger.info("No login button found. Possibly already logged in.")
             return True
 
         if not self._human_move_and_click(login_loc, timeout=5000):
-            self.logger.warning("Login button non cliccabile.")
+            self.logger.warning("Login button not clickable.")
             return False
 
-        # 3. Attendi conferma login (saldo O indicatore O cambio URL)
+        # 3. Wait for login confirmation (balance, indicator, or URL change)
         start_url = self.page.url
-        deadline = time.time() + 20  # Max 20 secondi per login
+        deadline = time.time() + 20
 
         while time.time() < deadline:
-            # Check indicatori di login riuscito
             for check_sel in [balance_sel, logged_in_sel]:
                 if check_sel:
                     try:
                         if self.page.locator(check_sel).first.is_visible():
-                            self.logger.info("Login completato (indicatore visibile).")
+                            self.logger.info("Login completed (indicator visible).")
                             return True
                     except Exception:
                         pass
 
-            # Check se il bottone login e' sparito (buon segno)
             try:
                 if not self.page.locator(login_btn).first.is_visible():
-                    self.logger.info("Login completato (bottone login sparito).")
+                    self.logger.info("Login completed (login button disappeared).")
                     return True
             except Exception:
                 pass
 
-            # Check cambio URL (redirect post-login)
             if self.page.url != start_url:
-                self.logger.info("Login completato (URL cambiato).")
+                self.logger.info("Login completed (URL changed).")
                 time.sleep(1)
                 return True
 
             time.sleep(0.5)
 
-        self.logger.warning("Login: timeout - nessuna conferma ricevuta.")
+        self.logger.warning("Login: timeout - no confirmation received.")
         return False
 
     def navigate_to_match(self, teams, selectors=None):
-        """Cerca il match nella barra di ricerca del sito con retry."""
+        """Searches for the match in the site search bar with retry."""
         if not self.launch_browser():
             return False
         if not teams:
-            self.logger.warning("Nessun nome squadra fornito.")
+            self.logger.warning("No team name provided.")
             return False
         if selectors is None:
             selectors = self._load_selectors()
@@ -406,20 +403,20 @@ class DomExecutorPlaywright:
         search_btn = selectors.get("search_button", ".s-SearchButton")
         search_input = selectors.get("search_input", "input.s-SearchInput")
 
-        # Idle behavior prima della ricerca
+        # Idle behavior before search
         if self.human:
             self.human.idle_fidget()
 
-        # Apri la barra di ricerca
+        # Open search bar
         if not self._human_move_and_click(
             self.page.locator(search_btn).first, timeout=5000
         ):
-            self.logger.warning("Pulsante ricerca non trovato.")
+            self.logger.warning("Search button not found.")
             return False
 
         time.sleep(random.uniform(0.3, 0.8))
 
-        # Digita il nome della prima squadra
+        # Type first team name
         team_name = teams.split("-")[0].strip() if "-" in teams else teams.strip()
 
         if self.human:
@@ -429,7 +426,7 @@ class DomExecutorPlaywright:
 
         time.sleep(random.uniform(1.5, 3.0))
 
-        # Clicca sul primo risultato che contiene il nome della squadra
+        # Click first visible result containing team name
         try:
             results = self.page.get_by_text(team_name)
             for i in range(min(results.count(), 5)):
@@ -437,16 +434,16 @@ class DomExecutorPlaywright:
                 if result_loc.is_visible():
                     self._human_move_and_click(result_loc)
                     time.sleep(random.uniform(1.5, 3.0))
-                    self.logger.info(f"Navigato al match: {teams}")
+                    self.logger.info(f"Navigated to match: {teams}")
                     return True
         except Exception as e:
-            self.logger.warning(f"Navigazione match fallita: {e}")
+            self.logger.warning(f"Match navigation failed: {e}")
 
-        # Fallback: premi Enter sulla ricerca
+        # Fallback: press Enter on search
         try:
             self.page.keyboard.press("Enter")
             time.sleep(2)
-            self.logger.info(f"Navigazione con Enter per: {teams}")
+            self.logger.info(f"Navigation via Enter for: {teams}")
             return True
         except Exception:
             pass
@@ -454,11 +451,10 @@ class DomExecutorPlaywright:
         return False
 
     def check_health(self):
-        """V6: Controlla se il browser e la pagina sono ancora attivi e rispondono."""
+        """Checks if the browser and page are still active and responding."""
         try:
             if self.page is None or self.page.is_closed():
                 return False
-            # Verifica che la pagina risponda (non sia stuck)
             self.page.evaluate("() => document.readyState")
             return True
         except Exception:
@@ -553,9 +549,8 @@ class DomExecutorPlaywright:
         except Exception:
             return False
 
-    # --- V6: HUMAN INTERACTION DIRETTE ---
     def human_click(self, selector):
-        """Simula click umano con delay e hover."""
+        """Simulates a human click with delay and hover."""
         if not self.launch_browser():
             return False
         try:
@@ -567,18 +562,17 @@ class DomExecutorPlaywright:
             time.sleep(random.uniform(0.1, 0.3))
             return True
         except Exception as e:
-            self.logger.warning(f"Click fallito su {selector}: {e}")
+            self.logger.warning(f"Click failed on {selector}: {e}")
             return False
 
     def human_fill(self, selector, text):
-        """Simula digitazione umana, utilizzando HumanInput se disponibile."""
+        """Simulates human typing, using HumanInput if available."""
         if not self.launch_browser():
             return False
         try:
-            # Usa HumanInput se disponibile (ritmi biologici avanzati)
-            if hasattr(self, "human") and self.human:
+            if self.human:
                 return self.human.type_in_field(selector, text)
-            # Fallback: digitazione diretta lettera per lettera
+            # Fallback: direct character-by-character typing
             loc = self.page.locator(selector).first
             loc.wait_for(state="visible", timeout=5000)
             loc.click()
@@ -587,5 +581,5 @@ class DomExecutorPlaywright:
                 time.sleep(random.uniform(0.05, 0.15))
             return True
         except Exception as e:
-            self.logger.warning(f"Fill fallito su {selector}: {e}")
+            self.logger.warning(f"Fill failed on {selector}: {e}")
             return False

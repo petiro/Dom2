@@ -36,32 +36,28 @@ SELECTORS_FILE = os.path.join(_ROOT_DIR, "config", "selectors.yaml")
 
 class SuperAgentController(QObject):
     log_message = Signal(str)
-    mapping_ready = Signal(str)  # FIX BUG-02: Signal per UI Mapping
+    mapping_ready = Signal(str)
 
     def __init__(self, logger_instance, config=None):
         super().__init__()
         self.logger = logger_instance
         self.config = config or {}
 
-        # --- 1. Sicurezza & Stato (FIX BUG-02/11) ---
         self.vault = Vault()
         self.state_manager = StateManager(self.logger, initial_state=AgentState.BOOT)
 
-        # --- 2. Caricamento Chiavi ---
         self.secrets = load_secure_config()
         api_key = self.secrets.get("openrouter_api_key")
 
         if not api_key:
-            self.logger.warning("⚠️ Controller: Chiave AI mancante. Funzionalita limitate.")
+            self.logger.warning("⚠️ Controller: AI key missing. Limited functionality.")
         else:
-            self.logger.info("🔑 Chiavi API caricate.")
-
-        # --- 3. Componenti ---
+            self.logger.info("🔑 API keys loaded.")
         self.ai_parser = AISignalParser(api_key=api_key)
         self.money_manager = MoneyManager()
         self.legacy_parser = TelegramSignalParser() if TelegramSignalParser else None
 
-        # Placeholder componenti esterni
+        # External component placeholders
         self.executor = None
         self.trainer = None
         self.monitor = None
@@ -112,33 +108,31 @@ class SuperAgentController(QObject):
         self.command_parser = parser
 
     def start_system(self):
-        self.logger.info("Avvio Sistema V6...")
+        self.logger.info("Starting System V6...")
         self.state_manager.transition(AgentState.IDLE)
-        # V6: Avvia Guardian e Watchdog
         if self.session_guardian:
             self.session_guardian.start()
         else:
             self.logger.warning(
-                "SessionGuardian non inizializzato: chiamare set_executor "
-                "prima di start_system per abilitare la protezione V6."
+                "SessionGuardian not initialized: call set_executor "
+                "before start_system to enable V6 protection."
             )
         if self.pw_watchdog:
             self.pw_watchdog.start()
         else:
             self.logger.warning(
-                "PlaywrightWatchdog non inizializzato: chiamare set_executor "
-                "prima di start_system per abilitare il watchdog V6."
+                "PlaywrightWatchdog not initialized: call set_executor "
+                "before start_system to enable V6 watchdog."
             )
-        self.logger.info("Controller V6 avviato. State: IDLE.")
+        self.logger.info("Controller V6 started. State: IDLE.")
 
-    # --- TELEGRAM INTEGRATION (FIX BUG-04) ---
     def connect_telegram(self, tg_config):
-        """Metodo chiamato dalla TelegramTab per connettere Telegram."""
+        """Called by TelegramTab to connect Telegram."""
         if TelegramWorker is None:
-            self.logger.error("❌ TelegramWorker non disponibile (telethon mancante)")
+            self.logger.error("❌ TelegramWorker unavailable (telethon missing)")
             return
 
-        self.logger.info("📡 Connessione Telegram avviata...")
+        self.logger.info("📡 Telegram connection started...")
         if self.telegram_worker:
             self.telegram_worker.stop()
 
@@ -150,18 +144,17 @@ class SuperAgentController(QObject):
             lambda s: self.logger.info(f"Telegram Status: {s}"))
         self.telegram_worker.start()
 
-    # --- AUTO MAPPING V7.2 (Scanner + AI + Physical Verify) ---
     def request_auto_mapping(self, url):
-        """V7.2: Auto-Discovery pipeline (scan DOM -> AI predict -> verify on page)."""
-        self.logger.info(f"🕵️ Auto-Discovery avviato per: {url}")
+        """Auto-Discovery pipeline (scan DOM -> AI predict -> verify on page)."""
+        self.logger.info(f"🕵️ Auto-Discovery started for: {url}")
 
         if not self.executor:
-            self.logger.error("❌ Mapping impossibile: Executor non impostato.")
+            self.logger.error("❌ Mapping impossible: Executor not set.")
             return
 
         api_key = self.secrets.get("openrouter_api_key")
         if not api_key:
-            self.logger.error("❌ Mapping impossibile: Manca API Key OpenRouter")
+            self.logger.error("❌ Mapping impossible: OpenRouter API key missing")
             return
 
         self.mapper_thread = QThread()
@@ -181,19 +174,19 @@ class SuperAgentController(QObject):
         if result:
             yaml_str = yaml.dump(result, default_flow_style=False)
             self.mapping_ready.emit(yaml_str)
-            self.logger.info(f"✅ Auto-Discovery completato! Trovati: {list(result.keys())}")
+            self.logger.info(f"✅ Auto-Discovery completed! Found: {list(result.keys())}")
         else:
-            self.logger.warning("⚠️ Auto-Discovery terminato senza risultati validi.")
+            self.logger.warning("⚠️ Auto-Discovery finished with no valid results.")
 
     def save_selectors_yaml(self, yaml_content):
-        """Salva i selettori YAML su file. Chiamato dalla MappingTab."""
+        """Saves YAML selectors to file. Called by MappingTab."""
         try:
             os.makedirs(os.path.dirname(SELECTORS_FILE), exist_ok=True)
             with open(SELECTORS_FILE, "w", encoding="utf-8") as f:
                 f.write(yaml_content)
-            self.logger.info("💾 Selettori salvati su file.")
+            self.logger.info("💾 Selectors saved to file.")
         except Exception as e:
-            self.logger.error(f"Errore salvataggio YAML: {e}")
+            self.logger.error(f"Error saving YAML: {e}")
 
     # --- LOGICA OPERATIVA ---
     def set_live_mode(self, enabled):
@@ -202,28 +195,26 @@ class SuperAgentController(QObject):
 
     def reload_money_manager(self):
         self.money_manager.reload()
-        self.logger.info("💰 Money Manager ricaricato.")
+        self.logger.info("💰 Money Manager reloaded.")
 
     def reload_secrets(self):
-        """Metodo chiamato dalla UI quando si salvano nuove chiavi."""
+        """Called by UI when new keys are saved."""
         self.secrets = load_secure_config()
         api_key = self.secrets.get("openrouter_api_key")
         if self.ai_parser:
             self.ai_parser.api_key = api_key
-        self.logger.info("🔑 Secrets ricaricati.")
+        self.logger.info("🔑 Secrets reloaded.")
 
     def handle_telegram_signal(self, text):
-        """V6: Invia il lavoro al Worker (NON BLOCCA GUI)."""
-        # Protezione watchdog comune a worker e fallback
+        """Sends work to the Worker (does NOT block GUI)."""
         with self._lock:
             if self._active_threads > 2:
-                self.logger.warning("Watchdog: Troppi thread attivi. Skip.")
+                self.logger.warning("Watchdog: Too many active threads. Skip.")
                 return
             self._active_threads += 1
         if self.pw_worker:
             self.pw_worker.submit(self._process_signal_thread, text)
         else:
-            # Fallback: thread diretto
             threading.Thread(
                 target=self._process_signal_thread, args=(text,), daemon=True
             ).start()
@@ -231,28 +222,25 @@ class SuperAgentController(QObject):
     def _process_signal_thread(self, text):
         try:
             self.state_manager.set_state(AgentState.ANALYZING)
-            self.logger.info("📩 Analisi segnale...")
+            self.logger.info("📩 Analyzing signal...")
 
-            # 1. Prova AI Parser
             data = self.ai_parser.parse(text)
 
-            # 2. Fallback su Parser classico (FIX BUG-01: ora usa "teams")
             if (not data or not data.get("teams")) and self.legacy_parser:
-                self.logger.info("🤖 Fallback su parser classico...")
+                self.logger.info("🤖 Falling back to legacy parser...")
                 data = self.legacy_parser.parse(text)
 
             if not data or not data.get("teams"):
-                self.logger.warning("⚠️ Dati insufficienti.")
+                self.logger.warning("⚠️ Insufficient data.")
                 return
 
             teams = data.get("teams", "")
             market = data.get("market", "")
             self.logger.info(f"🎯 Target: {teams} -> {market}")
 
-            # FIX BUG-09: Usa CommandParser se disponibile
             if self.command_parser:
                 steps = self.command_parser.parse(data)
-                self.logger.info(f"📋 Pipeline: {len(steps)} steps generati")
+                self.logger.info(f"📋 Pipeline: {len(steps)} steps generated")
 
             self.execution_engine.process_signal(data, self.money_manager)
 
@@ -264,7 +252,7 @@ class SuperAgentController(QObject):
             self.state_manager.set_state(AgentState.IDLE)
 
     def _on_bet_success(self, payload):
-        """Handler evento BET_SUCCESS da ExecutionEngine."""
+        """Handler for BET_SUCCESS event from ExecutionEngine."""
         data = payload.get("data", {})
         stake = payload.get("stake", 0)
         odds = payload.get("odds", 0)
@@ -277,17 +265,17 @@ class SuperAgentController(QObject):
             "market": market,
             "stake": stake,
             "odds": odds,
-            "status": "CONFERMATA"
+            "status": "CONFIRMED"
         }
         self._save_to_history(record)
         self.money_manager.record_outcome("win", stake, odds)
 
-        msg = f"BET: {stake}$ su {teams} ({market})"
+        msg = f"BET: {stake}$ on {teams} ({market})"
         self.logger.info(msg)
         self.safe_emit(msg)
 
     def _on_bet_failed(self, reason):
-        """Handler evento BET_FAILED da ExecutionEngine."""
+        """Handler for BET_FAILED event from ExecutionEngine."""
         self.logger.warning(f"BET FAILED: {reason}")
         self.state_manager.set_state(AgentState.ERROR)
 
@@ -307,7 +295,7 @@ class SuperAgentController(QObject):
                 with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
                     json.dump(self._history, f, indent=4)
             except Exception as e:
-                self.logger.error(f"Errore salvataggio history: {e}")
+                self.logger.error(f"Error saving history: {e}")
 
     def get_bet_history(self):
         with self._lock:
@@ -319,11 +307,10 @@ class SuperAgentController(QObject):
         except Exception:
             pass
 
-    # --- STUBS RICHIESTI DALLA UI ---
     def shutdown(self):
         self.logger.info("Shutdown V6...")
         self.state_manager.set_state(AgentState.SHUTDOWN)
-        # V6: Ferma monitor prima, poi worker
+        # Stop monitors first, then workers
         if self.pw_watchdog:
             self.pw_watchdog.stop()
         if self.session_guardian:
@@ -338,13 +325,10 @@ class SuperAgentController(QObject):
         if self.telegram_worker:
             self.telegram_worker.stop()
 
-    def request_training(self):
-        pass
-
     def process_robot_chat(self, robot_name, text):
         self.logger.info(f"💬 Chat robot {robot_name}: {text}")
         if self.ui_window and hasattr(self.ui_window, 'factory'):
             try:
-                self.ui_window.factory.receive_ai_reply(robot_name, "Ricevuto. Sto imparando...")
+                self.ui_window.factory.receive_ai_reply(robot_name, "Received. Learning...")
             except Exception as e:
-                self.logger.error(f"Errore invio reply a UI: {e}")
+                self.logger.error(f"Error sending reply to UI: {e}")

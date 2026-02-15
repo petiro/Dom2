@@ -16,19 +16,19 @@ class Vault:
         self.vault_path = os.path.join(get_project_root(), "config", "vault.bin")
 
     def _generate_machine_key(self):
-        """Genera una chiave univoca basata su multipli identificatori della macchina."""
+        """Generates a unique key based on multiple machine identifiers."""
         if os.environ.get("GITHUB_ACTIONS") == "true":
             serial = "CI_TEST_ID"
             hash_key = hashlib.sha256(serial.encode()).digest()
             return base64.urlsafe_b64encode(hash_key[:32])
 
-        # Raccoglie piu identificatori per una chiave piu resistente
+        # Collect multiple identifiers for a more robust key
         identifiers = []
 
-        # 1. Hostname
+        # Hostname
         identifiers.append(platform.node() or "")
 
-        # 2. UUID macchina (Windows) o machine-id (Linux)
+        # Machine UUID (Windows) or machine-id (Linux)
         if platform.system().lower() == "windows":
             try:
                 result = subprocess.run(
@@ -53,10 +53,10 @@ class Vault:
                 except (FileNotFoundError, PermissionError):
                     pass
 
-        # 3. Username come sale aggiuntivo
+        # Username as additional salt
         identifiers.append(os.getenv("USERNAME", os.getenv("USER", "")))
 
-        # 4. Combina tutti gli identificatori
+        # Combine all identifiers
         combined = "|".join(identifiers)
         if not combined.replace("|", ""):
             combined = "FALLBACK_MACHINE_ID"
@@ -65,7 +65,7 @@ class Vault:
         return base64.urlsafe_b64encode(hash_key[:32])
 
     def encrypt_data(self, data_dict):
-        """Cripta un dizionario e lo salva su vault.bin."""
+        """Encrypts a dictionary and saves it to vault.bin."""
         try:
             json_data = json.dumps(data_dict).encode()
             encrypted_data = self.cipher.encrypt(json_data)
@@ -78,8 +78,18 @@ class Vault:
             return False
 
     def decrypt_data(self):
-        """Decripta vault.bin e ritorna il dizionario. Raises on error."""
-        with open(self.vault_path, "rb") as f:
-            encrypted_data = f.read()
-        decrypted_data = self.cipher.decrypt(encrypted_data)
-        return json.loads(decrypted_data.decode())
+        """Decrypts vault.bin and returns the secrets dictionary.
+
+        Raises:
+            FileNotFoundError: If vault.bin does not exist.
+            ValueError: If decryption or JSON parsing fails.
+        """
+        try:
+            with open(self.vault_path, "rb") as f:
+                encrypted_data = f.read()
+            decrypted_data = self.cipher.decrypt(encrypted_data)
+            return json.loads(decrypted_data.decode())
+        except FileNotFoundError:
+            raise
+        except (json.JSONDecodeError, Exception) as e:
+            raise ValueError(f"Failed to decrypt vault data: {e}") from e

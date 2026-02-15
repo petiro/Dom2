@@ -3,14 +3,16 @@ import threading
 import socket
 
 
-# FIX BUG-06: Solo HealthMonitor qui. SystemWatchdog completo e in core/lifecycle.py
+# HealthMonitor only. Full SystemWatchdog is in core/lifecycle.py
 class HealthMonitor:
-    MAX_RESTARTS = 3
-    COOLDOWN = 300
+    DEFAULT_MAX_RESTARTS = 3
+    DEFAULT_COOLDOWN = 300
 
-    def __init__(self, logger, executor=None):
+    def __init__(self, logger, executor=None, max_restarts=None, cooldown=None):
         self.logger = logger
         self.executor = executor
+        self.MAX_RESTARTS = max_restarts if max_restarts is not None else self.DEFAULT_MAX_RESTARTS
+        self.COOLDOWN = cooldown if cooldown is not None else self.DEFAULT_COOLDOWN
         self._stop_event = threading.Event()
         self._restart_lock = threading.Lock()
         self._restart_count = 0
@@ -32,7 +34,7 @@ class HealthMonitor:
             with socket.create_connection(("8.8.8.8", 53), timeout=3):
                 pass
         except Exception:
-            self.logger.warning("⚠️ Internet non raggiungibile.")
+            self.logger.warning("⚠️ Internet unreachable.")
 
     def safe_restart(self, restart_fn=None):
         with self._restart_lock:
@@ -44,7 +46,7 @@ class HealthMonitor:
                 self._restart_count = 0
 
             if self._restart_count >= self.MAX_RESTARTS:
-                self.logger.error("❌ Limite riavvii raggiunto.")
+                self.logger.error("❌ Restart limit reached.")
                 return False
 
             self._restarting = True

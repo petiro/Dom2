@@ -6,30 +6,30 @@ from core.security import Vault
 
 
 def load_secure_config(path=None):
-    """Unisce la config pubblica (YAML) con i segreti criptati (Vault).
+    """Merges public config (YAML) with encrypted secrets (Vault).
 
-    IMP-05: I segreti vengono letti dal Vault criptato (AES-256),
-    non piu da secrets.json in chiaro.
+    Secrets are read from the encrypted Vault (AES-256).
+    Vault secrets override base config values.
     """
     if path is None:
         path = os.path.join(get_project_root(), "config", "config.yaml")
 
     config = {}
 
-    # 1. Carica Config Pubblica (YAML)
+    # 1. Load public config (YAML)
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
         except Exception as e:
-            logging.getLogger("SuperAgent").error(f"Errore caricamento config.yaml: {e}")
+            logging.getLogger("SuperAgent").error(f"Error loading config.yaml: {e}")
 
-    # 2. Carica Segreti dal Vault criptato
+    # 2. Load secrets from encrypted Vault
     try:
         vault = Vault()
         secrets = vault.decrypt_data()
-        config.update(secrets)  # I segreti vincono sulla config base
+        config.update(secrets)
     except Exception as e:
-        logging.getLogger("SuperAgent").warning(f"Vault non disponibile: {e}")
+        logging.getLogger("SuperAgent").warning(f"Vault unavailable: {e}")
 
     return config
