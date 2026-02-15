@@ -59,7 +59,7 @@ class SystemWatchdog(QThread):
                         self.resource_warning.emit(
                             f"RAM alta: {mem.percent}% utilizzata")
                 except Exception as e:
-                    if hasattr(self, 'logger') and self.logger:
+                    if self.logger:
                         self.logger.warning(f"[Watchdog] Check failed: {e}")
 
                 # 2. Check if Chrome is still running
@@ -71,7 +71,7 @@ class SystemWatchdog(QThread):
                     if not chrome_alive:
                         self.browser_died.emit()
                 except Exception as e:
-                    if hasattr(self, 'logger') and self.logger:
+                    if self.logger:
                         self.logger.warning(f"[Watchdog] Check failed: {e}")
 
             # 3. Process-level memory check (own process)
@@ -83,7 +83,7 @@ class SystemWatchdog(QThread):
                         self.resource_warning.emit(
                             f"Processo SuperAgent usa {own_mb:.0f} MB RAM")
                 except Exception as e:
-                    if hasattr(self, 'logger') and self.logger:
+                    if self.logger:
                         self.logger.warning(f"[Watchdog] Check failed: {e}")
 
             # 4. Browser memory recycle trigger (pure psutil, no executor dependency)
@@ -100,5 +100,5 @@ class SystemWatchdog(QThread):
                             self.logger.warning(f"[Watchdog] High Browser Memory ({browser_mb:.0f} MB) - Requesting Recycle")
                         self.request_recycle.emit()
                 except Exception as e:
-                    if hasattr(self, 'logger') and self.logger:
+                    if self.logger:
                         self.logger.warning(f"[Watchdog] Browser memory check failed: {e}")

@@ -1,6 +1,8 @@
 import time
 import os
 import logging
+from core.utils import get_project_root
+
 try:
     import pyautogui
     PYAUTOGUI_AVAILABLE = True
@@ -31,7 +33,7 @@ class HumanInteraction:
         try:
             # Cerca l'immagine dell'icona (devi avere chrome_icon.png nella cartella data)
             # Se non hai l'immagine, questo fallisce.
-            icon_path = os.path.join("data", "chrome_icon.png")
+            icon_path = os.path.join(get_project_root(), "data", "chrome_icon.png")
             
             if os.path.exists(icon_path):
                 location = pyautogui.locateOnScreen(icon_path, confidence=0.8)

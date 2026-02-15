@@ -9,7 +9,7 @@ class TelegramSignalParser:
 
         # 1. Estrazione Team (dopo emoji VS o varianti)
         teams_match = re.search(r"(?:🆚|VS|vs|⚽)\s*(.*?)\n", text)
-        match_name = teams_match.group(1).strip() if teams_match else None
+        match_name = teams_match.group(1).strip() if teams_match else ""
 
         # 2. Estrazione Punteggio per calcolo Over
         score_match = re.search(r"(\d+)\s*-\s*(\d+)", text)

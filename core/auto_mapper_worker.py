@@ -68,7 +68,14 @@ class AutoMapperWorker(QObject):
                 # Se il modello risponde correttamente
                 if response.status_code == 200:
                     data = response.json()
-                    content = data['choices'][0]['message']['content']
+                    choices = data.get('choices', [])
+                    if not choices:
+                        self.logger.warning(f"⚠️ Risposta vuota da {model}")
+                        continue
+                    content = choices[0].get('message', {}).get('content', '')
+                    if not content:
+                        self.logger.warning(f"⚠️ Contenuto vuoto da {model}")
+                        continue
                     self.logger.info(f"✅ Mapping completato con successo usando {model}")
                     return self._parse_ai_response(content)
 

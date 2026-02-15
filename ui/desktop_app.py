@@ -7,6 +7,7 @@ SuperAgent Desktop App V6.0 - Stable Edition
 import os
 import sys
 import json
+import html
 import logging
 from datetime import datetime
 
@@ -229,7 +230,7 @@ class MoneyTab(QWidget):
         try:
             config_dir = os.path.join(_ROOT_DIR, "config")
             os.makedirs(config_dir, exist_ok=True)
-            with open(os.path.join(config_dir, "money_config.json"), "w") as f:
+            with open(os.path.join(config_dir, "money_config.json"), "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
             if self.controller:
                 self.controller.reload_money_manager()
@@ -253,7 +254,7 @@ class MoneyTab(QWidget):
         path = os.path.join(_ROOT_DIR, "config", "money_config.json")
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.sb_bankroll.setValue(float(data.get("bankroll", 100.0)))
                     strat = data.get("strategy", "Stake Fisso")
@@ -353,7 +354,7 @@ class RobotFactoryTab(QWidget):
     def load_data(self):
         if os.path.exists(ROBOTS_FILE):
             try:
-                with open(ROBOTS_FILE, 'r') as f:
+                with open(ROBOTS_FILE, 'r', encoding='utf-8') as f:
                     self.robots_data = json.load(f)
                 self.refresh_list()
             except Exception as e:
@@ -362,7 +363,7 @@ class RobotFactoryTab(QWidget):
     def save_data(self):
         try:
             os.makedirs(os.path.dirname(ROBOTS_FILE), exist_ok=True)
-            with open(ROBOTS_FILE, 'w') as f:
+            with open(ROBOTS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.robots_data, f, indent=4)
         except Exception as e:
             logging.getLogger("SuperAgent").error(f"Failed to save robot data to {ROBOTS_FILE}: {e}")
@@ -389,7 +390,8 @@ class RobotFactoryTab(QWidget):
         for msg in data.get("chat_history", []):
             role = "👤 TU" if msg['role'] == 'user' else "🤖 AGENTE"
             color = "#FFFFFF" if msg['role'] == 'user' else "#00E676"
-            self.chat_display.append(f"<b style='color:{color}'>{role}:</b> {msg['content']}<br>")
+            safe_content = html.escape(msg.get('content', ''))
+            self.chat_display.append(f"<b style='color:{color}'>{role}:</b> {safe_content}<br>")
 
     def new_robot(self):
         name = f"Agente_{len(self.robots_data) + 1}"
@@ -427,7 +429,7 @@ class RobotFactoryTab(QWidget):
         text = self.chat_input.text().strip()
         if not text or not self.current_robot_name:
             return
-        self.chat_display.append(f"<b style='color:#FFF'>👤 TU:</b> {text}<br>")
+        self.chat_display.append(f"<b style='color:#FFF'>👤 TU:</b> {html.escape(text)}<br>")
         self.chat_input.clear()
 
         if "chat_history" not in self.robots_data[self.current_robot_name]:
@@ -440,7 +442,7 @@ class RobotFactoryTab(QWidget):
 
     def receive_ai_reply(self, robot_name, reply):
         if robot_name == self.current_robot_name:
-            self.chat_display.append(f"<b style='color:#00E676'>🤖 AGENTE:</b> {reply}<br>")
+            self.chat_display.append(f"<b style='color:#00E676'>🤖 AGENTE:</b> {html.escape(reply)}<br>")
         self.robots_data[robot_name]["chat_history"].append({"role": "assistant", "content": reply})
         self.save_data()
 

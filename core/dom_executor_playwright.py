@@ -2,6 +2,7 @@ import os
 import time
 import random
 import base64
+import threading
 from playwright.sync_api import sync_playwright
 from core.ai_selector_validator import validate_selector
 from core.anti_detect import STEALTH_INJECTION_V4
@@ -26,6 +27,7 @@ class DomExecutorPlaywright:
         self.is_attached = False
         self.selector_file = "selectors.yaml"
         self.human = None  # FIX BUG-10
+        self._internal_lock = threading.Lock()  # Thread safety per operazioni Playwright
 
     def set_live_mode(self, enabled: bool):
         self.allow_place = enabled
@@ -97,6 +99,7 @@ class DomExecutorPlaywright:
             self.logger.info("♻️ [SKIP] Recycle ignorato su sessione persistente.")
             return
         self.close()
+        return self.launch_browser()
 
     # --- FIX BUG-08: Percorso assoluto per selectors ---
     def _load_selectors(self):
@@ -179,13 +182,14 @@ class DomExecutorPlaywright:
     def _safe_fill(self, selector, text, timeout=3000):
         if not validate_selector(selector):
             return False
-        try:
-            loc = self.page.locator(selector).first
-            loc.wait_for(state="visible", timeout=timeout)
-            loc.fill(text)
-            return True
-        except Exception:
-            return False
+        with self._internal_lock:
+            try:
+                loc = self.page.locator(selector).first
+                loc.wait_for(state="visible", timeout=timeout)
+                loc.fill(text)
+                return True
+            except Exception:
+                return False
 
     def verify_placement(self, teams):
         self.logger.info("🕵️ [VERIFY] Controllo tab 'In Corso'...")
@@ -253,14 +257,87 @@ class DomExecutorPlaywright:
 
         return self.verify_placement(teams)
 
-    # Stubs
-    def ensure_login(self, s):
+    def ensure_login(self, selectors=None):
+        """Verifica login: clicca login_button e attende balance_selector."""
         if not self.launch_browser():
             return False
+        if selectors is None:
+            selectors = self._load_selectors()
+
+        balance_sel = selectors.get("balance_selector")
+        # Se il saldo e' gia visibile, siamo loggati
+        if balance_sel:
+            try:
+                loc = self.page.locator(balance_sel).first
+                if loc.is_visible():
+                    self.logger.info("Gia loggato (saldo visibile).")
+                    return True
+            except Exception:
+                pass
+
+        login_btn = selectors.get("login_button", "text=Login")
+        if not self._human_move_and_click(
+            self.page.locator(login_btn).first, timeout=5000
+        ):
+            self.logger.warning("Login button non trovato o non cliccabile.")
+            return False
+
+        # Attendi che il saldo appaia (conferma login riuscito)
+        if balance_sel:
+            try:
+                self.page.locator(balance_sel).first.wait_for(
+                    state="visible", timeout=15000
+                )
+                self.logger.info("Login completato con successo.")
+                return True
+            except Exception:
+                self.logger.warning("Login: saldo non apparso entro il timeout.")
+                return False
+
+        # Se non c'e' balance_selector, attendi un po' e ritorna True
+        time.sleep(3)
         return True
 
-    def navigate_to_match(self, t, s=None):
-        return True
+    def navigate_to_match(self, teams, selectors=None):
+        """Cerca il match nella barra di ricerca del sito."""
+        if not self.launch_browser():
+            return False
+        if selectors is None:
+            selectors = self._load_selectors()
+
+        search_btn = selectors.get("search_button", ".s-SearchButton")
+        search_input = selectors.get("search_input", "input.s-SearchInput")
+
+        # Apri la barra di ricerca
+        if not self._human_move_and_click(
+            self.page.locator(search_btn).first, timeout=5000
+        ):
+            self.logger.warning("Pulsante ricerca non trovato.")
+            return False
+
+        time.sleep(0.5)
+
+        # Digita il nome della prima squadra
+        team_name = teams.split("-")[0].strip() if teams else teams
+        if self.human:
+            self.human.type_in_field(search_input, team_name)
+        else:
+            self._safe_fill(search_input, team_name)
+
+        time.sleep(2)
+
+        # Clicca sul primo risultato che contiene il nome della squadra
+        try:
+            result = self.page.get_by_text(team_name).first
+            if result.is_visible():
+                self._human_move_and_click(result)
+                time.sleep(2)
+                self.logger.info(f"Navigato al match: {teams}")
+                return True
+        except Exception as e:
+            self.logger.warning(f"Navigazione match fallita: {e}")
+
+        return False
 
     def check_health(self):
         """V6: Controlla se il browser e la pagina sono ancora attivi."""

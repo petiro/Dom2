@@ -238,7 +238,9 @@ class SuperAgentController(QObject):
                 self.logger.warning("⚠️ Dati insufficienti.")
                 return
 
-            self.logger.info(f"🎯 Target: {data['teams']} -> {data['market']}")
+            teams = data.get("teams", "")
+            market = data.get("market", "")
+            self.logger.info(f"🎯 Target: {teams} -> {market}")
 
             # FIX BUG-09: Usa CommandParser se disponibile
             if self.command_parser:
@@ -264,7 +266,7 @@ class SuperAgentController(QObject):
         # FIX BUG-14: Tenta lettura odds reale, fallback a 2.0
         odds = None
         try:
-            odds = self.executor.find_odds(data["teams"], data.get("market", ""))
+            odds = self.executor.find_odds(data.get("teams", ""), data.get("market", ""))
         except Exception as e:
             self.logger.warning(f"⚠️ Errore lettura odds: {e}")
 
@@ -278,19 +280,25 @@ class SuperAgentController(QObject):
             self.logger.warning("⚠️ Stake troppo basso.")
             return
 
-        success = self.executor.place_bet(data["teams"], data["market"], stake)
+        teams = data.get("teams", "")
+        market = data.get("market", "")
+        success = self.executor.place_bet(teams, market, stake)
 
         record = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "teams": data["teams"],
-            "market": data["market"],
+            "teams": teams,
+            "market": market,
             "stake": stake,
             "odds": odds,
             "status": "CONFERMATA" if success else "FALLITA"
         }
         self._save_to_history(record)
 
-        msg = f"{'✅' if success else '❌'} BET: {stake}€ su {data['teams']} ({data['market']})"
+        # IMP-4: Registra risultato nel MoneyManager per aggiornare Roserpina
+        result = "win" if success else "lose"
+        self.money_manager.record_outcome(result, stake, odds)
+
+        msg = f"{'✅' if success else '❌'} BET: {stake}€ su {teams} ({market})"
         self.logger.info(msg)
         self.safe_emit(msg)
 
