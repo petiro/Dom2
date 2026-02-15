@@ -32,8 +32,16 @@ class HumanMouse:
             + t**3 * end
         )
 
+    # Default viewport bounds (matches Playwright context size)
+    SCREEN_MAX_X = 1920
+    SCREEN_MAX_Y = 1080
+
     def move_to(self, target_x, target_y, steps=None):
         self._calculate_fatigue()
+
+        # Clamp target to screen bounds
+        target_x = max(0, min(target_x, self.SCREEN_MAX_X))
+        target_y = max(0, min(target_y, self.SCREEN_MAX_Y))
 
         start_x = random.randint(100, 800)
         start_y = random.randint(100, 600)

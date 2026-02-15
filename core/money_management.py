@@ -11,12 +11,13 @@ CONFIG_FILE = os.path.join(_ROOT_DIR, "config", "money_config.json")
 ROSERPINA_STATE = os.path.join(_ROOT_DIR, "config", "roserpina_real_state.json")
 
 
-# --- MOTORE ROSERPINA ---
+# --- ROSERPINA ENGINE ---
 class RoserpinaEngine:
-    def __init__(self, bankroll, target_pct, wins_needed):
+    def __init__(self, bankroll, target_pct, wins_needed, max_bet_pct=0.25):
         self.bankroll = bankroll
         self.target_pct = target_pct
         self.wins_needed = wins_needed
+        self.max_bet_pct = max_bet_pct
         self.target_profit_eur = (bankroll * target_pct) / 100
         self.state = {}
         self.load_state()
@@ -27,7 +28,7 @@ class RoserpinaEngine:
                 with open(ROSERPINA_STATE, 'r', encoding='utf-8') as f:
                     self.state = json.load(f)
             except Exception as e:
-                logger.warning(f"Errore caricamento stato Roserpina: {e}")
+                logger.warning(f"Error loading Roserpina state: {e}")
                 self.reset_cycle()
         else:
             self.reset_cycle()
@@ -46,8 +47,7 @@ class RoserpinaEngine:
             with open(ROSERPINA_STATE, 'w', encoding='utf-8') as f:
                 json.dump(self.state, f, indent=4)
         except Exception as e:
-            # FIX BUG-15: Log errore invece di silenzio
-            logger.error(f"Errore salvataggio stato Roserpina: {e}")
+            logger.error(f"Error saving Roserpina state: {e}")
 
     def calculate_stake(self, odds):
         if odds <= 1.0 or self.state["wins_left"] <= 0:
@@ -60,8 +60,8 @@ class RoserpinaEngine:
             return 0.0
 
         stake = numerator / denominator
-        # Protezione: Max 25% del capitale per colpo
-        return round(min(stake, self.bankroll * 0.25), 2)
+        # Protection: cap stake at max_bet_pct of bankroll
+        return round(min(stake, self.bankroll * self.max_bet_pct), 2)
 
     def record_result(self, result, stake, odds):
         if result == "win":
@@ -78,7 +78,7 @@ class RoserpinaEngine:
         self.save_state()
 
 
-# --- MANAGER PRINCIPALE ---
+# --- MAIN MANAGER ---
 class MoneyManager:
     def __init__(self):
         self.strategy = "Stake Fisso"
@@ -98,13 +98,14 @@ class MoneyManager:
 
                     target = float(data.get("target_pct", 45.0))
                     wins = int(data.get("wins_needed", 3))
-                    self.roserpina = RoserpinaEngine(self.bankroll, target, wins)
+                    max_bet = float(data.get("max_bet_pct", 0.25))
+                    self.roserpina = RoserpinaEngine(self.bankroll, target, wins, max_bet)
 
                     self.fixed_stake = 1.0
                     if self.strategy == "Stake Fisso":
                         self.fixed_stake = float(data.get("fixed_amount", 1.0))
             except Exception as e:
-                logger.error(f"Errore caricamento config money: {e}")
+                logger.error(f"Error loading money config: {e}")
 
     def get_stake(self, odds):
         if self.strategy == "Roserpina" and self.roserpina:

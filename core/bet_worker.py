@@ -11,23 +11,21 @@ class BetWorker(QThread):
         self.match = match_data.get('match', match_data.get('teams', ''))
         self.market = match_data.get('market', '')
         self.money_manager = money_manager
-        self.logger = logging.getLogger("BetWorker")
+        self.logger = logging.getLogger("SuperAgent")
 
     def run(self):
         try:
-            # FIX BUG-03: Usa find_odds (ora esiste sull'executor)
             odds = self.executor.find_odds(self.match, self.market)
 
             if not odds or odds <= 1.0:
-                self.logger.error(f"Quote non valide: {odds}")
+                self.logger.error(f"Invalid odds: {odds}")
                 self.finished.emit(False)
                 return
 
-            # FIX BUG-03: Usa get_stake (nome corretto su MoneyManager)
             stake = self.money_manager.get_stake(odds)
 
             if not stake or stake <= 0:
-                self.logger.warning("Stake = 0. Operazione annullata.")
+                self.logger.warning("Stake = 0. Operation cancelled.")
                 self.finished.emit(False)
                 return
 
@@ -35,5 +33,5 @@ class BetWorker(QThread):
             self.finished.emit(bool(success))
 
         except Exception as e:
-            self.logger.error(f"Errore BetWorker: {e}")
+            self.logger.error(f"BetWorker error: {e}")
             self.finished.emit(False)

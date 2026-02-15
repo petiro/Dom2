@@ -15,19 +15,17 @@ class AISignalParser:
             return {}
 
         if not self.api_key:
-            self.logger.warning("⚠️ AI PARSER: API Key mancante (Vault).")
+            self.logger.warning("⚠️ AI PARSER: API key missing (Vault).")
             return {}
 
         system_instructions = """
-        Sei un parser di scommesse algoritmico.
-        REGOLE:
-        1. Estrai squadre (es. "Squadra A - Squadra B").
-        2. Estrai punteggio (es. "6 - 0").
-        3. Calcola Mercato: Somma punteggio + 0.5 (es. 6+0=6 -> "Over 6.5").
+        You are an algorithmic betting parser.
+        RULES:
+        1. Extract teams (e.g. "Team A - Team B").
+        2. Extract score (e.g. "6 - 0").
+        3. Calculate Market: Sum of scores + 0.5 (e.g. 6+0=6 -> "Over 6.5").
         OUTPUT JSON: {"teams": "...", "market": "Over X.5", "score_detected": "X-Y"}
         """
-
-        # IMP-08: Retry con backoff per gestire timeout/rate-limit
         for attempt in range(3):
             try:
                 response = requests.post(
@@ -61,14 +59,14 @@ class AISignalParser:
                     time.sleep(2 ** (attempt + 1))
                     continue
                 else:
-                    self.logger.error(f"❌ Errore AI: {response.status_code}")
+                    self.logger.error(f"❌ AI error: {response.status_code}")
                     break
 
             except requests.exceptions.Timeout:
-                self.logger.warning(f"⏱️ Timeout AI (Tentativo {attempt + 1}/3)")
+                self.logger.warning(f"⏱️ AI timeout (attempt {attempt + 1}/3)")
                 time.sleep(1)
             except Exception as e:
-                self.logger.error(f"❌ Eccezione AI (Tentativo {attempt + 1}/3): {e}")
+                self.logger.error(f"❌ AI exception (attempt {attempt + 1}/3): {e}")
                 time.sleep(1)
 
         return {}

@@ -36,7 +36,7 @@ class AutoMapperWorker(QObject):
         super().__init__()
         self.executor = executor
         self.url = url
-        self.logger = logging.getLogger("AutoMapper")
+        self.logger = logging.getLogger("SuperAgent")
         self.secrets = load_secure_config()
         self.api_key = self.secrets.get("openrouter_api_key")
 
@@ -176,10 +176,13 @@ class AutoMapperWorker(QObject):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     current = yaml.safe_load(f) or {}
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"Could not read existing selectors.yaml: {e}")
 
         current.update(new_data)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(current, f, default_flow_style=False)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.dump(current, f, default_flow_style=False)
+        except Exception as e:
+            self.logger.error(f"Failed to save selectors.yaml: {e}")
