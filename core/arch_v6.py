@@ -116,31 +116,32 @@ class SessionGuardian:
                 self.logger.error(f"Guardian Error: {e}")
 
     def _do_recovery(self):
-        """Delegates the recovery process to the executor."""
+        """Delegates the recovery process to the executor.
+        The executor is responsible for handling its own internal state."""
         self.logger.warning("Automatic recovery in progress...")
         try:
             if hasattr(self.executor, "recover_session"):
                 success = self.executor.recover_session()
-                if success:
-                    self.logger.info("Recovery completed successfully.")
-                else:
-                    self.logger.error("Recovery attempt failed.")
+            elif (
+                hasattr(self.executor, "recycle_browser")
+                and not getattr(self.executor, "is_attached", False)
+            ):
+                success = self.executor.recycle_browser()
             else:
-                self.logger.warning(
-                    "Executor does not implement 'recover_session'. "
-                    "Falling back to 'recycle_browser'."
+                self.logger.error(
+                    "Automatic recovery not possible with current executor configuration."
                 )
-                if not getattr(self.executor, "is_attached", False):
-                    success = self.executor.recycle_browser()
-                    if success:
-                        self.logger.info("Browser recycled successfully.")
-                    else:
-                        self.logger.error("Browser recycle failed.")
-                else:
-                    self.logger.error(
-                        "Automatic recovery not possible in 'attached' mode "
-                        "with an obsolete executor."
-                    )
+                return
+
+            if success is True:
+                self.logger.info("Recovery completed successfully.")
+            elif success is False:
+                self.logger.error("Recovery attempt failed.")
+            else:
+                self.logger.error(
+                    f"Recovery returned unexpected value: {success!r}. "
+                    "Treating as failure."
+                )
         except Exception as e:
             self.logger.error(f"Recovery process crashed: {e}", exc_info=True)
 

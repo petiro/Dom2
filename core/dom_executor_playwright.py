@@ -82,7 +82,8 @@ class DomExecutorPlaywright:
         return True
 
     def _reset_connection(self):
-        """Resets internal connection state to allow full re-initialization."""
+        """Resets internal connection state to allow full re-initialization.
+        Does NOT close the browser process. It only clears references."""
         self._initialized = False
         self.pw = None
         self.browser = None
@@ -465,11 +466,28 @@ class DomExecutorPlaywright:
 
     def recover_session(self) -> bool:
         """Attempts to recover the browser session.
-        Returns True if recovery succeeds, False otherwise."""
-        self.logger.warning("🔄 [RECOVERY] Tentativo ripristino sessione...")
+
+        Returns:
+            bool: True if recovery succeeds, False otherwise.
+        """
+        self.logger.warning("🔄 [RECOVERY] Attempting session recovery...")
         try:
-            self._reset_connection()
-            return self.launch_browser()
+            if self.is_attached:
+                # Attached mode: do NOT close the external browser process.
+                # Just reset internal state and re-attach.
+                self._reset_connection()
+                return self.launch_browser()
+
+            # Launched mode: properly close and relaunch the browser.
+            if hasattr(self, "recycle_browser"):
+                return self.recycle_browser()
+
+            self.logger.error(
+                "Executor does not implement 'recycle_browser'. "
+                "Cannot perform recovery in launched mode."
+            )
+            return False
+
         except Exception as e:
             self.logger.error(f"Session recovery failed: {e}", exc_info=True)
             return False
