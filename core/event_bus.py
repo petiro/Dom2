@@ -63,8 +63,8 @@ class EventBus:
         self.running = False
         try:
             self.dispatcher_thread.join(timeout=2)
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"Error stopping EventBus dispatcher thread: {e}")
 
 
 # Singleton

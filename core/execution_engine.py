@@ -3,6 +3,14 @@ from enum import Enum
 from core.event_bus import bus
 
 
+class Event(str, Enum):
+    """Event type constants to prevent typo-related bugs."""
+    STATE_CHANGE = "STATE_CHANGE"
+    BET_SUCCESS = "BET_SUCCESS"
+    BET_FAILED = "BET_FAILED"
+    BET_UNKNOWN = "BET_UNKNOWN"
+
+
 class State(Enum):
     IDLE = 0
     LOGIN_CHECK = 1
@@ -11,7 +19,26 @@ class State(Enum):
     PLACING_BET = 4
     VERIFYING = 5
     RETRY_WAIT = 98
-    ERROR_FATAL = 99
+
+
+class PipelineError(Exception):
+    """Base exception for pipeline failures."""
+
+
+class LoginFailedError(PipelineError):
+    """Raised when login fails after all retries."""
+
+
+class NavigationFailedError(PipelineError):
+    """Raised when navigation to match fails after all retries."""
+
+
+class OddsError(PipelineError):
+    """Raised when odds are invalid or not found."""
+
+
+class PlacementError(PipelineError):
+    """Raised when bet placement fails."""
 
 
 class ExecutionEngine:
@@ -33,15 +60,15 @@ class ExecutionEngine:
         try:
             selectors = executor._load_selectors()
 
-            # LOGIN
+            # Login
             if not self._execute_step(
                 State.LOGIN_CHECK,
                 executor.ensure_login,
                 selectors
             ):
-                raise Exception("Login failed after retries")
+                raise LoginFailedError("Login failed after retries")
 
-            # NAVIGAZIONE
+            # Navigate to match
             teams = bet_data.get("teams", "")
             market = bet_data.get("market", "")
 
@@ -53,42 +80,45 @@ class ExecutionEngine:
             ):
                 home = selectors.get("home_logo", "a.logo")
                 executor.human_click(home)
-                raise Exception("Navigation failed")
+                raise NavigationFailedError("Navigation failed")
 
-            # ANALISI QUOTA
+            # Analyze odds
             self._set_state(State.ANALYZING_MARKET)
 
             odds = executor.find_odds(teams, market)
 
             if not odds or odds <= 1.0:
-                raise Exception("Invalid odds")
+                raise OddsError("Invalid odds")
 
             stake = money_manager.get_stake(odds)
             if stake <= 0:
                 self.logger.warning("Stake 0. Skip.")
                 return
 
-            # PIAZZAMENTO
+            # Place bet
             self._set_state(State.PLACING_BET)
 
             if not executor.place_bet(teams, market, stake):
-                raise Exception("Bet placement failed")
+                raise PlacementError("Bet placement failed")
 
-            # VERIFICA
+            # Verify
             self._set_state(State.VERIFYING)
 
             if executor.verify_bet_success(teams):
-                bus.emit("BET_SUCCESS", {
+                bus.emit(Event.BET_SUCCESS, {
                     "data": bet_data,
                     "stake": stake,
                     "odds": odds
                 })
             else:
-                bus.emit("BET_UNKNOWN", "Placed but not confirmed")
+                bus.emit(Event.BET_UNKNOWN, "Placed but not confirmed")
 
-        except Exception as e:
+        except PipelineError as e:
             self.logger.error(f"Pipeline Error: {e}")
-            bus.emit("BET_FAILED", str(e))
+            bus.emit(Event.BET_FAILED, str(e))
+        except Exception as e:
+            self.logger.error(f"Unexpected Pipeline Error: {e}")
+            bus.emit(Event.BET_FAILED, str(e))
 
         finally:
             self._set_state(State.IDLE)
@@ -117,4 +147,4 @@ class ExecutionEngine:
 
     def _set_state(self, new_state):
         self.current_state = new_state
-        bus.emit("STATE_CHANGE", new_state.name)
+        bus.emit(Event.STATE_CHANGE, new_state.name)
