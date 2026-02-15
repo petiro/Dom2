@@ -263,4 +263,41 @@ class DomExecutorPlaywright:
         return True
 
     def check_health(self):
-        return True
+        """V6: Controlla se il browser e la pagina sono ancora attivi."""
+        try:
+            return self.page is not None and not self.page.is_closed()
+        except Exception:
+            return False
+
+    # --- V6: HUMAN INTERACTION DIRETTE ---
+    def human_click(self, selector):
+        """Simula click umano con delay e hover."""
+        if not self.launch_browser():
+            return False
+        try:
+            loc = self.page.locator(selector).first
+            loc.wait_for(state="visible", timeout=5000)
+            loc.hover()
+            time.sleep(random.uniform(0.2, 0.5))
+            loc.click()
+            time.sleep(random.uniform(0.1, 0.3))
+            return True
+        except Exception as e:
+            self.logger.warning(f"Click fallito su {selector}: {e}")
+            return False
+
+    def human_fill(self, selector, text):
+        """Simula digitazione umana lettera per lettera."""
+        if not self.launch_browser():
+            return False
+        try:
+            loc = self.page.locator(selector).first
+            loc.wait_for(state="visible", timeout=5000)
+            loc.click()
+            for char in text:
+                self.page.keyboard.type(char)
+                time.sleep(random.uniform(0.05, 0.15))
+            return True
+        except Exception as e:
+            self.logger.warning(f"Fill fallito su {selector}: {e}")
+            return False
