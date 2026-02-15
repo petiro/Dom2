@@ -5,10 +5,18 @@ import time
 
 # --- 1. EVENT BUS CENTRALE ---
 class EventBusV6:
+    """Pub/Sub con singolo dispatcher thread (evita thread-per-event explosion)."""
+
     def __init__(self, logger):
         self.logger = logger
         self.listeners = {}
         self.lock = threading.Lock()
+        self._queue = queue.Queue()
+        self._running = True
+        self._dispatcher = threading.Thread(
+            target=self._dispatch_loop, daemon=True, name="EventBus_Dispatcher"
+        )
+        self._dispatcher.start()
 
     def subscribe(self, event, fn):
         with self.lock:
@@ -17,14 +25,27 @@ class EventBusV6:
             self.listeners[event].append(fn)
 
     def emit(self, event, data=None):
-        with self.lock:
-            listeners = list(self.listeners.get(event, []))
+        """Accoda l'evento; il dispatcher lo consegna ai listener."""
+        self._queue.put((event, data))
 
-        for fn in listeners:
+    def _dispatch_loop(self):
+        """Singolo thread che processa tutti gli eventi in ordine."""
+        while self._running:
             try:
-                threading.Thread(target=fn, args=(data,), daemon=True).start()
-            except Exception as e:
-                self.logger.error(f"EventBus Error ({event}): {e}")
+                event, data = self._queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            with self.lock:
+                listeners = list(self.listeners.get(event, []))
+            for fn in listeners:
+                try:
+                    fn(data)
+                except Exception as e:
+                    self.logger.error(f"EventBus Error ({event}): {e}")
+            self._queue.task_done()
+
+    def stop(self):
+        self._running = False
 
 
 # --- 2. PLAYWRIGHT WORKER (Anti-Freeze) ---
