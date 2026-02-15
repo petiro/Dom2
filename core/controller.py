@@ -13,6 +13,7 @@ from core.config_loader import load_secure_config
 from core.security import Vault
 from core.state_machine import StateManager, AgentState
 from core.auto_mapper_worker import AutoMapperWorker
+from core.arch_v6 import PlaywrightWorker, SessionGuardian, PlaywrightWatchdog, EventBusV6
 
 # Import opzionale per compatibilita
 try:
@@ -65,6 +66,12 @@ class SuperAgentController(QObject):
         self.command_parser = None
         self.ui_window = None
 
+        # V6 Architecture
+        self.pw_worker = None
+        self.session_guardian = None
+        self.pw_watchdog = None
+        self.event_bus = EventBusV6(logger_instance)
+
         # Workers
         self.mapper_worker = None
         self.mapper_thread = None
@@ -78,6 +85,10 @@ class SuperAgentController(QObject):
     # --- SETUP & CONNESSIONI ---
     def set_executor(self, ex):
         self.executor = ex
+        # V6: Inizializza Worker, Guardian, Watchdog
+        self.pw_worker = PlaywrightWorker(self.executor, self.logger)
+        self.session_guardian = SessionGuardian(self.executor, self.logger)
+        self.pw_watchdog = PlaywrightWatchdog(self.pw_worker, self.logger)
 
     def set_trainer(self, trainer):
         self.trainer = trainer
@@ -94,8 +105,14 @@ class SuperAgentController(QObject):
         self.command_parser = parser
 
     def start_system(self):
-        self.logger.info("✅ Controller avviato. State: IDLE.")
+        self.logger.info("Avvio Sistema V6...")
         self.state_manager.transition(AgentState.IDLE)
+        # V6: Avvia Guardian e Watchdog
+        if self.session_guardian:
+            self.session_guardian.start()
+        if self.pw_watchdog:
+            self.pw_watchdog.start()
+        self.logger.info("Controller V6 avviato. State: IDLE.")
 
     # --- TELEGRAM INTEGRATION (FIX BUG-04) ---
     def connect_telegram(self, tg_config):
@@ -179,16 +196,19 @@ class SuperAgentController(QObject):
         self.logger.info("🔑 Secrets ricaricati.")
 
     def handle_telegram_signal(self, text):
-        """Gestisce il segnale con protezione Threading."""
-        with self._lock:
-            if self._active_threads > 2:
-                self.logger.warning("⚠️ Watchdog: Troppi thread attivi. Skip.")
-                return
-            self._active_threads += 1
-
-        threading.Thread(
-            target=self._process_signal_thread, args=(text,), daemon=True
-        ).start()
+        """V6: Invia il lavoro al Worker (NON BLOCCA GUI)."""
+        if self.pw_worker:
+            self.pw_worker.submit(self._process_signal_thread, text)
+        else:
+            # Fallback: thread diretto con protezione
+            with self._lock:
+                if self._active_threads > 2:
+                    self.logger.warning("Watchdog: Troppi thread attivi. Skip.")
+                    return
+                self._active_threads += 1
+            threading.Thread(
+                target=self._process_signal_thread, args=(text,), daemon=True
+            ).start()
 
     def _process_signal_thread(self, text):
         try:
@@ -293,8 +313,15 @@ class SuperAgentController(QObject):
 
     # --- STUBS RICHIESTI DALLA UI ---
     def shutdown(self):
-        self.logger.info("🔻 Shutdown...")
+        self.logger.info("Shutdown V6...")
         self.state_manager.set_state(AgentState.SHUTDOWN)
+        # V6: Ferma Worker, Guardian, Watchdog
+        if self.pw_worker:
+            self.pw_worker.stop()
+        if self.session_guardian:
+            self.session_guardian.stop()
+        if self.pw_watchdog:
+            self.pw_watchdog.stop()
         if self.executor:
             self.executor.close()
         if self.telegram_worker:
