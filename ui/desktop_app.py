@@ -356,16 +356,16 @@ class RobotFactoryTab(QWidget):
                 with open(ROBOTS_FILE, 'r') as f:
                     self.robots_data = json.load(f)
                 self.refresh_list()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger("SuperAgent").error(f"Failed to load robot data from {ROBOTS_FILE}: {e}")
 
     def save_data(self):
         try:
             os.makedirs(os.path.dirname(ROBOTS_FILE), exist_ok=True)
             with open(ROBOTS_FILE, 'w') as f:
                 json.dump(self.robots_data, f, indent=4)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger("SuperAgent").error(f"Failed to save robot data to {ROBOTS_FILE}: {e}")
 
     def refresh_list(self):
         self.robot_list.clear()
@@ -417,8 +417,9 @@ class RobotFactoryTab(QWidget):
         self.robots_data[new_name]["telegram_filter"] = self.inp_telegram_filter.text()
         try:
             self.robots_data[new_name]["selectors"] = json.loads(self.txt_selectors.toPlainText())
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger("SuperAgent").error(f"Invalid JSON in selectors for robot {new_name}: {e}")
+            QMessageBox.warning(self, "Errore JSON", "Il formato dei selettori non è un JSON valido. Le modifiche ai selettori non sono state salvate.")
         self.save_data()
         QMessageBox.information(self, "Salvato", "Configurazione Agente salvata!")
 
@@ -546,8 +547,8 @@ class SettingsTab(QWidget):
             self.inp_or_key.setText(data.get("openrouter_api_key", ""))
             self.inp_tg_id.setText(data.get("telegram_api_id", ""))
             self.inp_tg_hash.setText(data.get("telegram_api_hash", ""))
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger("SuperAgent").warning(f"Could not load keys from vault: {e}")
 
     def save_keys(self):
         """Salva le chiavi nel Vault criptato (AES-256)."""
