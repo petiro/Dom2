@@ -58,7 +58,7 @@ class AISignalParser:
 
                 elif response.status_code == 429:
                     self.logger.warning(f"⚠️ Rate limit. Retry {attempt + 1}/3...")
-                    time.sleep(2 * (attempt + 1))
+                    time.sleep(2 ** (attempt + 1))
                     continue
                 else:
                     self.logger.error(f"❌ Errore AI: {response.status_code}")

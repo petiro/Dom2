@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import subprocess
 import hashlib
 import base64
@@ -44,7 +45,8 @@ class Vault:
             with open(self.vault_path, "wb") as f:
                 f.write(encrypted_data)
             return True
-        except Exception:
+        except Exception as e:
+            logging.getLogger("SuperAgent").error(f"Failed to encrypt data for vault: {e}")
             return False
 
     def decrypt_data(self):
