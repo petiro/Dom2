@@ -79,10 +79,11 @@ class DomExecutorPlaywright:
         return True
 
     def _reset_connection(self):
-        """Resets internal connection state to allow re-initialization."""
+        """Resets internal connection state to allow full re-initialization."""
         self._initialized = False
         self.pw = None
         self.browser = None
+        self.ctx = None
         self.page = None
         self.human = None
 
@@ -453,18 +454,16 @@ class DomExecutorPlaywright:
         except Exception:
             return False
 
-    def recover_session(self):
-        """V6: Tenta il ripristino della sessione browser."""
+    def recover_session(self) -> bool:
+        """Attempts to recover the browser session.
+        Returns True if recovery succeeds, False otherwise."""
         self.logger.warning("🔄 [RECOVERY] Tentativo ripristino sessione...")
-        if self.is_attached:
-            try:
-                self._reset_connection()
-                return self.launch_browser()
-            except Exception as e:
-                self.logger.error(f"Recovery attached fallito: {e}")
-                return False
-        else:
-            return self.recycle_browser()
+        try:
+            self._reset_connection()
+            return self.launch_browser()
+        except Exception as e:
+            self.logger.error(f"Session recovery failed: {e}", exc_info=True)
+            return False
 
     # --- V6: HUMAN INTERACTION DIRETTE ---
     def human_click(self, selector):
