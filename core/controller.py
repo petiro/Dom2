@@ -270,7 +270,7 @@ class SuperAgentController(QObject):
         self._save_to_history(record)
         self.money_manager.record_outcome("win", stake, odds)
 
-        msg = f"BET: {stake}$ on {teams} ({market})"
+        msg = f"BET: {stake}€ on {teams} ({market})"
         self.logger.info(msg)
         self.safe_emit(msg)
 
