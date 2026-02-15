@@ -5,7 +5,7 @@ import subprocess
 import hashlib
 import base64
 import platform
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from core.utils import get_project_root
 
 
@@ -91,5 +91,5 @@ class Vault:
             return json.loads(decrypted_data.decode())
         except FileNotFoundError:
             raise
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, InvalidToken) as e:
             raise ValueError(f"Failed to decrypt vault data: {e}") from e

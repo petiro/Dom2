@@ -72,12 +72,12 @@ class DomExecutorPlaywright:
                 self.is_attached = False
             except Exception as e2:
                 self.logger.critical(f"❌ [GUARDIAN] Cannot start browser: {e2}")
-                # Cleanup Playwright to prevent resource leak
+                # Cleanup Playwright and reset internal state
                 try:
                     self.pw.stop()
                 except Exception:
                     pass
-                self.pw = None
+                self._reset_connection()
                 return False
 
         self.page.add_init_script(STEALTH_INJECTION_V4)
@@ -276,7 +276,7 @@ class DomExecutorPlaywright:
         return self.verify_placement(teams)
 
     def place_bet(self, teams, market, stake):
-        self.logger.info(f"🏁 Placing bet: {stake}$ on {teams}")
+        self.logger.info(f"🏁 Placing bet: {stake}€ on {teams}")
 
         if not self.launch_browser():
             return False
