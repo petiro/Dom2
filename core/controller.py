@@ -14,6 +14,8 @@ from core.security import Vault
 from core.state_machine import StateManager, AgentState
 from core.auto_mapper_worker import AutoMapperWorker
 from core.arch_v6 import PlaywrightWorker, SessionGuardian, PlaywrightWatchdog, EventBusV6
+from core.execution_engine import ExecutionEngine
+from core.event_bus import bus
 
 # Import opzionale per compatibilita
 try:
@@ -89,6 +91,10 @@ class SuperAgentController(QObject):
         self.pw_worker = PlaywrightWorker(self.executor, self.logger)
         self.session_guardian = SessionGuardian(self.executor, self.logger)
         self.pw_watchdog = PlaywrightWatchdog(self.pw_worker, self.logger)
+        # V7: ExecutionEngine event-driven
+        self.execution_engine = ExecutionEngine(self.executor, self.pw_worker, self.logger)
+        bus.subscribe("BET_SUCCESS", self._on_bet_success)
+        bus.subscribe("BET_FAILED", self._on_bet_failed)
 
     def set_trainer(self, trainer):
         self.trainer = trainer
@@ -247,7 +253,7 @@ class SuperAgentController(QObject):
                 steps = self.command_parser.parse(data)
                 self.logger.info(f"📋 Pipeline: {len(steps)} steps generati")
 
-            self._execute_bet_logic(data)
+            self.execution_engine.process_signal(data, self.money_manager)
 
         except Exception as e:
             self.logger.error(f"❌ Errore process signal: {e}")
@@ -256,101 +262,33 @@ class SuperAgentController(QObject):
                 self._active_threads -= 1
             self.state_manager.set_state(AgentState.IDLE)
 
-    def _execute_bet_logic(self, data):
-        if not self.executor:
-            self.logger.error("❌ Executor non collegato!")
-            self.state_manager.set_state(AgentState.ERROR)
-            self.event_bus.emit("BET_ERROR", {"reason": "no_executor"})
-            return
-
+    def _on_bet_success(self, payload):
+        """Handler evento BET_SUCCESS da ExecutionEngine."""
+        data = payload.get("data", {})
+        stake = payload.get("stake", 0)
+        odds = payload.get("odds", 0)
         teams = data.get("teams", "")
         market = data.get("market", "")
 
-        # --- STEP 1: LOGIN (con retry) ---
-        self.state_manager.set_state(AgentState.NAVIGATING)
-        self.event_bus.emit("BET_STEP", {"step": "LOGIN", "teams": teams})
-        selectors = self.executor._load_selectors()
-
-        login_ok = False
-        for attempt in range(1, 4):  # Max 3 tentativi
-            if self.executor.ensure_login(selectors):
-                login_ok = True
-                break
-            self.logger.warning(f"Login tentativo {attempt}/3 fallito. Retry...")
-            time.sleep(2 * attempt)  # Backoff: 2s, 4s
-
-        if not login_ok:
-            self.logger.error("❌ Login fallito dopo 3 tentativi. Bet annullata.")
-            self.state_manager.set_state(AgentState.ERROR)
-            self.event_bus.emit("BET_ERROR", {"reason": "login_failed", "teams": teams})
-            return
-
-        self.event_bus.emit("LOGIN_SUCCESS", {"teams": teams})
-
-        # --- STEP 2: NAVIGAZIONE AL MATCH (con retry) ---
-        self.event_bus.emit("BET_STEP", {"step": "NAVIGATE", "teams": teams})
-        nav_ok = False
-        for attempt in range(1, 4):  # Max 3 tentativi
-            if self.executor.navigate_to_match(teams, selectors):
-                nav_ok = True
-                break
-            self.logger.warning(f"Navigazione tentativo {attempt}/3 fallita. Retry...")
-            time.sleep(2 * attempt)
-
-        if not nav_ok:
-            self.logger.warning("⚠️ Navigazione al match fallita dopo 3 tentativi.")
-            self.state_manager.set_state(AgentState.ERROR)
-            self.event_bus.emit("BET_ERROR", {"reason": "navigate_failed", "teams": teams})
-            return
-
-        # --- STEP 3: LETTURA ODDS ---
-        self.state_manager.set_state(AgentState.BETTING)
-        self.event_bus.emit("BET_STEP", {"step": "FIND_ODDS", "teams": teams})
-        odds = None
-        try:
-            odds = self.executor.find_odds(teams, market)
-        except Exception as e:
-            self.logger.warning(f"⚠️ Errore lettura odds: {e}")
-
-        if not odds or odds <= 1.0:
-            self.logger.warning("⚠️ Quota non trovata. Uso fallback 2.0")
-            odds = 2.0
-
-        # --- STEP 4: CALCOLO STAKE ---
-        stake = self.money_manager.get_stake(odds)
-        if stake <= 0.10:
-            self.logger.warning("⚠️ Stake troppo basso.")
-            self.state_manager.set_state(AgentState.IDLE)
-            return
-
-        # --- STEP 5: PIAZZAMENTO ---
-        self.event_bus.emit("BET_STEP", {"step": "PLACE", "teams": teams, "stake": stake})
-        success = self.executor.place_bet(teams, market, stake)
-
-        # --- STEP 6: REGISTRAZIONE ---
         record = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "teams": teams,
             "market": market,
             "stake": stake,
             "odds": odds,
-            "status": "CONFERMATA" if success else "FALLITA"
+            "status": "CONFERMATA"
         }
         self._save_to_history(record)
+        self.money_manager.record_outcome("win", stake, odds)
 
-        # Registra risultato nel MoneyManager per aggiornare Roserpina
-        result = "win" if success else "lose"
-        self.money_manager.record_outcome(result, stake, odds)
-
-        msg = f"{'✅' if success else '❌'} BET: {stake}€ su {teams} ({market})"
+        msg = f"BET: {stake}$ su {teams} ({market})"
         self.logger.info(msg)
         self.safe_emit(msg)
 
-        event_name = "BET_PLACED" if success else "BET_FAILED"
-        self.event_bus.emit(event_name, {
-            "teams": teams, "market": market,
-            "stake": stake, "odds": odds, "success": success
-        })
+    def _on_bet_failed(self, reason):
+        """Handler evento BET_FAILED da ExecutionEngine."""
+        self.logger.warning(f"BET FAILED: {reason}")
+        self.state_manager.set_state(AgentState.ERROR)
 
     def _load_history(self):
         if os.path.exists(HISTORY_FILE):
@@ -393,6 +331,7 @@ class SuperAgentController(QObject):
             self.pw_worker.stop()
         if self.event_bus:
             self.event_bus.stop()
+        bus.stop()
         if self.executor:
             self.executor.close()
         if self.telegram_worker:
