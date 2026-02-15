@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 from core.ai_selector_validator import validate_selector
 from core.anti_detect import STEALTH_INJECTION_V4
 from core.human_behavior import HumanInput  # FIX BUG-10: Usa HumanInput
+from core.human_mouse import HumanMouse     # V7.2: Bezier mouse simulation
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,6 +28,7 @@ class DomExecutorPlaywright:
         self.is_attached = False
         self.selector_file = "selectors.yaml"
         self.human = None  # FIX BUG-10
+        self.mouse = None  # V7.2: HumanMouse (Bezier curves)
         self._internal_lock = threading.Lock()  # Thread safety per operazioni Playwright
 
     def set_live_mode(self, enabled: bool):
@@ -75,16 +77,19 @@ class DomExecutorPlaywright:
         # Iniezione Anti-Detect
         self.page.add_init_script(STEALTH_INJECTION_V4)
         self.human = HumanInput(self.page, self.logger)  # FIX BUG-10
+        self.mouse = HumanMouse(self.page, self.logger)  # V7.2
         self._initialized = True
         return True
 
     def _reset_connection(self):
-        """Resets internal connection state to allow re-initialization."""
+        """Resets internal connection state to allow full re-initialization."""
         self._initialized = False
         self.pw = None
         self.browser = None
+        self.ctx = None
         self.page = None
         self.human = None
+        self.mouse = None
 
     def close(self):
         """Chiude solo la connessione, MAI il browser dell'utente."""
@@ -161,15 +166,20 @@ class DomExecutorPlaywright:
 
     # --- ANTI-TELEPORT & CLICK ---
     def _human_move_and_click(self, locator, timeout=3000):
-        """Usa HumanInput se disponibile, altrimenti fallback semplice. Thread-safe."""
+        """Click with human-like movement. V7.2: Bezier primary, HumanInput fallback. Thread-safe."""
         with self._internal_lock:
             try:
                 locator.wait_for(state="visible", timeout=timeout)
 
+                # V7.2: Bezier mouse (most realistic)
+                if self.mouse:
+                    return self.mouse.click_locator(locator)
+
+                # V6 fallback: HumanInput
                 if self.human:
                     return self.human.click_locator(locator)
 
-                # Fallback semplice
+                # Basic fallback
                 box = locator.bounding_box()
                 if box:
                     target_x = box["x"] + box["width"] / 2
@@ -453,18 +463,84 @@ class DomExecutorPlaywright:
         except Exception:
             return False
 
-    def recover_session(self):
-        """V6: Tenta il ripristino della sessione browser."""
+    def recover_session(self) -> bool:
+        """Attempts to recover the browser session.
+        Returns True if recovery succeeds, False otherwise."""
         self.logger.warning("🔄 [RECOVERY] Tentativo ripristino sessione...")
-        if self.is_attached:
-            try:
-                self._reset_connection()
-                return self.launch_browser()
-            except Exception as e:
-                self.logger.error(f"Recovery attached fallito: {e}")
+        try:
+            self._reset_connection()
+            return self.launch_browser()
+        except Exception as e:
+            self.logger.error(f"Session recovery failed: {e}", exc_info=True)
+            return False
+
+    # --- V7.2: AUTO-DISCOVERY SCANNER ---
+    def scan_page_elements(self, url):
+        """Scans the page DOM and returns a list of interactive elements for AI mapping."""
+        if not self.launch_browser():
+            return None
+
+        self.logger.info(f"🕵️ Scanning DOM structure: {url}")
+        try:
+            self.page.goto(url, timeout=60000)
+            self.page.wait_for_load_state("networkidle")
+            time.sleep(4)
+
+            scanner_script = """
+            () => {
+                const elements = [];
+                const interesting = document.querySelectorAll(
+                    'button, input, a, div[role="button"], span[role="button"]'
+                );
+                interesting.forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 5 && rect.height > 5
+                        && el.style.visibility !== 'hidden'
+                        && el.style.display !== 'none') {
+
+                        let selector = el.tagName.toLowerCase();
+                        if (el.id) {
+                            selector += '#' + el.id;
+                        } else if (el.className && typeof el.className === 'string') {
+                            const valid = el.className.split(' ')
+                                .filter(c => c.length > 2 && c.length < 35);
+                            if (valid.length > 0) selector += '.' + valid.join('.');
+                        }
+
+                        let text = el.innerText || el.placeholder
+                            || el.value || el.getAttribute('aria-label') || '';
+                        text = text.replace(/\\n/g, ' ').trim().substring(0, 60);
+
+                        if (selector && (text.length > 0 || el.tagName === 'INPUT')) {
+                            elements.push({
+                                tag: el.tagName.toLowerCase(),
+                                text: text,
+                                selector: selector,
+                                type: el.type || 'n/a',
+                                id: el.id || 'n/a'
+                            });
+                        }
+                    }
+                });
+                return elements.slice(0, 250);
+            }
+            """
+            elements = self.page.evaluate(scanner_script)
+            self.logger.info(f"✅ Extracted {len(elements)} candidate elements.")
+            return elements
+        except Exception as e:
+            self.logger.error(f"Scanner error: {e}")
+            return []
+
+    def verify_selector_validity(self, selector):
+        """Verifies whether a CSS selector exists and is visible on the current page."""
+        try:
+            if not selector or selector == "NOT_FOUND":
                 return False
-        else:
-            return self.recycle_browser()
+            loc = self.page.locator(selector).first
+            return loc.is_visible(timeout=2000)
+        except Exception:
+            return False
 
     # --- V6: HUMAN INTERACTION DIRETTE ---
     def human_click(self, selector):

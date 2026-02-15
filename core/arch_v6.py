@@ -116,19 +116,33 @@ class SessionGuardian:
                 self.logger.error(f"Guardian Error: {e}")
 
     def _do_recovery(self):
-        """Delega il processo di recovery all'executor."""
-        self.logger.warning("Recovery automatico in corso...")
+        """Delegates the recovery process to the executor."""
+        self.logger.warning("Automatic recovery in progress...")
         try:
-            if hasattr(self.executor, 'recover_session'):
-                self.executor.recover_session()
-            else:
-                self.logger.warning("L'executor non implementa 'recover_session'. Fallback a 'recycle_browser'.")
-                if not getattr(self.executor, "is_attached", False):
-                    self.executor.recycle_browser()
+            if hasattr(self.executor, "recover_session"):
+                success = self.executor.recover_session()
+                if success:
+                    self.logger.info("Recovery completed successfully.")
                 else:
-                    self.logger.error("Recovery automatico non possibile in modalita 'attached' con un executor obsoleto.")
+                    self.logger.error("Recovery attempt failed.")
+            else:
+                self.logger.warning(
+                    "Executor does not implement 'recover_session'. "
+                    "Falling back to 'recycle_browser'."
+                )
+                if not getattr(self.executor, "is_attached", False):
+                    success = self.executor.recycle_browser()
+                    if success:
+                        self.logger.info("Browser recycled successfully.")
+                    else:
+                        self.logger.error("Browser recycle failed.")
+                else:
+                    self.logger.error(
+                        "Automatic recovery not possible in 'attached' mode "
+                        "with an obsolete executor."
+                    )
         except Exception as e:
-            self.logger.error(f"Recovery fallito: {e}")
+            self.logger.error(f"Recovery process crashed: {e}", exc_info=True)
 
     def stop(self):
         self.stop_event.set()
