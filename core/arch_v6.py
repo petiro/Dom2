@@ -101,14 +101,13 @@ class PlaywrightWatchdog:
 
     def _loop(self):
         while not self.stop_event.wait(20):
-            if not self.worker.thread.is_alive():
+            if self.worker.running and not self.worker.thread.is_alive():
                 self.logger.critical("ALLARME: Il thread Playwright Worker è morto! Riavvio...")
                 self._restart_worker()
 
     def _restart_worker(self):
         """Tenta di riavviare il Worker thread."""
         try:
-            self.worker.running = True
             self.worker.thread = threading.Thread(
                 target=self.worker._loop, daemon=True, name="PW_Worker"
             )
