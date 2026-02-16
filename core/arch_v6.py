@@ -2,10 +2,15 @@ import threading
 import queue
 import time
 
+# Constants
+JOIN_TIMEOUT = 2
+HEALTH_CHECK_INTERVAL = 15
+WATCHDOG_INTERVAL = 20
 
-# --- 1. EVENT BUS CENTRALE ---
+
+# --- 1. CENTRAL EVENT BUS ---
 class EventBusV6:
-    """Pub/Sub con singolo dispatcher thread (evita thread-per-event explosion)."""
+    """Pub/Sub with single dispatcher thread (avoids thread-per-event explosion)."""
 
     def __init__(self, logger):
         self.logger = logger
@@ -46,8 +51,16 @@ class EventBusV6:
 
     def stop(self):
         self._running = False
+        # Drain remaining events
+        while not self._queue.empty():
+            try:
+                event, data = self._queue.get_nowait()
+                self.logger.debug(f"Draining event on stop: {event}")
+                self._queue.task_done()
+            except queue.Empty:
+                break
         try:
-            self._dispatcher.join(timeout=2)
+            self._dispatcher.join(timeout=JOIN_TIMEOUT)
         except Exception as e:
             self.logger.warning(f"Error stopping EventBusV6 dispatcher: {e}")
 
@@ -85,26 +98,30 @@ class PlaywrightWorker:
 
 # --- 3. SESSION GUARDIAN (Auto-Recovery) ---
 class SessionGuardian:
+    MAX_FAILURES = 3
+
     def __init__(self, executor, logger):
         self.executor = executor
         self.logger = logger
         self.stop_event = threading.Event()
         self._consecutive_failures = 0
-        self._max_failures = 3  # 3 check falliti prima di recovery
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True, name="SessionGuardian").start()
 
     def _loop(self):
-        self.logger.info("Session Guardian active (check every 15s, recovery after 3 fails).")
-        while not self.stop_event.wait(15):
+        self.logger.info(
+            f"Session Guardian active (check every {HEALTH_CHECK_INTERVAL}s, "
+            f"recovery after {self.MAX_FAILURES} fails)."
+        )
+        while not self.stop_event.wait(HEALTH_CHECK_INTERVAL):
             try:
                 if not self.executor.check_health():
                     self._consecutive_failures += 1
                     self.logger.warning(
-                        f"Browser unhealthy ({self._consecutive_failures}/{self._max_failures})"
+                        f"Browser unhealthy ({self._consecutive_failures}/{self.MAX_FAILURES})"
                     )
-                    if self._consecutive_failures >= self._max_failures:
+                    if self._consecutive_failures >= self.MAX_FAILURES:
                         self._do_recovery()
                         self._consecutive_failures = 0
                 else:
@@ -115,8 +132,7 @@ class SessionGuardian:
                 self.logger.error(f"Guardian Error: {e}")
 
     def _do_recovery(self):
-        """Delegates the recovery process to the executor.
-        The executor is responsible for handling its own internal state."""
+        """Delegates the recovery process to the executor."""
         self.logger.warning("Automatic recovery in progress...")
         try:
             if hasattr(self.executor, "recover_session"):
@@ -132,15 +148,10 @@ class SessionGuardian:
                 )
                 return
 
-            if success is True:
+            if success:
                 self.logger.info("Recovery completed successfully.")
-            elif success is False:
-                self.logger.error("Recovery attempt failed.")
             else:
-                self.logger.error(
-                    f"Recovery returned unexpected value: {success!r}. "
-                    "Treating as failure."
-                )
+                self.logger.error("Recovery attempt failed.")
         except Exception as e:
             self.logger.error(f"Recovery process crashed: {e}", exc_info=True)
 
@@ -154,26 +165,30 @@ class PlaywrightWatchdog:
         self.worker = worker
         self.logger = logger
         self.stop_event = threading.Event()
+        self._restart_lock = threading.Lock()
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True, name="PW_Watchdog").start()
 
     def _loop(self):
-        while not self.stop_event.wait(20):
+        while not self.stop_event.wait(WATCHDOG_INTERVAL):
             if self.worker.running and not self.worker.thread.is_alive():
                 self.logger.critical("ALERT: Playwright Worker thread is dead! Restarting...")
                 self._restart_worker()
 
     def _restart_worker(self):
-        """Attempts to restart the Worker thread."""
-        try:
-            self.worker.thread = threading.Thread(
-                target=self.worker._loop, daemon=True, name="PW_Worker"
-            )
-            self.worker.thread.start()
-            self.logger.info("Playwright Worker restarted by Watchdog.")
-        except Exception as e:
-            self.logger.error(f"Watchdog: cannot restart Worker: {e}")
+        """Attempts to restart the Worker thread (thread-safe)."""
+        with self._restart_lock:
+            try:
+                if self.worker.thread.is_alive():
+                    return  # Already restarted by another check
+                self.worker.thread = threading.Thread(
+                    target=self.worker._loop, daemon=True, name="PW_Worker"
+                )
+                self.worker.thread.start()
+                self.logger.info("Playwright Worker restarted by Watchdog.")
+            except Exception as e:
+                self.logger.error(f"Watchdog: cannot restart Worker: {e}")
 
     def stop(self):
         self.stop_event.set()

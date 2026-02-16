@@ -18,7 +18,7 @@ class Vault:
         self.vault_path = VAULT_FILE
 
     def _generate_machine_key(self):
-        """Genera una chiave stabile basata su hardware UUID (Fix V7.3)."""
+        """Generate a stable key based on hardware UUID."""
         if os.environ.get("GITHUB_ACTIONS") == "true":
             serial = os.getenv("CI_RUN_ID") or uuid.uuid4().hex
             hash_key = hashlib.sha256(serial.encode()).digest()
@@ -28,21 +28,31 @@ class Vault:
 
         try:
             if platform.system() == "Windows":
-                cmd = "wmic csproduct get uuid"
-                machine_id = subprocess.check_output(cmd, shell=True).decode().split('\n')[1].strip()
+                raw = subprocess.check_output(
+                    ["wmic", "csproduct", "get", "uuid"],
+                    stderr=subprocess.DEVNULL
+                ).decode()
+                lines = raw.strip().split('\n')
+                machine_id = lines[1].strip() if len(lines) > 1 else machine_id
 
             elif platform.system() == "Linux":
                 if os.path.exists("/etc/machine-id"):
                     with open("/etc/machine-id") as f:
                         machine_id = f.read().strip()
-                else:
-                    cmd = "cat /var/lib/dbus/machine-id"
-                    machine_id = subprocess.check_output(cmd, shell=True).decode().strip()
+                elif os.path.exists("/var/lib/dbus/machine-id"):
+                    with open("/var/lib/dbus/machine-id") as f:
+                        machine_id = f.read().strip()
 
             elif platform.system() == "Darwin":
-                cmd = "ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID"
-                output = subprocess.check_output(cmd, shell=True).decode()
-                machine_id = output.split('"')[-2]
+                raw = subprocess.check_output(
+                    ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                    stderr=subprocess.DEVNULL
+                ).decode()
+                for line in raw.split('\n'):
+                    if "IOPlatformUUID" in line:
+                        parts = line.split('"')
+                        machine_id = parts[-2] if len(parts) >= 2 else machine_id
+                        break
 
         except Exception as e:
             self.logger.warning(f"Fallback key generation: {e}")
@@ -67,7 +77,7 @@ class Vault:
             return False
 
     def decrypt_data(self):
-        """Fix High #2: Gestione robusta errori."""
+        """Robust error handling for vault decryption."""
         try:
             if not os.path.exists(self.vault_path):
                 return {}
@@ -78,14 +88,12 @@ class Vault:
             decrypted_data = self.cipher.decrypt(encrypted_data)
             return json.loads(decrypted_data.decode())
 
-        except FileNotFoundError:
-            return {}
         except json.JSONDecodeError:
-            self.logger.error("Vault corrotto: JSON invalido.", exc_info=True)
+            self.logger.error("Vault corrupted: invalid JSON.", exc_info=True)
             return {}
         except InvalidToken:
-            self.logger.error("Vault decrittazione fallita: Token invalido o cambio macchina.", exc_info=True)
+            self.logger.error("Vault decryption failed: invalid token or machine change.", exc_info=True)
             return {}
         except Exception as e:
-            self.logger.error(f"Errore Vault inatteso: {e}", exc_info=True)
+            self.logger.error(f"Unexpected Vault error: {e}", exc_info=True)
             return {}

@@ -47,7 +47,7 @@ VALID_TRANSITIONS = {
     AgentState.HEALING:      [AgentState.IDLE, AgentState.NAVIGATING, AgentState.BETTING,
                               AgentState.ERROR, AgentState.SHUTDOWN],
     AgentState.RECOVERING:   [AgentState.IDLE, AgentState.ERROR, AgentState.SHUTDOWN],
-    AgentState.MAINTENANCE:  [AgentState.BOOT, AgentState.SHUTDOWN],
+    AgentState.MAINTENANCE:  [AgentState.BOOT, AgentState.IDLE, AgentState.SHUTDOWN],
     AgentState.TRAINING:     [AgentState.IDLE, AgentState.ERROR, AgentState.SHUTDOWN],
     AgentState.ERROR:        [AgentState.IDLE, AgentState.RECOVERING, AgentState.HEALING,
                               AgentState.SHUTDOWN, AgentState.BOOT],
@@ -118,12 +118,12 @@ class StateManager(QObject):
                     f"[StateMachine] Invalid transition: {old.name} -> {new_state.name}")
                 return False
 
-            # Fire exit callbacks
+            # Fire exit callbacks (isolated per callback)
             for cb in self._on_exit_callbacks.get(old, []):
                 try:
                     cb()
                 except Exception as e:
-                    self.logger.error(f"[StateMachine] on_exit callback error: {e}")
+                    self.logger.error(f"[StateMachine] on_exit callback error ({cb}): {e}")
 
             self._state = new_state
             self._history.append((time.time(), old, new_state))
@@ -132,12 +132,12 @@ class StateManager(QObject):
 
             self.logger.info(f"[StateMachine] {old.name} -> {new_state.name}")
 
-        # Fire enter callbacks and Qt signal (outside lock)
+        # Fire enter callbacks and Qt signal (outside lock, isolated per callback)
         for cb in self._on_enter_callbacks.get(new_state, []):
             try:
                 cb()
             except Exception as e:
-                self.logger.error(f"[StateMachine] on_enter callback error: {e}")
+                self.logger.error(f"[StateMachine] on_enter callback error ({cb}): {e}")
 
         self.state_changed.emit(new_state)
         return True

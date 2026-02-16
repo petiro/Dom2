@@ -1,7 +1,7 @@
 import threading
 import queue
 import logging
-from typing import Callable, Dict, List, Any
+from typing import Callable, Dict, List, Any, Optional
 
 
 class EventBus:
@@ -13,13 +13,16 @@ class EventBus:
     - Safe shutdown with join
     - No silent exception swallowing
     - Multiple subscribers per event
+    - Backpressure via bounded queue
     """
+
+    QUEUE_MAX_SIZE = 1000
 
     def __init__(self):
         self._subscribers: Dict[Any, List[Callable]] = {}
-        self._queue: queue.Queue = queue.Queue()
+        self._queue: queue.Queue = queue.Queue(maxsize=self.QUEUE_MAX_SIZE)
         self._running: bool = False
-        self._dispatcher: threading.Thread | None = None
+        self._dispatcher: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self.logger = logging.getLogger(self.__class__.__name__)
 

@@ -132,8 +132,12 @@ class ExecutionEngine:
             self._change_state(ExecutionState.FAILED)
 
         finally:
-            if self.state != ExecutionState.IDLE:
-                self._change_state(ExecutionState.IDLE)
+            try:
+                if self.state != ExecutionState.IDLE:
+                    self._change_state(ExecutionState.IDLE)
+            except Exception as e:
+                self.logger.error(f"Failed to reset state to IDLE: {e}")
+                self.state = ExecutionState.IDLE
 
     # ======================================================
     # Atomic Steps (Encapsulated)

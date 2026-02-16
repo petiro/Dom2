@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import threading
 
 from core.utils import get_project_root
 
@@ -69,7 +70,7 @@ class RoserpinaEngine:
             self.state["current_target"] -= profit
             self.state["wins_left"] -= 1
 
-            if self.state["wins_left"] <= 0 or self.state["current_target"] <= 0.1:
+            if self.state["wins_left"] <= 0 or self.state["current_target"] < 0.01:
                 self.reset_cycle()
                 return
         elif result == "lose":
@@ -81,6 +82,7 @@ class RoserpinaEngine:
 # --- MAIN MANAGER ---
 class MoneyManager:
     def __init__(self):
+        self._lock = threading.Lock()
         self.strategy = "Stake Fisso"
         self.fixed_stake = 1.0
         self.bankroll = 100.0
@@ -88,30 +90,45 @@ class MoneyManager:
         self.reload()
 
     def reload(self):
-        self.bankroll = 100.0
-        if os.path.exists(CONFIG_FILE):
+        with self._lock:
+            if not os.path.exists(CONFIG_FILE):
+                return
+
             try:
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self.strategy = data.get("strategy", "Stake Fisso")
-                    self.bankroll = float(data.get("bankroll", 100.0))
 
-                    target = float(data.get("target_pct", 45.0))
-                    wins = int(data.get("wins_needed", 3))
-                    max_bet = float(data.get("max_bet_pct", 0.25))
-                    self.roserpina = RoserpinaEngine(self.bankroll, target, wins, max_bet)
+                # Parse into temp vars first — only assign on success
+                strategy = data.get("strategy", "Stake Fisso")
+                bankroll = float(data.get("bankroll", 100.0))
+                target = float(data.get("target_pct", 45.0))
+                wins = int(data.get("wins_needed", 3))
+                max_bet = float(data.get("max_bet_pct", 0.25))
+                fixed_stake = 1.0
+                if strategy == "Stake Fisso":
+                    fixed_stake = float(data.get("fixed_amount", 1.0))
 
-                    self.fixed_stake = 1.0
-                    if self.strategy == "Stake Fisso":
-                        self.fixed_stake = float(data.get("fixed_amount", 1.0))
+                # All parsed OK — now commit
+                self.strategy = strategy
+                self.bankroll = bankroll
+                self.fixed_stake = fixed_stake
+                self.roserpina = RoserpinaEngine(bankroll, target, wins, max_bet)
+
             except Exception as e:
                 logger.error(f"Error loading money config: {e}")
 
     def get_stake(self, odds):
-        if self.strategy == "Roserpina" and self.roserpina:
-            return self.roserpina.calculate_stake(odds)
-        return self.fixed_stake
+        with self._lock:
+            if self.strategy == "Roserpina" and self.roserpina:
+                return self.roserpina.calculate_stake(odds)
+            return self.fixed_stake
+
+    def get_bankroll(self):
+        """Return current bankroll value."""
+        with self._lock:
+            return self.bankroll
 
     def record_outcome(self, result, stake, odds):
-        if self.strategy == "Roserpina" and self.roserpina:
-            self.roserpina.record_result(result, stake, odds)
+        with self._lock:
+            if self.strategy == "Roserpina" and self.roserpina:
+                self.roserpina.record_result(result, stake, odds)

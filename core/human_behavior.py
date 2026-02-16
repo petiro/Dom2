@@ -12,6 +12,8 @@ import time
 import random
 import math
 
+from core.config_paths import TIMEOUT_MEDIUM
+
 
 class HumanInput:
     """Stateful human input simulator.
@@ -37,7 +39,8 @@ class HumanInput:
     def _bezier_curve(self, start_x, start_y, end_x, end_y):
         """Generate a natural curved path using cubic Bezier interpolation."""
         path = []
-        steps = random.randint(25, 60)
+        dist = math.hypot(end_x - start_x, end_y - start_y)
+        steps = max(20, min(80, int(dist / 10)))
 
         # Random control points for curve variety
         dist = math.hypot(end_x - start_x, end_y - start_y)
@@ -111,7 +114,7 @@ class HumanInput:
         """Full human click: Bezier move + hesitate + mousedown/hold/up."""
         try:
             loc = self.page.locator(selector_str).first
-            loc.wait_for(state="visible", timeout=7000)
+            loc.wait_for(state="visible", timeout=TIMEOUT_MEDIUM)
             if self.move_to(loc):
                 time.sleep(random.uniform(0.08, 0.25))  # Pre-click visual confirmation
                 self.page.mouse.down()
