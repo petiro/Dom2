@@ -16,20 +16,22 @@ from collections import deque
 from typing import Optional
 
 
-SYSTEM_PROMPT_UNIVERSAL = """Sei SuperAgent, un assistente AI specializzato in:
-- Automazione RPA su piattaforme di betting live
-- Analisi DOM e selezione CSS/XPath di elementi
-- Interpretazione di segnali Telegram (tip, quote, mercati)
-- Analisi visiva di screenshot per trovare pulsanti e form
-- Auto-healing dei selettori CSS rotti
+SYSTEM_PROMPT_UNIVERSAL = """You are SuperAgent, an AI assistant specialized in:
+- RPA automation on live betting platforms
+- DOM analysis and CSS/XPath element selection
+- Telegram signal interpretation (tips, odds, markets)
+- Visual screenshot analysis to find buttons and forms
+- Auto-healing of broken CSS selectors
 
-Regole:
-1. Rispondi SOLO in italiano
-2. Sii conciso e tecnico
-3. Se analizzi un DOM, suggerisci il selettore CSS migliore
-4. Se analizzi uno screenshot, descrivi cosa vedi e dove cliccare
-5. Non inventare informazioni — se non sei sicuro, dillo
+Rules:
+1. Be concise and technical
+2. When analyzing DOM, suggest the best CSS selector
+3. When analyzing a screenshot, describe what you see and where to click
+4. Do not invent information — if unsure, say so
 """
+
+# Maximum screenshot payload size (500KB base64)
+MAX_SCREENSHOT_B64_SIZE = 500_000
 
 
 class AITrainerEngine:
@@ -85,36 +87,40 @@ class AITrainerEngine:
         Returns the AI response text.
         """
         if not self.vision:
-            return "AI non disponibile (VisionLearner non inizializzato)"
+            return "AI not available (VisionLearner not initialized)"
 
         # Build context from memory
         context_parts = [self._system_prompt, ""]
 
         # Add conversation history
         if self._memory:
-            context_parts.append("--- Conversazione precedente ---")
+            context_parts.append("--- Previous conversation ---")
             for turn in self._memory:
                 role = turn.get("role", "?")
                 content = turn.get("content", "")
                 context_parts.append(f"{role}: {content}")
-            context_parts.append("--- Fine cronologia ---\n")
+            context_parts.append("--- End history ---\n")
 
         # Add DOM snapshot if provided
         if dom_snapshot:
             # Truncate if too long
             if len(dom_snapshot) > self.DOM_MAX_LENGTH:
-                dom_snapshot = dom_snapshot[:self.DOM_MAX_LENGTH] + "\n... [TRONCATO]"
-            context_parts.append(f"--- DOM Snapshot ---\n{dom_snapshot}\n--- Fine DOM ---\n")
+                dom_snapshot = dom_snapshot[:self.DOM_MAX_LENGTH] + "\n... [TRUNCATED]"
+            context_parts.append(f"--- DOM Snapshot ---\n{dom_snapshot}\n--- End DOM ---\n")
 
-        # Add screenshot description if provided
+        # Add screenshot description if provided (with size cap)
         if screenshot_b64:
-            context_parts.append("[Screenshot allegato per analisi visiva]")
+            if len(screenshot_b64) > MAX_SCREENSHOT_B64_SIZE:
+                screenshot_b64 = screenshot_b64[:MAX_SCREENSHOT_B64_SIZE]
+                if self.logger:
+                    self.logger.warning(f"[AITrainer] Screenshot truncated to {MAX_SCREENSHOT_B64_SIZE} chars")
+            context_parts.append("[Screenshot attached for visual analysis]")
 
-        context_parts.append(f"Utente: {user_message}")
+        context_parts.append(f"User: {user_message}")
         full_context = "\n".join(context_parts)
 
         # Store user message in memory
-        self._memory.append({"role": "Utente", "content": user_message, "ts": time.time()})
+        self._memory.append({"role": "User", "content": user_message, "ts": time.time()})
 
         try:
             # Use vision learner for the query
@@ -138,7 +144,7 @@ class AITrainerEngine:
             elif isinstance(result, str):
                 response_text = result
             else:
-                response_text = str(result) if result else "Nessuna risposta dall'AI."
+                response_text = str(result) if result else "No response from AI."
 
             # Store AI response in memory
             self._memory.append({"role": "AI", "content": response_text, "ts": time.time()})
@@ -146,17 +152,17 @@ class AITrainerEngine:
             return response_text
 
         except Exception as e:
-            error_msg = f"Errore AI: {e}"
+            error_msg = f"AI Error: {e}"
             if self.logger:
                 self.logger.error(f"[AITrainer] {error_msg}")
             self._memory.append({"role": "AI", "content": error_msg, "ts": time.time()})
             return error_msg
 
-    def analyze_dom(self, dom_snapshot: str, question: str = "Analizza il DOM e suggerisci i selettori per gli elementi interattivi.") -> str:
+    def analyze_dom(self, dom_snapshot: str, question: str = "Analyze the DOM and suggest selectors for interactive elements.") -> str:
         """Analyze a DOM snapshot and return AI insights."""
         return self.ask(question, dom_snapshot=dom_snapshot)
 
-    def analyze_screenshot(self, screenshot_b64: str, question: str = "Descrivi cosa vedi e dove dovrei cliccare.") -> str:
+    def analyze_screenshot(self, screenshot_b64: str, question: str = "Describe what you see and where I should click.") -> str:
         """Analyze a screenshot and return AI insights."""
         return self.ask(question, screenshot_b64=screenshot_b64)
 
@@ -164,7 +170,7 @@ class AITrainerEngine:
                                screenshot_b64: Optional[str] = None,
                                current_state: str = "") -> str:
         """Ask AI for next action suggestion given current context."""
-        prompt = f"Stato attuale: {current_state}\nQual è la prossima azione da eseguire?"
+        prompt = f"Current state: {current_state}\nWhat is the next action to execute?"
         return self.ask(prompt, dom_snapshot=dom_snapshot, screenshot_b64=screenshot_b64)
 
     # ------------------------------------------------------------------
@@ -177,9 +183,9 @@ class AITrainerEngine:
         stores the result in memory. Returns the AI analysis text.
         """
         if not self._executor:
-            return "Executor non connesso al trainer."
+            return "Executor not connected to trainer."
         if not self.vision:
-            return "VisionLearner non disponibile."
+            return "VisionLearner not available."
 
         if self.logger:
             self.logger.info("[AITrainer] train_step() — starting pipeline")
@@ -202,11 +208,11 @@ class AITrainerEngine:
 
         # 3. Ask AI to analyze the current state
         prompt = (
-            "Analizza lo stato attuale della pagina. "
-            "Identifica: 1) Dove mi trovo (pagina/sezione) "
-            "2) Elementi interattivi visibili (pulsanti, form, link) "
-            "3) Selettori CSS consigliati per gli elementi chiave "
-            "4) Eventuali anomalie o problemi nella pagina"
+            "Analyze the current page state. "
+            "Identify: 1) Where I am (page/section) "
+            "2) Visible interactive elements (buttons, forms, links) "
+            "3) Recommended CSS selectors for key elements "
+            "4) Any anomalies or issues on the page"
         )
 
         result = self.ask(prompt, dom_snapshot=dom, screenshot_b64=screenshot)
@@ -256,12 +262,12 @@ class AITrainerEngine:
 
         # 3. Ask AI for a new selector
         prompt = (
-            f"Il selettore CSS '{broken_selector}' non funziona più.\n"
-            f"L'elemento che cercava era: {element_description}\n\n"
-            f"Analizza il DOM e lo screenshot. Trova l'elemento corretto e "
-            f"suggerisci un NUOVO selettore CSS che funzioni.\n"
-            f"Rispondi SOLO con il nuovo selettore CSS, senza spiegazioni.\n"
-            f"Esempio di risposta: button.submit-bet"
+            f"The CSS selector '{broken_selector}' no longer works.\n"
+            f"The element it was looking for: {element_description}\n\n"
+            f"Analyze the DOM and screenshot. Find the correct element and "
+            f"suggest a NEW working CSS selector.\n"
+            f"Respond ONLY with the new CSS selector, no explanations.\n"
+            f"Example response: button.submit-bet"
         )
 
         try:

@@ -1,7 +1,11 @@
 import json
+import os
 import requests
 import logging
 import time
+
+
+DEFAULT_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 class AISignalParser:
@@ -9,6 +13,7 @@ class AISignalParser:
         self.logger = logging.getLogger("SuperAgent")
         self.api_key = api_key
         self.model = "google/gemini-2.0-flash-001"
+        self.api_url = os.environ.get("OPENROUTER_API_URL", DEFAULT_API_URL)
 
     def parse(self, telegram_text):
         if not telegram_text or len(telegram_text) < 5:
@@ -29,7 +34,7 @@ class AISignalParser:
         for attempt in range(3):
             try:
                 response = requests.post(
-                    url="https://openrouter.ai/api/v1/chat/completions",
+                    url=self.api_url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
@@ -44,7 +49,7 @@ class AISignalParser:
                         ],
                         "temperature": 0.1
                     },
-                    timeout=10
+                    timeout=(5, 10)
                 )
 
                 if response.status_code == 200:

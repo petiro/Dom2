@@ -29,14 +29,14 @@ class SuperAgentController(QObject):
         self.ai_parser = AISignalParser(api_key=self.secrets.get("openrouter_api_key"))
 
         self.worker = PlaywrightWorker(logger)
-        self.engine = ExecutionEngine(bus, self.worker.executor)
+        self.engine = None  # Deferred until set_executor()
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
-        bus.subscribe("STATE_CHANGE", lambda s: self.logger.info(f"Stato: {s}"))
+        bus.subscribe("STATE_CHANGE", lambda s: self.logger.info(f"State: {s}"))
 
     def handle_telegram_signal(self, text):
-        """Fix Critical: Usa il worker.submit per evitare race conditions."""
+        """Use worker.submit to avoid race conditions."""
         with self._lock:
             if self._active_threads >= self.max_threads:
                 self.logger.warning("Too many active threads, skipping signal.")
@@ -49,8 +49,7 @@ class SuperAgentController(QObject):
         try:
             self.log_message.emit("Analyzing signal...")
             data = self.ai_parser.parse(text)
-            if data.get("teams"):
-                self.engine.executor = self.worker.executor
+            if data.get("teams") and self.engine:
                 self.engine.process_signal(data, self.money_manager)
         except Exception as e:
             self.logger.error(f"Process error: {e}")
@@ -59,11 +58,15 @@ class SuperAgentController(QObject):
                 self._active_threads -= 1
 
     def request_auto_mapping(self, url):
-        """Fix Critical: Serializza l'automapper nel worker."""
+        """Serialize automapper through the worker."""
         self.log_message.emit(f"Auto-Discovery started for {url}...")
 
+        if not self.worker.executor:
+            self.logger.error("Cannot run auto-mapping: executor not set.")
+            return
+
         self.mapper = AutoMapperWorker(self.worker.executor, url)
-        self.mapper.log.connect(self.log_message.emit)
+        self.mapper.status.connect(self.log_message.emit)
         self.mapper.finished.connect(self._on_mapping_done)
 
         self.worker.submit(self.mapper.run)
@@ -75,7 +78,7 @@ class SuperAgentController(QObject):
             self.log_message.emit("Mapping failed.")
 
     def _on_bet_success(self, payload):
-        """Fix Critical: Ripristina logica MoneyManagement e Storico."""
+        """Update MoneyManagement and history on bet success."""
         try:
             if isinstance(payload, str):
                 self.log_message.emit(f"WIN: {payload}")
@@ -97,7 +100,7 @@ class SuperAgentController(QObject):
 
     # --- STUBS & UTILS ---
     def start_system(self):
-        self.logger.info("System Ready (V7.3 Enterprise Fixed).")
+        self.logger.info("System Ready.")
 
     def shutdown(self):
         self.worker.stop()
@@ -105,8 +108,11 @@ class SuperAgentController(QObject):
     def _on_bet_failed(self, e):
         self.log_message.emit(f"FAIL: {e}")
 
-    def set_executor(self, e):
-        pass
+    def set_executor(self, executor):
+        """Wire executor into worker and create execution engine."""
+        self.worker.set_executor(executor)
+        self.engine = ExecutionEngine(bus, executor)
+        self.logger.info("Executor wired into worker and engine.")
 
     def reload_secrets(self):
         self.secrets = load_secure_config()
@@ -114,8 +120,11 @@ class SuperAgentController(QObject):
     def process_robot_chat(self, n, t):
         pass
 
-    def set_live_mode(self, e):
-        self.worker.executor.set_live_mode(e)
+    def set_live_mode(self, enabled):
+        if self.worker.executor:
+            self.worker.executor.set_live_mode(enabled)
+        else:
+            self.logger.warning("Cannot set live mode: executor not set.")
 
     def reload_money_manager(self):
         self.money_manager.reload()

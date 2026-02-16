@@ -112,15 +112,19 @@ class TelegramWorker(QThread):
         # Keep-Alive Task
         async def keep_alive():
             while True:
-                try: 
-                    if not self.client.is_connected():
-                        logger.warning("🔄 Riconnessione automatica...") # ✅ LOG
+                try:
+                    try:
+                        connected = self.client.is_connected()
+                    except Exception:
+                        connected = False
+                    if not connected:
+                        logger.warning("Auto-reconnecting...")
                         await self.client.connect()
                     await self.client.get_me()
                 except asyncio.CancelledError:
-                    break 
-                except Exception as e: 
-                    logger.debug(f"Keep-alive ping failed: {e}") # ✅ LOG DEBUG
+                    break
+                except Exception as e:
+                    logger.debug(f"Keep-alive ping failed: {e}")
                 await asyncio.sleep(60)
 
         self.keep_alive_task = self.loop.create_task(keep_alive())

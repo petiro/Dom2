@@ -12,11 +12,14 @@ Uses psutil for process monitoring, emits Qt Signals for thread safety
 """
 import time
 
+import logging as _logging
+
 try:
     import psutil
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
+    _logging.getLogger("SuperAgent").warning("psutil not installed — memory/process monitoring disabled")
 
 from PySide6.QtCore import QThread, Signal
 
@@ -54,10 +57,10 @@ class SystemWatchdog(QThread):
                     mem = psutil.virtual_memory()
                     if mem.percent > 90:
                         self.resource_warning.emit(
-                            f"RAM critica: {mem.percent}% utilizzata ({mem.used // (1024*1024)} MB)")
+                            f"Critical RAM: {mem.percent}% used ({mem.used // (1024*1024)} MB)")
                     elif mem.percent > 80:
                         self.resource_warning.emit(
-                            f"RAM alta: {mem.percent}% utilizzata")
+                            f"High RAM: {mem.percent}% used")
                 except Exception as e:
                     if self.logger:
                         self.logger.warning(f"[Watchdog] Check failed: {e}")

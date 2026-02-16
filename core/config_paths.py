@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 def get_project_root() -> Path:
-    """Restituisce il percorso assoluto della root, compatibile con PyInstaller."""
+    """Return absolute path to project root, compatible with PyInstaller."""
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent
     try:
@@ -11,13 +11,13 @@ def get_project_root() -> Path:
     except (NameError, TypeError):
         return Path.cwd()
 
-# --- PERCORSI BASE ---
+# --- BASE PATHS ---
 ROOT_DIR = get_project_root()
 CONFIG_DIR = ROOT_DIR / "config"
 DATA_DIR = ROOT_DIR / "data"
 LOGS_DIR = ROOT_DIR / "logs"
 
-# --- FILE DI CONFIGURAZIONE ---
+# --- CONFIGURATION FILES ---
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 SELECTORS_FILE = CONFIG_DIR / "selectors.yaml"
 VAULT_FILE = CONFIG_DIR / "vault.bin"
@@ -29,7 +29,7 @@ ROBOTS_FILE = CONFIG_DIR / "my_robots.json"
 # --- ASSETS ---
 CHROME_ICON = DATA_DIR / "chrome_icon.png"
 
-# --- COSTANTI DI TIMEOUT (Fix Low Priority) ---
+# --- TIMEOUT CONSTANTS (milliseconds) ---
 TIMEOUT_SHORT = 3000
 TIMEOUT_MEDIUM = 7000
 TIMEOUT_LONG = 20000

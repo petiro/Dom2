@@ -1,8 +1,10 @@
 def cubic_bezier(p0, p1, p2, p3, t):
     """
-    Calcola un punto (x, y) su una curva di Bezier cubica al tempo t (0.0 - 1.0).
+    Calculate a point (x, y) on a cubic Bezier curve at time t (0.0 - 1.0).
     Formula: B(t) = (1-t)^3*P0 + 3(1-t)^2*t*P1 + 3(1-t)t^2*P2 + t^3*P3
     """
+    t = max(0.0, min(1.0, t))
+
     x0, y0 = p0
     x1, y1 = p1
     x2, y2 = p2
