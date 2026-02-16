@@ -4,8 +4,8 @@ import queue
 
 class PlaywrightWorker:
 
-    def __init__(self, executor, logger):
-        self.executor = executor
+    def __init__(self, logger):
+        self.executor = None
         self.logger = logger
         self.queue = queue.Queue()
         self.running = True
