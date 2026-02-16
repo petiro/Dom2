@@ -7,7 +7,8 @@ from playwright.sync_api import sync_playwright
 from core.ai_selector_validator import validate_selector
 from core.anti_detect import STEALTH_INJECTION_V4
 from core.human_behavior import HumanInput
-from core.human_mouse import HumanMouse     # V7.2: Bezier mouse simulation
+from core.human_mouse import HumanMouse
+from core.utils import CURRENCY_SYMBOL
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -276,7 +277,7 @@ class DomExecutorPlaywright:
         return self.verify_placement(teams)
 
     def place_bet(self, teams, market, stake):
-        self.logger.info(f"🏁 Placing bet: {stake}€ on {teams}")
+        self.logger.info(f"🏁 Placing bet: {stake}{CURRENCY_SYMBOL} on {teams}")
 
         if not self.launch_browser():
             return False

@@ -11,6 +11,7 @@ from core.money_management import MoneyManager
 from core.ai_parser import AISignalParser
 from core.config_loader import load_secure_config
 from core.security import Vault
+from core.utils import CURRENCY_SYMBOL
 from core.state_machine import StateManager, AgentState
 from core.auto_mapper_worker import AutoMapperWorker
 from core.arch_v6 import PlaywrightWorker, SessionGuardian, PlaywrightWatchdog, EventBusV6
@@ -270,7 +271,7 @@ class SuperAgentController(QObject):
         self._save_to_history(record)
         self.money_manager.record_outcome("win", stake, odds)
 
-        msg = f"BET: {stake}€ on {teams} ({market})"
+        msg = f"BET: {stake}{CURRENCY_SYMBOL} on {teams} ({market})"
         self.logger.info(msg)
         self.safe_emit(msg)
 
