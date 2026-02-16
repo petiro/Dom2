@@ -12,6 +12,7 @@ from core.human_behavior import HumanInput
 from core.human_mouse import HumanMouse
 # Importa le costanti centralizzate (Fix Low #8, #12, #14)
 from core.config_paths import TIMEOUT_SHORT, TIMEOUT_MEDIUM, TIMEOUT_LONG, CONFIG_DIR
+from core.utils import CURRENCY_SYMBOL
 
 class DomExecutorPlaywright:
     def __init__(self, logger=None, headless=False, allow_place=False, pin=None,
@@ -403,7 +404,6 @@ class DomExecutorPlaywright:
         return False
 
     def place_bet(self, teams, market, stake):
-        from core.utils import CURRENCY_SYMBOL
         self.logger.info(f"🏁 Placing bet: {stake}{CURRENCY_SYMBOL} on {teams}")
 
         if not self.launch_browser():

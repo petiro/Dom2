@@ -5,8 +5,10 @@ import hashlib
 import base64
 import platform
 import uuid
+import subprocess
 from cryptography.fernet import Fernet, InvalidToken
-from core.config_paths import VAULT_FILE # Import centralizzato
+from core.config_paths import VAULT_FILE
+
 
 class Vault:
     def __init__(self):
@@ -16,18 +18,39 @@ class Vault:
         self.vault_path = VAULT_FILE
 
     def _generate_machine_key(self):
-        """Genera una chiave univoca. Fix Low #15: Random in CI."""
+        """Genera una chiave stabile basata su hardware UUID (Fix V7.3)."""
         if os.environ.get("GITHUB_ACTIONS") == "true":
-            # In CI usiamo una chiave randomica per evitare che sia predicibile
             serial = os.getenv("CI_RUN_ID") or uuid.uuid4().hex
             hash_key = hashlib.sha256(serial.encode()).digest()
             return base64.urlsafe_b64encode(hash_key[:32])
 
-        identifiers = [platform.node() or ""]
-        identifiers.append(platform.machine() or "")
-        identifiers.append(os.getenv("USERNAME", os.getenv("USER", "")))
+        machine_id = "FALLBACK_ID"
 
-        combined = "|".join(identifiers) or "FALLBACK_ID"
+        try:
+            if platform.system() == "Windows":
+                cmd = "wmic csproduct get uuid"
+                machine_id = subprocess.check_output(cmd, shell=True).decode().split('\n')[1].strip()
+
+            elif platform.system() == "Linux":
+                if os.path.exists("/etc/machine-id"):
+                    with open("/etc/machine-id") as f:
+                        machine_id = f.read().strip()
+                else:
+                    cmd = "cat /var/lib/dbus/machine-id"
+                    machine_id = subprocess.check_output(cmd, shell=True).decode().strip()
+
+            elif platform.system() == "Darwin":
+                cmd = "ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID"
+                output = subprocess.check_output(cmd, shell=True).decode()
+                machine_id = output.split('"')[-2]
+
+        except Exception as e:
+            self.logger.warning(f"Fallback key generation: {e}")
+            machine_id = platform.node() or "GENERIC_HOST"
+
+        username = os.getenv("USERNAME", os.getenv("USER", "user"))
+        combined = f"{machine_id}|{username}"
+
         hash_key = hashlib.sha256(combined.encode()).digest()
         return base64.urlsafe_b64encode(hash_key[:32])
 
