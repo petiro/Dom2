@@ -32,6 +32,10 @@ class HumanMouse:
             self.max_w = 1920
             self.max_h = 1080
 
+        # Stateful mouse position — start near center, track across moves
+        self.current_x = random.randint(int(self.max_w * 0.4), int(self.max_w * 0.6))
+        self.current_y = random.randint(int(self.max_h * 0.4), int(self.max_h * 0.6))
+
     def _calculate_fatigue(self):
         elapsed_mins = (datetime.now() - self.start_session_time).total_seconds() / 60
         self.fatigue_multiplier = 1 + (elapsed_mins * 0.003)
@@ -49,9 +53,9 @@ class HumanMouse:
 
         self._calculate_fatigue()
 
-        # Start from random position within viewport bounds
-        start_x = random.randint(VIEWPORT_MARGIN, self.max_w - VIEWPORT_MARGIN)
-        start_y = random.randint(VIEWPORT_MARGIN, self.max_h - VIEWPORT_MARGIN)
+        # Start from current tracked position (no teleportation)
+        start_x = self.current_x
+        start_y = self.current_y
 
         dist = math.hypot(target_x - start_x, target_y - start_y)
 
@@ -103,6 +107,10 @@ class HumanMouse:
             time.sleep(random.uniform(0.05, 0.1))
             self.page.mouse.move(target_x, target_y, steps=5)
 
+        # Update tracked position to final target
+        self.current_x = target_x
+        self.current_y = target_y
+
     def click_locator(self, locator):
         """Click a Playwright Locator with human-like behavior."""
         try:
@@ -137,10 +145,11 @@ class HumanMouse:
     def idle_behavior(self):
         if random.random() < 0.3:
             try:
-                self.page.mouse.move(
-                    random.randint(VIEWPORT_MARGIN, self.max_w - VIEWPORT_MARGIN),
-                    random.randint(VIEWPORT_MARGIN, self.max_h - VIEWPORT_MARGIN),
-                    steps=15
-                )
+                # Small movement from current position (no teleport)
+                offset_x = random.randint(-50, 50)
+                offset_y = random.randint(-50, 50)
+                new_x = self._clamp(self.current_x + offset_x, VIEWPORT_MARGIN, self.max_w - VIEWPORT_MARGIN)
+                new_y = self._clamp(self.current_y + offset_y, VIEWPORT_MARGIN, self.max_h - VIEWPORT_MARGIN)
+                self.move_to(new_x, new_y)
             except Exception as e:
                 self.logger.debug(f"Idle behavior failed: {e}")
