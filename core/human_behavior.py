@@ -126,10 +126,17 @@ class HumanInput:
             return False
         return False
 
-    def click_locator(self, locator):
-        """Click a Playwright locator directly with human behavior."""
+    def click_locator(self, locator, timeout=None):
+        """Click a Playwright locator directly with human behavior.
+
+        Args:
+            locator: Playwright locator to click.
+            timeout: Optional visibility wait in ms. None skips the wait
+                     (caller is responsible for ensuring visibility).
+        """
         try:
-            locator.wait_for(state="visible", timeout=TIMEOUT_MEDIUM)
+            if timeout is not None:
+                locator.wait_for(state="visible", timeout=timeout)
             if self.move_to(locator):
                 time.sleep(random.uniform(0.08, 0.25))
                 self.page.mouse.down()
