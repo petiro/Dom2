@@ -43,7 +43,6 @@ class HumanInput:
         steps = max(20, min(80, int(dist / 10)))
 
         # Random control points for curve variety
-        dist = math.hypot(end_x - start_x, end_y - start_y)
         spread = max(50, dist * 0.3)
 
         ctrl1_x = start_x + (end_x - start_x) * random.uniform(0.2, 0.5) + random.uniform(-spread, spread)
@@ -130,7 +129,7 @@ class HumanInput:
     def click_locator(self, locator):
         """Click a Playwright locator directly with human behavior."""
         try:
-            locator.wait_for(state="visible", timeout=7000)
+            locator.wait_for(state="visible", timeout=TIMEOUT_MEDIUM)
             if self.move_to(locator):
                 time.sleep(random.uniform(0.08, 0.25))
                 self.page.mouse.down()
