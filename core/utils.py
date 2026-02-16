@@ -1,9 +1,12 @@
 """
 Utility functions for PyInstaller compatibility and resource management.
-Centralizes get_project_root() — IMP-02: single source of truth.
+Centralizes get_project_root() and shared constants.
 """
 import sys
 import os
+
+# Shared application constants
+CURRENCY_SYMBOL = "€"
 
 
 def get_project_root():
