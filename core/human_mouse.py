@@ -32,6 +32,10 @@ class HumanMouse:
             self.max_w = 1920
             self.max_h = 1080
 
+        # Track current mouse position
+        self.current_x = random.randint(VIEWPORT_MARGIN, self.max_w - VIEWPORT_MARGIN)
+        self.current_y = random.randint(VIEWPORT_MARGIN, self.max_h - VIEWPORT_MARGIN)
+
     def _calculate_fatigue(self):
         elapsed_mins = (datetime.now() - self.start_session_time).total_seconds() / 60
         self.fatigue_multiplier = 1 + (elapsed_mins * 0.003)
@@ -49,9 +53,9 @@ class HumanMouse:
 
         self._calculate_fatigue()
 
-        # Start from random position within viewport bounds
-        start_x = random.randint(VIEWPORT_MARGIN, self.max_w - VIEWPORT_MARGIN)
-        start_y = random.randint(VIEWPORT_MARGIN, self.max_h - VIEWPORT_MARGIN)
+        # Start from current position
+        start_x = self.current_x
+        start_y = self.current_y
 
         dist = math.hypot(target_x - start_x, target_y - start_y)
 
@@ -102,6 +106,10 @@ class HumanMouse:
         if do_overshoot:
             time.sleep(random.uniform(0.05, 0.1))
             self.page.mouse.move(target_x, target_y, steps=5)
+
+        # Update current position
+        self.current_x = target_x
+        self.current_y = target_y
 
     def click_locator(self, locator):
         """Click a Playwright Locator with human-like behavior."""

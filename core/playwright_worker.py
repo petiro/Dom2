@@ -27,14 +27,13 @@ class PlaywrightWorker:
         while self.running:
             try:
                 fn, args, kwargs = self.queue.get(timeout=1)
+                self.queue.task_done()
             except queue.Empty:
                 continue
             try:
                 fn(*args, **kwargs)
             except Exception as e:
                 self.logger.error(f"[Worker] {e}")
-            finally:
-                self.queue.task_done()
 
     def stop(self):
         self.running = False
