@@ -90,16 +90,17 @@ def scan_file(path: Path) -> list[Finding]:
     return findings
 
 
-def run_audit(root: Path) -> list[Finding]:
-    findings: list[Finding] = []
+def run_audit(root: Path) -> dict[Path, list[Finding]]:
+    findings_by_file: dict[Path, list[Finding]] = {}
     for path in root.rglob("*"):
         if path.is_file() and should_scan(path):
-            findings.extend(scan_file(path))
-    return findings
+            findings_by_file[path] = scan_file(path)
+    return findings_by_file
 
 
-def print_report(findings: list[Finding], root: Path) -> None:
+def print_report(findings_by_file: dict[Path, list[Finding]], root: Path) -> None:
     print("=== Repository Audit ===")
+    findings = [finding for items in findings_by_file.values() for finding in items]
     grouped: dict[str, list[Finding]] = {}
     for finding in findings:
         grouped.setdefault(finding.category, []).append(finding)
@@ -119,6 +120,19 @@ def print_report(findings: list[Finding], root: Path) -> None:
             rel_path = finding.path.relative_to(root)
             print(f"- {rel_path}:{finding.line_number} → {finding.message}")
 
+    print("\nFindings by file:")
+    for path in sorted(findings_by_file, key=lambda item: str(item)):
+        rel_path = path.relative_to(root)
+        items = findings_by_file[path]
+        print(f"\n{rel_path} ({len(items)}):")
+        if not items:
+            print("- None found.")
+            continue
+        for finding in items:
+            print(
+                f"- Line {finding.line_number} [{finding.category}] {finding.message}"
+            )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -132,8 +146,8 @@ def main() -> int:
     )
     args = parser.parse_args()
     root = args.root.resolve()
-    findings = run_audit(root)
-    print_report(findings, root)
+    findings_by_file = run_audit(root)
+    print_report(findings_by_file, root)
     return 0
 
 
