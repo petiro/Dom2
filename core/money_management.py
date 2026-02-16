@@ -92,6 +92,11 @@ class MoneyManager:
     def reload(self):
         with self._lock:
             if not os.path.exists(CONFIG_FILE):
+                # Reset to defaults when config file is missing
+                self.strategy = "Stake Fisso"
+                self.fixed_stake = 1.0
+                self.bankroll = 100.0
+                self.roserpina = None
                 return
 
             try:
