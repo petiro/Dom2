@@ -28,6 +28,7 @@ class SuperAgentController(QObject):
         self.ai_parser = AISignalParser(api_key=self.secrets.get("openrouter_api_key"))
         
         self.worker = PlaywrightWorker(logger)
+        
         # Inizializza l'executor e lo assegna al worker
         self.worker.executor = DomExecutorPlaywright(logger=logger, headless=False)
         self.engine = ExecutionEngine(bus, self.worker.executor)
@@ -64,7 +65,6 @@ class SuperAgentController(QObject):
         self.worker.submit(self.mapper.run)
 
     def _on_mapping_done(self, selectors):
-        # Qui integriamo la logica di auto-mapping che salva il file
         self.log_message.emit(f"✅ Scansione completata. Trovati {len(selectors)} elementi candidati.")
         
         new_selectors = {}
