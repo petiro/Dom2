@@ -34,7 +34,6 @@ class DomExecutorPlaywright:
         self.logger.info("🌐 Inizializzazione Playwright...")
         try:
             if not self.pw: self.pw = sync_playwright().start()
-            
             try:
                 self.browser = self.pw.chromium.connect_over_cdp("http://localhost:9222")
                 self.ctx = self.browser.contexts[0]
@@ -66,6 +65,13 @@ class DomExecutorPlaywright:
             self._initialized = False
             self.pw = None
             self.browser = None
+
+    # FIX: Metodo mancante aggiunto
+    def recycle_browser(self):
+        """Riavvia il browser per pulire la sessione."""
+        self.logger.info("♻️ Recycling browser session...")
+        self.close()
+        return self.launch_browser()
 
     def _load_selectors(self):
         import os
@@ -105,13 +111,11 @@ class DomExecutorPlaywright:
     def ensure_login(self, selectors=None):
         if selectors is None: selectors = self._load_selectors()
         if not self.launch_browser(): return False
-        
         bal = selectors.get("balance_element")
         if bal:
             try: 
                 if self.page.locator(bal).first.is_visible(timeout=TIMEOUT_SHORT): return True
             except: pass
-            
         btn = selectors.get("login_button")
         if btn:
             self.click(btn)
@@ -121,7 +125,6 @@ class DomExecutorPlaywright:
     def verify_bet_success(self, teams=None, selectors=None):
         if not self.allow_place: return True
         if selectors is None: selectors = self._load_selectors()
-        
         try:
             msg = selectors.get("success_message", "Scommessa accettata")
             self.page.wait_for_selector(f"text={msg}", timeout=TIMEOUT_LONG)
@@ -152,8 +155,5 @@ class DomExecutorPlaywright:
         if self.mouse: self.mouse.idle_behavior()
         return self.click(sels.get("place_button"))
 
-    def find_odds(self, match, market):
-        return 2.0 
-
-    def scan_page_elements(self, url):
-        return []
+    def find_odds(self, match, market): return 2.0 
+    def scan_page_elements(self, url): return []
