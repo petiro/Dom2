@@ -1,71 +1,58 @@
-import json
-import os
 import logging
-import threading
+import uuid
 from decimal import Decimal, ROUND_DOWN
-from core.config_paths import MONEY_CONFIG_FILE
-
+from core.database import Database
 
 class MoneyManager:
     def __init__(self):
-        self.logger = logging.getLogger("Money")
-        self.strategy = "Stake Fisso"
-        self.bankroll = Decimal("100.00")
-        self._lock = threading.Lock()
-        self.reload()
+        self.logger = logging.getLogger("MoneyManager")
+        self.db = Database() # Singleton
+        self.strategy = "Dynamic 2%"
 
-    def reload(self):
-        with self._lock:
-            try:
-                if os.path.exists(MONEY_CONFIG_FILE):
-                    with open(MONEY_CONFIG_FILE) as f:
-                        data = json.load(f)
-                        self.bankroll = Decimal(str(data.get("bankroll", 100.0)))
-                else:
-                    self.bankroll = Decimal("100.00")
-            except Exception:
-                self.bankroll = Decimal("100.00")
-
-    # 🔥 Stake reale: 2% bankroll con cap 25%
     def get_stake(self, odds):
-        with self._lock:
-            stake = self.bankroll * Decimal("0.02")
-            cap = self.bankroll * Decimal("0.25")
-            stake = min(stake, cap)
-            return float(stake.quantize(Decimal("0.01"), rounding=ROUND_DOWN))
+        # Calcola stake basandosi sul saldo REALE nel DB
+        balance = self.db.get_balance()
+        
+        # Strategy: 2% del saldo, Max 25% del saldo
+        stake = balance * Decimal("0.02")
+        cap = balance * Decimal("0.25")
+        stake = min(stake, cap)
+        
+        # Hard floor 0.50€
+        if stake < Decimal("0.50"):
+            stake = Decimal("0.50")
+            
+        # Se non ho abbastanza soldi nemmeno per il floor
+        if stake > balance:
+            return Decimal("0.00")
 
-    def record_outcome(self, result, stake, odds):
-        with self._lock:
-            s = Decimal(str(stake))
-            o = Decimal(str(odds))
+        return stake.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
-            limit = self.bankroll * Decimal("0.25")
-            if s > limit:
-                self.logger.error(f"⛔ STAKE {s} > 25% BANKROLL ({limit}). BLOCCATA.")
-                raise ValueError("Stake exceeds 25% bankroll limit")
-
-            if result == "win":
-                self.bankroll += (s * o) - s
-            elif result == "lose":
-                self.bankroll -= s
-
-            if self.bankroll < 0:
-                self.logger.critical("NEGATIVE BANKROLL! RESET TO 0.")
-                self.bankroll = Decimal("0.00")
-
-            self.bankroll = self.bankroll.quantize(
-                Decimal("0.01"), rounding=ROUND_DOWN
-            )
-
-            self._save()
-
-    def _save(self):
+    def reserve_transaction(self, amount, details):
+        """Crea una transazione univoca (TXID) e blocca i fondi."""
+        tx_id = str(uuid.uuid4())
         try:
-            with open(MONEY_CONFIG_FILE, "w") as f:
-                json.dump({"bankroll": float(self.bankroll)}, f)
-        except Exception:
-            self.logger.error("Failed saving bankroll")
+            self.db.reserve_funds(tx_id, amount, details)
+            self.logger.info(f"💸 Funds reserved for TX {tx_id[:8]}: {amount}€")
+            return tx_id
+        except ValueError:
+            self.logger.error("❌ Insufficient funds for reservation.")
+            return None
+        except Exception as e:
+            self.logger.critical(f"❌ DB Transaction Error: {e}")
+            return None
+
+    def confirm_win(self, tx_id, payout):
+        self.db.commit_transaction(tx_id, profit=payout)
+        self.logger.info(f"💰 Win confirmed TX {tx_id[:8]}. Payout: {payout}€")
+
+    def confirm_loss(self, tx_id):
+        self.db.commit_transaction(tx_id, profit=0)
+        self.logger.info(f"📉 Loss confirmed TX {tx_id[:8]}.")
+
+    def refund(self, tx_id):
+        self.db.rollback_transaction(tx_id)
+        self.logger.warning(f"↩️ Refunded TX {tx_id[:8]}.")
 
     def get_bankroll(self):
-        with self._lock:
-            return float(self.bankroll)
+        return float(self.db.get_balance())
