@@ -1,213 +1,95 @@
 import logging
 import time
 from enum import Enum
-from typing import Any
-
 from core.events import AppEvent
 from core.event_bus import EventBus
 
-
-# ==========================================================
-# Custom Exceptions
-# ==========================================================
-
-class PipelineError(Exception):
-    """Base class for pipeline-related errors."""
-    pass
-
-
-class LoginFailedError(PipelineError):
-    pass
-
-
-class NavigationFailedError(PipelineError):
-    pass
-
-
-class PlacementFailedError(PipelineError):
-    pass
-
-
-class VerificationFailedError(PipelineError):
-    pass
-
-
-# ==========================================================
-# Execution State Enum
-# ==========================================================
-
+class PipelineError(Exception): pass
 class ExecutionState(Enum):
-    IDLE = 0
-    LOGIN = 1
-    NAVIGATION = 2
-    ANALYSIS = 3
-    PLACEMENT = 4
-    VERIFICATION = 5
-    COMPLETED = 6
-    FAILED = 7
-    RETRY_WAIT = 99
-
-
-# ==========================================================
-# Execution Engine (Senior Grade)
-# ==========================================================
+    IDLE=0; LOGIN=1; NAVIGATION=2; ANALYSIS=3; TX_START=4; PLACEMENT=5; VERIFICATION=6; COMPLETED=7; FAILED=8
 
 class ExecutionEngine:
-    """
-    Event-driven state machine pipeline.
-    Orchestrates the workflow without knowing implementation details.
-
-    The executor is responsible for loading its own config/selectors.
-    The engine only passes business data (teams, market, stake).
-    """
-
     MAX_RETRIES = 3
-    RETRY_DELAY = 3.0
+    RETRY_DELAY = 2.0
 
-    def __init__(self, bus: EventBus, executor: Any):
+    def __init__(self, bus: EventBus, executor):
         self.bus = bus
         self.executor = executor
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logging.getLogger("Engine")
         self.state = ExecutionState.IDLE
 
-    # ======================================================
-    # Public API
-    # ======================================================
-
-    def process_signal(self, bet_data: dict, money_manager: Any):
-        """
-        Entry point for the execution pipeline.
-        Should be called inside a worker thread to avoid blocking UI.
-        """
+    def process_signal(self, bet_data, money_manager):
         teams = bet_data.get("teams", "")
         market = bet_data.get("market", "")
+        tx_id = None
 
         try:
-            # 1. Login
-            self._execute_step_with_retry(
-                ExecutionState.LOGIN,
-                self._login
-            )
+            # 1. Login & Navigazione
+            self._execute_step(self._login)
+            self._execute_step(lambda: self._navigate(teams))
 
-            # 2. Navigation
-            self._execute_step_with_retry(
-                ExecutionState.NAVIGATION,
-                self._navigate,
-                teams
-            )
-
-            # 3. Analysis (Odds)
+            # 2. Analisi
             self._change_state(ExecutionState.ANALYSIS)
-            
-            # FIX CRITICO: Controllo quota esplicito
-            odds = self._analyze(teams, market)
-            
-            if odds <= 1.0:
-                self.logger.error(f"⛔ Scommessa annullata: Quota non valida ({odds}) rilevata.")
-                self.bus.emit(AppEvent.BET_FAILED, {"reason": "Quota non valida o non trovata"})
-                self._change_state(ExecutionState.IDLE)
-                return # Esce subito, NON piazza la scommessa
+            odds = self.executor.find_odds(teams, market)
+            if odds <= 1.0: raise PipelineError(f"Quota invalida: {odds}")
 
-            # 4. Money Management
+            # 3. Transazione Bancaria (Stabilità 10/10)
+            self._change_state(ExecutionState.TX_START)
             stake = money_manager.get_stake(odds)
-            if stake <= 0:
-                self.logger.warning("Stake calculated as 0 or negative. Aborting.")
-                self._change_state(ExecutionState.IDLE)
-                return
+            if stake <= 0: raise PipelineError("Fondi insufficienti o stake zero")
+            
+            # PRENOTA I FONDI NEL DB (WAL)
+            tx_id = money_manager.reserve_transaction(stake, {"teams": teams, "market": market})
+            if not tx_id: raise PipelineError("Fallimento prenotazione fondi DB")
 
-            # 5. Placement
+            # 4. Piazzamento
             self._change_state(ExecutionState.PLACEMENT)
-            self._place(teams, market, stake)
+            if not self.executor.place_bet(teams, market, float(stake)):
+                raise PipelineError("Errore click scommessa")
 
-            # 6. Verification
+            # 5. Verifica
             self._change_state(ExecutionState.VERIFICATION)
-            self._verify(teams)
+            if not self.executor.verify_bet_success(teams):
+                raise PipelineError("Verifica fallita (Bet non confermata)")
 
-            # Success
+            # 6. Successo
             self._change_state(ExecutionState.COMPLETED)
+            payout = float(stake) * odds # Potenziale vincita
+            
+            # Nota: In un sistema reale, il payout si conferma DOPO la partita.
+            # Qui simuliamo il flusso "Bet Piazzata Correttamente".
+            # La vincita monetaria vera arriverebbe da un CheckRisultatiWorker.
+            # Per ora emettiamo successo tecnico.
+            
             self.bus.emit(AppEvent.BET_SUCCESS, {
-                "data": bet_data,
-                "stake": stake,
-                "odds": odds
+                "tx_id": tx_id,
+                "stake": float(stake),
+                "odds": odds,
+                "payout": payout # Questo serve solo se la bet è instant-win, altrimenti va gestito asincrono
             })
 
-        except PipelineError as e:
-            self._handle_failure(str(e))
-
         except Exception as e:
-            self.logger.exception("Unexpected pipeline crash")
-            self.bus.emit(AppEvent.BET_ERROR, {"reason": str(e)})
+            self.logger.error(f"Pipeline fail: {e}")
             self._change_state(ExecutionState.FAILED)
-
+            # Passiamo tx_id per permettere il refund
+            self.bus.emit(AppEvent.BET_FAILED, {"reason": str(e), "tx_id": tx_id})
         finally:
-            try:
-                if self.state != ExecutionState.IDLE:
-                    self._change_state(ExecutionState.IDLE)
-            except Exception as e:
-                self.logger.error(f"Failed to reset state to IDLE: {e}")
-                self.state = ExecutionState.IDLE
-
-    # ======================================================
-    # Atomic Steps (Encapsulated)
-    # ======================================================
+            self.state = ExecutionState.IDLE
 
     def _login(self):
-        """The executor loads its own selectors internally."""
-        if not self.executor.ensure_login():
-            raise LoginFailedError("Login check returned False")
+        if not self.executor.ensure_login(): raise PipelineError("Login fail")
 
-    def _navigate(self, teams: str):
-        if not self.executor.navigate_to_match(teams):
-            raise NavigationFailedError(f"Could not navigate to match: {teams}")
+    def _navigate(self, teams):
+        if not self.executor.navigate_to_match(teams): raise PipelineError("Nav fail")
 
-    def _analyze(self, teams: str, market: str) -> float:
-        odds = self.executor.find_odds(teams, market)
-        # Controllo rinforzato anche qui
-        if not odds or odds <= 1.0:
-            self.logger.warning(f"Analysis returned invalid odds: {odds}")
-            return 0.0 # Ritorna 0 per essere gestito dal chiamante
-        return odds
-
-    def _place(self, teams: str, market: str, stake: float):
-        if not self.executor.place_bet(teams, market, stake):
-            raise PlacementFailedError("Executor failed to interact for placement")
-
-    def _verify(self, teams: str):
-        if not self.executor.verify_bet_success(teams):
-            self.bus.emit(AppEvent.BET_UNKNOWN, "Placed but not confirmed")
-            raise VerificationFailedError("Verification failed")
-
-    # ======================================================
-    # Infrastructure
-    # ======================================================
-
-    def _execute_step_with_retry(self, state: ExecutionState, func, *args):
-        """Generic retry logic wrapper."""
-        self._change_state(state)
-
-        last_error = None
-        for attempt in range(1, self.MAX_RETRIES + 1):
+    def _execute_step(self, func):
+        for i in range(self.MAX_RETRIES):
             try:
-                func(*args)
-                return  # Success
-            except Exception as e:
-                last_error = e
-                self.logger.warning(f"Step {state.name} failed (Attempt {attempt}): {e}")
-
-            if attempt < self.MAX_RETRIES:
-                self._change_state(ExecutionState.RETRY_WAIT)
+                func()
+                return
+            except:
                 time.sleep(self.RETRY_DELAY)
-                self._change_state(state)
+        raise PipelineError("Step timeout")
 
-        # Propagate the last exception after retries exhausted
-        if last_error:
-            raise last_error
-
-    def _change_state(self, new_state: ExecutionState):
+    def _change_state(self, new_state):
         self.state = new_state
-        self.bus.emit(AppEvent.STATE_CHANGE, {"state": new_state.name})
-
-    def _handle_failure(self, reason: str):
-        self.logger.error(f"Pipeline Terminated: {reason}")
-        self._change_state(ExecutionState.FAILED)
-        self.bus.emit(AppEvent.BET_FAILED, {"reason": reason})
