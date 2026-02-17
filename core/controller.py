@@ -28,6 +28,7 @@ class SuperAgentController(QObject):
         self.ai_parser = AISignalParser(api_key=self.secrets.get("openrouter_api_key"))
         
         self.worker = PlaywrightWorker(logger)
+        # FIX: Assegnazione diretta attributo
         self.worker.executor = DomExecutorPlaywright(logger=logger, headless=False)
         self.engine = ExecutionEngine(bus, self.worker.executor)
         
@@ -80,5 +81,15 @@ class SuperAgentController(QObject):
     def start_system(self): self.logger.info("System Ready V7.4 Enterprise")
     def shutdown(self): self.worker.stop()
     def _on_bet_failed(self, e): self.log_message.emit(f"FAIL: {e}")
-    def set_live_mode(self, e): self.worker.executor.set_live_mode(e)
+    
+    # FIX: Aggiunto metodo set_live_mode corretto
+    def set_live_mode(self, e): 
+        if self.worker.executor:
+            self.worker.executor.set_live_mode(e)
+            
     def reload_money_manager(self): self.money_manager.reload()
+    
+    # FIX: Metodo di compatibilità se main.py lo chiama ancora
+    def set_executor(self, e):
+        self.worker.executor = e
+        if self.engine: self.engine.executor = e
