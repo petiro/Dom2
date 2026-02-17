@@ -1,10 +1,5 @@
 def cubic_bezier(p0, p1, p2, p3, t):
-    """
-    Calculate a point (x, y) on a cubic Bezier curve at time t (0.0 - 1.0).
-    Formula: B(t) = (1-t)^3*P0 + 3(1-t)^2*t*P1 + 3(1-t)t^2*P2 + t^3*P3
-    """
-    t = max(0.0, min(1.0, t))
-
+    """Calcola un punto (x, y) su una curva di Bezier cubica."""
     x0, y0 = p0
     x1, y1 = p1
     x2, y2 = p2
@@ -20,3 +15,12 @@ def cubic_bezier(p0, p1, p2, p3, t):
     y = uuu * y0 + 3 * uu * t * y1 + 3 * u * tt * y2 + ttt * y3
 
     return x, y
+
+def clamp_point(x, y, max_w, max_h):
+    """FIX 3.2: Limita le coordinate al viewport per sicurezza."""
+    if max_w <= 0: max_w = 1920
+    if max_h <= 0: max_h = 1080
+    
+    cx = max(0, min(x, max_w))
+    cy = max(0, min(y, max_h))
+    return cx, cy
