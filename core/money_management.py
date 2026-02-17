@@ -6,7 +6,8 @@ from core.config_paths import MONEY_CONFIG_FILE
 
 class MoneyManager:
     def __init__(self):
-        self.logger = logging.getLogger("Money")
+        # FIX: Stringa logging pulita
+        self.logger = logging.getLogger("MoneyManager")
         self.strategy = "Stake Fisso"
         self.bankroll = Decimal("100.00")
         self.reload()
@@ -28,7 +29,8 @@ class MoneyManager:
         o = Decimal(str(odds))
         
         if s > self.bankroll * Decimal("0.25"):
-            self.logger.warning("Stake > 25% bankroll!")
+            # FIX: Format safe
+            self.logger.warning("Stake high: %s > 25%% bankroll", s)
 
         if result == "win": self.bankroll += (s * o) - s
         elif result == "lose": self.bankroll -= s
