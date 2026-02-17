@@ -1,131 +1,127 @@
 import threading
 import logging
+import time
+import json
+import os
 from PySide6.QtCore import QObject, Signal
 
 from core.event_bus import bus
 from core.playwright_worker import PlaywrightWorker
 from core.execution_engine import ExecutionEngine
-from core.config_loader import load_secure_config
 from core.money_management import MoneyManager
-from core.ai_parser import AISignalParser
-from core.auto_mapper_worker import AutoMapperWorker
 from core.dom_executor_playwright import DomExecutorPlaywright
+from core.config_paths import CONFIG_DIR
+
+
+STATE_FILE = os.path.join(CONFIG_DIR, "runtime_state.json")
+
 
 class SuperAgentController(QObject):
     log_message = Signal(str)
-    
-    def __init__(self, logger, config=None):
+
+    def __init__(self, logger):
         super().__init__()
         self.logger = logger
-        self.config = config or {}
-        
-        self._lock = threading.Lock()
-        self._active_threads = 0
-        self.max_threads = 3
-        
-        self.secrets = load_secure_config()
         self.money_manager = MoneyManager()
-        self.ai_parser = AISignalParser(api_key=self.secrets.get("openrouter_api_key"))
-        
+
         self.worker = PlaywrightWorker(logger)
-        
-        # Inizializza l'executor e lo assegna al worker
-        self.worker.executor = DomExecutorPlaywright(logger=logger, headless=False)
+        self.worker.executor = DomExecutorPlaywright(logger=logger)
+
         self.engine = ExecutionEngine(bus, self.worker.executor)
-        
+
+        self.fail_count = 0
+        self.circuit_open = False
+        self._lock = threading.Lock()
+        self._last_signal_time = 0
+
+        self._load_state()
+
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
 
-    def handle_telegram_signal(self, text):
-        with self._lock:
-            if self._active_threads >= self.max_threads:
-                self.logger.warning("⚠️ Troppi thread attivi, ignoro segnale.")
-                return
-            self._active_threads += 1
+        self.worker.start()
+        bus.start()
 
-        self.worker.submit(self._process_signal_thread, text)
+        threading.Thread(
+            target=self._browser_watchdog,
+            daemon=True
+        ).start()
 
-    def _process_signal_thread(self, text):
+    # 🔥 Persistenza runtime
+    def _save_state(self):
         try:
-            self.log_message.emit("📩 Analisi segnale...")
-            data = self.ai_parser.parse(text)
-            if data.get("teams"):
-                self.engine.process_signal(data, self.money_manager)
-        except Exception as e:
-            self.logger.error(f"Process error: {e}")
-        finally:
-            with self._lock:
-                self._active_threads -= 1
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(STATE_FILE, "w") as f:
+                json.dump({
+                    "fail_count": self.fail_count,
+                    "circuit_open": self.circuit_open
+                }, f)
+        except Exception:
+            pass
 
-    def request_auto_mapping(self, url):
-        self.log_message.emit(f"🕵️ Mapping {url}...")
-        self.mapper = AutoMapperWorker(self.worker.executor, url)
-        self.mapper.log.connect(self.log_message.emit)
-        self.mapper.finished.connect(self._on_mapping_done)
-        self.worker.submit(self.mapper.run)
-
-    def _on_mapping_done(self, selectors):
-        self.log_message.emit(f"✅ Scansione completata. Trovati {len(selectors)} elementi candidati.")
-        
-        new_selectors = {}
-        for el in selectors:
-            txt = el.lower()
-            if "input" in txt and ("stake" in txt or "amount" in txt):
-                new_selectors["stake_input"] = self._extract_css(el)
-            elif "button" in txt and ("scommetti" in txt or "place" in txt):
-                new_selectors["place_button"] = self._extract_css(el)
-            elif "button" in txt and ("accedi" in txt or "login" in txt):
-                new_selectors["login_button"] = self._extract_css(el)
-
-        if new_selectors:
-            import yaml
-            import os
-            from core.config_paths import CONFIG_DIR
-            path = os.path.join(CONFIG_DIR, "selectors_discovered.yaml")
-            try:
-                with open(path, "w") as f:
-                    yaml.dump(new_selectors, f)
-                self.log_message.emit(f"💾 Selettori salvati in: {path}")
-            except Exception as e:
-                self.logger.error(f"Errore salvataggio mapping: {e}")
-        else:
-            self.log_message.emit("❌ Nessun selettore chiave identificato automaticamente.")
-
-    def _extract_css(self, element_string):
+    def _load_state(self):
         try:
-            parts = element_string.split("| Class:")
-            if len(parts) > 1:
-                cls = parts[1].strip()
-                if cls: return f".{cls.split()[0]}"
-        except: pass
-        return "SELETTORE_NON_TROVATO"
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE) as f:
+                    data = json.load(f)
+                    self.fail_count = data.get("fail_count", 0)
+                    self.circuit_open = data.get("circuit_open", False)
+        except Exception:
+            pass
+
+    # 🔥 Watchdog SAFE
+    def _browser_watchdog(self):
+        while True:
+            time.sleep(10)
+            ex = self.worker.executor
+            if ex and getattr(ex, "page", None):
+                try:
+                    if ex.page.is_closed():
+                        self.logger.warning("Watchdog restart browser")
+                        ex.recycle_browser()
+                except Exception:
+                    pass
+
+    # 🔥 Rate limit 1 segnale / sec
+    def handle_signal(self, data):
+        if self.circuit_open:
+            self.logger.warning("Circuit open. Signal ignored.")
+            return
+
+        now = time.time()
+        if now - self._last_signal_time < 1:
+            return
+        self._last_signal_time = now
+
+        self.worker.submit(
+            self.engine.process_signal,
+            data,
+            self.money_manager
+        )
 
     def _on_bet_success(self, payload):
+        with self._lock:
+            self.fail_count = 0
+            self.circuit_open = False
+            self._save_state()
+
         try:
             stake = float(payload.get("stake", 0))
             odds = float(payload.get("odds", 0))
-            
-            if self.money_manager:
-                self.money_manager.record_outcome("win", stake, odds)
-                bal = self.money_manager.get_bankroll()
-                self.log_message.emit(f"💰 WIN! Nuovo saldo: {bal:.2f}€")
-            else:
-                self.log_message.emit(f"WIN: {payload}")
+            self.money_manager.record_outcome("win", stake, odds)
+            bal = self.money_manager.get_bankroll()
+            self.log_message.emit(f"💰 WIN | Saldo: {bal:.2f}€")
         except Exception as e:
-            self.logger.error(f"Err bet success handler: {e}")
+            self.logger.error(f"Success handler error: {e}")
 
-    def start_system(self): 
-        self.logger.info("System Ready V7.4 Enterprise")
+    def _on_bet_failed(self, payload):
+        with self._lock:
+            self.fail_count += 1
+            self.log_message.emit(f"FAIL #{self.fail_count}")
 
-    def shutdown(self): 
-        self.worker.stop()
+            if self.fail_count >= 3:
+                self.logger.critical("🚨 CIRCUIT BREAKER TRIGGERED")
+                self.circuit_open = True
+                self.worker.stop()
 
-    def _on_bet_failed(self, e): 
-        self.log_message.emit(f"FAIL: {e}")
-
-    def set_live_mode(self, e):
-        if self.worker.executor:
-            self.worker.executor.set_live_mode(e)
-
-    def reload_money_manager(self): 
-        self.money_manager.reload()
+            self._save_state()
