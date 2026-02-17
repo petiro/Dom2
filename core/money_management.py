@@ -6,8 +6,7 @@ from core.config_paths import MONEY_CONFIG_FILE
 
 class MoneyManager:
     def __init__(self):
-        # FIX: Stringa logging pulita
-        self.logger = logging.getLogger("MoneyManager")
+        self.logger = logging.getLogger("Money")
         self.strategy = "Stake Fisso"
         self.bankroll = Decimal("100.00")
         self.reload()
@@ -29,8 +28,8 @@ class MoneyManager:
         o = Decimal(str(odds))
         
         if s > self.bankroll * Decimal("0.25"):
-            # FIX: Format safe
-            self.logger.warning("Stake high: %s > 25%% bankroll", s)
+            # FIX PYLINT: Usare %% per il simbolo percentuale letterale
+            self.logger.warning("Stake > 25%% bankroll! Check strategy.")
 
         if result == "win": self.bankroll += (s * o) - s
         elif result == "lose": self.bankroll -= s
