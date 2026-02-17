@@ -98,7 +98,15 @@ class ExecutionEngine:
 
             # 3. Analysis (Odds)
             self._change_state(ExecutionState.ANALYSIS)
+            
+            # FIX CRITICO: Controllo quota esplicito
             odds = self._analyze(teams, market)
+            
+            if odds <= 1.0:
+                self.logger.error(f"⛔ Scommessa annullata: Quota non valida ({odds}) rilevata.")
+                self.bus.emit(AppEvent.BET_FAILED, {"reason": "Quota non valida o non trovata"})
+                self._change_state(ExecutionState.IDLE)
+                return # Esce subito, NON piazza la scommessa
 
             # 4. Money Management
             stake = money_manager.get_stake(odds)
@@ -154,8 +162,10 @@ class ExecutionEngine:
 
     def _analyze(self, teams: str, market: str) -> float:
         odds = self.executor.find_odds(teams, market)
+        # Controllo rinforzato anche qui
         if not odds or odds <= 1.0:
-            raise PipelineError(f"Invalid odds found: {odds}")
+            self.logger.warning(f"Analysis returned invalid odds: {odds}")
+            return 0.0 # Ritorna 0 per essere gestito dal chiamante
         return odds
 
     def _place(self, teams: str, market: str, stake: float):
