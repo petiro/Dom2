@@ -105,3 +105,15 @@ Il report elenca le occorrenze con percorso e numero di riga.
 ---
 
 > **Disclaimer**: Questo software è inteso per scopi di ricerca sull'automazione e l'intelligenza artificiale. L'utente si assume la piena responsabilità per l'uso dello strumento in contesti di gambling reale.
+# SuperAgent DOM2 - V7.4 Hardening Enterprise
+
+## Architecture
+```mermaid
+graph TD
+    UI[Desktop App PySide6] --> Controller
+    Telegram --> Controller
+    Controller -->|Submit Task| PlaywrightWorker
+    PlaywrightWorker -->|Execute| DomExecutor
+    DomExecutor -->|Control| Browser(Chrome/Playwright)
+    EventBus -->|Events| UI
+    EventBus -->|Events| Controller
