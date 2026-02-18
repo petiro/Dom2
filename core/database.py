@@ -37,7 +37,6 @@ class Database:
         self._create_tables()
 
     def _execute_retry(self, func):
-        """Wrapper per gestire i lock di SQLite in modalità WAL."""
         for i in range(6):
             try:
                 return func()
