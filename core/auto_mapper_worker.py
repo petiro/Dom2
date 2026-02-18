@@ -5,6 +5,9 @@ import os
 from PySide6.QtCore import QObject, Signal
 from core.config_paths import CONFIG_DIR
 
+# Nessun import di classi Core qui (es. DomExecutor)
+# Riceve 'executor' come oggetto generico nel costruttore
+
 class AutoMapperWorker(QObject):
     finished = Signal(dict)
     log = Signal(str)
@@ -19,7 +22,9 @@ class AutoMapperWorker(QObject):
         try:
             self.log.emit(f"🚀 AI Auto-Mapping: {self.url}")
 
-            if not self.executor.launch_browser():
+            # Usiamo getattr per evitare import diretti di tipo
+            launch_method = getattr(self.executor, "launch_browser", None)
+            if launch_method and not launch_method():
                 self.log.emit("❌ Browser fail")
                 self.finished.emit({})
                 return
