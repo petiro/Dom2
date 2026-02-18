@@ -1,0 +1,37 @@
+name: 🛡️ V8.4 Production Check
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  simulate-production:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 🐍 Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        # Installiamo dipendenze critiche per il tester
+        pip install playwright pytest psutil
+        
+    - name: 🎭 Install Playwright Browsers
+      run: |
+        playwright install chromium
+        playwright install-deps
+        
+    - name: 🚀 RUN PRODUCTION SIMULATION
+      env:
+        QT_QPA_PLATFORM: offscreen  # Fondamentale per PySide6 su Server Linux
+      run: |
+        python verify_production.py
