@@ -1,6 +1,8 @@
-import threading
 import logging
+import threading
 import time
+import yaml
+import os
 from PySide6.QtCore import QObject, Signal
 
 from core.event_bus import bus
@@ -9,6 +11,9 @@ from core.execution_engine import ExecutionEngine
 from core.money_management import MoneyManager
 from core.dom_executor_playwright import DomExecutorPlaywright
 from core.database import Database
+from core.auto_mapper_worker import AutoMapperWorker
+from core.dom_self_healing import DOMSelfHealing
+from core.config_paths import CONFIG_DIR
 
 class SuperAgentController(QObject):
     log_message = Signal(str)
@@ -16,92 +21,96 @@ class SuperAgentController(QObject):
     def __init__(self, logger):
         super().__init__()
         self.logger = logger
-        
-        # Inizializza DB e Manager Transazionale
-        self.db = Database()
-        self.money_manager = MoneyManager()
 
+        # 1. Core Data
+        self.db = Database()
+        self.money = MoneyManager()
+
+        # 2. Core Execution
         self.worker = PlaywrightWorker(logger)
         self.worker.executor = DomExecutorPlaywright(logger=logger)
         self.engine = ExecutionEngine(bus, self.worker.executor)
+        
+        # 3. Intelligence
+        self.self_healer = DOMSelfHealing(self.worker.executor)
 
+        # 4. State
         self.fail_count = 0
-        self.circuit_open = False
+        self.circuit = False
         self._lock = threading.Lock()
-        
-        bus.subscribe("BET_SUCCESS", self._on_bet_success)
-        bus.subscribe("BET_FAILED", self._on_bet_failed)
-        
+
+        # 5. Startup
+        bus.subscribe("BET_SUCCESS", self._win)
+        bus.subscribe("BET_FAILED", self._fail)
+
         self.worker.start()
         bus.start()
-        
-        # Avvia Recovery per transazioni interrotte
-        self._perform_recovery()
+        self._recovery()
 
-        threading.Thread(target=self._browser_watchdog, daemon=True).start()
+        threading.Thread(target=self._watchdog, daemon=True).start()
+        self.log_message.emit("✅ SISTEMA V8.4 SINGOLARITÀ ATTIVO")
 
-    def _perform_recovery(self):
-        """Resilienza 10/10: Controlla se il bot è crashato durante una bet."""
-        pending = self.db.get_pending_transactions()
+    def _recovery(self):
+        pending = self.db.pending()
         if pending:
-            self.log_message.emit(f"🔄 RECOVERY: Trovate {len(pending)} transazioni appese.")
-            self.logger.warning(f"Recovery started for {len(pending)} transactions.")
-            
-            for row in pending:
-                tx_id = row['tx_id']
-                # Strategia conservativa: Rimborsare se non siamo sicuri
-                # In V9 si potrebbe controllare la cronologia del sito
-                self.money_manager.refund(tx_id)
-                self.log_message.emit(f"↩️ Transazione {tx_id[:8]} annullata e rimborsata per sicurezza.")
+            self.logger.warning(f"Recovery: {len(pending)} transazioni appese.")
+            for p in pending:
+                self.money.refund(p["tx_id"])
+
+    def start_auto_mapping(self, url):
+        self.log_message.emit(f"🧠 Avvio AI Auto-Mapping su {url}...")
+        self.mapper = AutoMapperWorker(self.worker.executor, url)
+        self.mapper.log.connect(self.log_message.emit)
+        self.mapper.finished.connect(self._on_mapping_done)
+        self.worker.submit(self.mapper.run)
+
+    def _on_mapping_done(self, selectors):
+        if not selectors:
+            self.log_message.emit("❌ Mapping fallito o vuoto.")
+            return
+        
+        self.log_message.emit(f"✅ Mapping OK: {len(selectors)} selettori salvati.")
+        # Reload immediato executor se necessario
+        # self.worker.executor.reload_selectors()
 
     def handle_signal(self, data):
-        if self.circuit_open:
-            self.logger.warning("Circuit open. Ignored.")
+        if self.circuit:
+            self.logger.warning("Circuito aperto. Segnale ignorato.")
             return
+        self.worker.submit(self.engine.process_signal, data, self.money)
 
-        # Passa anche il riferimento al money manager per la gestione TX
-        self.worker.submit(self.engine.process_signal, data, self.money_manager)
-
-    def _on_bet_success(self, payload):
-        # Il payload deve contenere il tx_id generato nell'engine
-        tx_id = payload.get("tx_id")
-        payout = float(payload.get("payout", 0)) # Stake * Odds
+    def _win(self, payload):
+        with self._lock:
+            self.fail_count = 0
+            self.circuit = False
         
-        if tx_id:
-            self.money_manager.confirm_win(tx_id, payout)
+        tx = payload.get("tx_id")
+        payout = payload.get("payout", 0)
+        if tx: self.money.win(tx, payout)
         
-        self.fail_count = 0
-        bal = self.money_manager.get_bankroll()
-        self.log_message.emit(f"💰 WIN | Saldo: {bal:.2f}€")
+        bal = self.money.bankroll()
+        self.log_message.emit(f"💰 WIN | Nuovo Saldo: {bal:.2f}€")
 
-    def _on_bet_failed(self, payload):
-        tx_id = payload.get("tx_id")
-        reason = payload.get("reason", "Unknown")
+    def _fail(self, payload):
+        tx = payload.get("tx_id")
+        if tx: self.money.refund(tx)
         
-        # Se è un errore tecnico (es. selettore non trovato), rimborsa.
-        # Se è una perdita confermata (es. bet persa), conferma loss.
-        # Qui assumiamo rimborso per safety in caso di crash pipeline
-        if tx_id:
-            if "loss" in reason.lower():
-                self.money_manager.confirm_loss(tx_id)
-            else:
-                self.money_manager.refund(tx_id)
-                
-        self.fail_count += 1
-        self.log_message.emit(f"FAIL #{self.fail_count}: {reason}")
+        with self._lock:
+            self.fail_count += 1
+            if self.fail_count >= 3:
+                self.circuit = True
+                self.log_message.emit("⛔ CIRCUIT BREAKER ATTIVATO")
+                self.worker.stop()
+        
+        self.log_message.emit(f"❌ FAIL: {payload.get('reason','')}")
 
-        if self.fail_count >= 3:
-            self.logger.critical("🚨 CIRCUIT BREAKER TRIGGERED")
-            self.circuit_open = True
-            self.worker.stop()
-
-    def _browser_watchdog(self):
+    def _watchdog(self):
         while True:
             time.sleep(10)
             ex = self.worker.executor
             if ex and getattr(ex, "page", None):
                 try:
                     if ex.page.is_closed():
-                        self.logger.warning("Watchdog restart browser")
+                        self.logger.warning("Watchdog: Browser crash. Restarting...")
                         ex.recycle_browser()
                 except: pass
