@@ -15,56 +15,58 @@ class AutoMapperWorker(QObject):
         self.url = url
 
     def run(self):
+        cdp = None
         try:
             self.log.emit(f"🚀 AI Auto-Mapping: {self.url}")
 
             if not self.executor.launch_browser():
-                self.log.emit("❌ Browser non avviato")
+                self.log.emit("❌ Browser fail")
                 self.finished.emit({})
                 return
 
-            page = self.executor.page
+            page = getattr(self.executor, "page", None)
+            if not page:
+                self.log.emit("❌ No active page")
+                self.finished.emit({})
+                return
+
             try:
                 page.goto(self.url, timeout=60000)
                 page.wait_for_load_state("domcontentloaded")
-            except:
-                self.log.emit("⚠️ Timeout pagina, continuo")
+            except: pass
 
             self._auto_scroll(page)
 
-            # CDP invisibile
-            self.log.emit("🔌 Connessione CDP interna...")
             cdp = page.context.new_cdp_session(page)
             cdp.send("DOM.enable")
 
-            self.log.emit("🕷️ Scansione DOM profondo...")
-            resp = cdp.send("DOM.getFlattenedDocument", {
-                "depth": -1,
-                "pierce": True
-            })
+            start_scan = time.time()
+            resp = cdp.send("DOM.getFlattenedDocument", {"depth": -1, "pierce": True})
+            
+            if time.time() - start_scan > 20:
+                self.log.emit("⚠️ CDP Scan lento")
 
             nodes = resp.get("nodes", [])
-            self.log.emit(f"🔍 Nodi analizzati: {len(nodes)}")
-
             elements = self._extract(nodes)
             selectors = self._ai_match(elements)
             self._save(selectors)
 
-            self.log.emit(f"✅ MAPPING COMPLETATO: {len(selectors)} campi.")
+            self.log.emit(f"✅ Mapping completato: {len(selectors)} campi.")
             self.finished.emit(selectors)
 
         except Exception as e:
-            self.log.emit(f"❌ Mapper crash: {e}")
+            self.log.emit(f"❌ Mapper error: {e}")
             self.finished.emit({})
+        
+        finally:
+            if cdp:
+                try: cdp.detach()
+                except: pass
 
     def _auto_scroll(self, page):
-        last = 0
         for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1)
-            h = page.evaluate("document.body.scrollHeight")
-            if h == last: break
-            last = h
 
     def _extract(self, nodes):
         found = []
@@ -83,74 +85,35 @@ class AutoMapperWorker(QObject):
     def _ai_match(self, elements):
         selectors = {}
         keys = {
-            "stake_input": ["stake","importo","puntata","amount","wager"],
-            "place_button": ["scommetti","bet","place","gioca","piazza"],
+            "stake_input": ["stake","importo","puntata","amount"],
+            "place_button": ["scommetti","bet","place","gioca"],
             "login_button": ["login","accedi","entra"],
             "odds_value": ["quota","odd","price"],
-            "search_box": ["search","cerca","trova"]
+            "search_box": ["search","cerca"]
         }
-
         for el in elements:
             fingerprint = (el["tag"]+" "+el["text"]+" "+el["class"]).lower()
-            for field,words in keys.items():
+            for field, words in keys.items():
                 if field in selectors: continue
                 if field=="stake_input" and el["tag"]!="input": continue
-                
                 if any(w in fingerprint for w in words):
-                    selectors[field]=el["css"]
-                    self.log.emit(f"✨ Match: {field} -> {el['css']}")
-
+                    selectors[field] = el["css"]
         return selectors
 
     def _save(self, selectors):
         if not selectors: return
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        path = os.path.join(CONFIG_DIR, "selectors_auto.yaml")
-        try:
-            with open(path, "w") as f:
-                yaml.dump(selectors, f, default_flow_style=False)
-            self.log.emit(f"💾 Salvato: {path}")
-        except: pass
+        with open(os.path.join(CONFIG_DIR, "selectors_auto.yaml"), "w") as f:
+            yaml.dump(selectors, f)
 
-    # Helpers CDP
-    def _attrs(self, node):
-        a = node.get("attributes", [])
-        return dict(zip(a[::2], a[1::2]))
-
-    def _attr(self, node, name):
-        return self._attrs(node).get(name, "")
-
-    def _text(self, node):
-        a = self._attrs(node)
-        return (a.get("aria-label","") + a.get("placeholder","") + a.get("value",""))
-
-    def _is_interactive(self, node):
-        tag = node.get("nodeName","").upper()
-        if tag in ["BUTTON", "INPUT", "A", "SELECT", "TEXTAREA"]: return True
-        attrs = self._attrs(node)
-        if attrs.get("role") in ["button", "link", "textbox"]: return True
-        cls = attrs.get("class","").lower()
-        if any(x in cls for x in ["odd", "price", "quota", "btn"]): return True
-        return False
-
-    def _css(self, node):
-        attrs = self._attrs(node)
-        tag = node.get("nodeName","").lower()
-        
-        if "id" in attrs and len(attrs["id"]) < 32 and not re.search(r'\d{5,}', attrs["id"]):
-            return f"#{attrs['id']}"
-            
-        for k in attrs:
-            if k.startswith("data-"): return f"{tag}[{k}='{attrs[k]}']"
-            
-        if "name" in attrs: return f"{tag}[name='{attrs['name']}']"
-        
-        if "aria-label" in attrs:
-            clean = attrs['aria-label'].replace("'", "")
-            return f"{tag}[aria-label='{clean}']"
-            
-        if "class" in attrs:
-            for cls in attrs["class"].split():
-                if not re.search(r"css-|sc-|flex|grid", cls):
-                    return f"{tag}.{cls}"
-        return None
+    def _attrs(self, n): return dict(zip(n.get("attributes",[])[::2], n.get("attributes",[])[1::2]))
+    def _attr(self, n, k): return self._attrs(n).get(k, "")
+    def _text(self, n): a=self._attrs(n); return a.get("aria-label","")+a.get("value","")
+    def _is_interactive(self, n): 
+        tag=n.get("nodeName","").upper()
+        return tag in ["BUTTON","INPUT","A"] or "btn" in self._attr(n,"class")
+    def _css(self, n):
+        a=self._attrs(n); tag=n.get("nodeName","").lower()
+        if "id" in a and not re.search(r'\d{5,}', a["id"]): return f"#{a['id']}"
+        if "name" in a: return f"{tag}[name='{a['name']}']"
+        return f"{tag}.{a['class'].split()[0]}" if "class" in a else None
