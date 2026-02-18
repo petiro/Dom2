@@ -1,188 +1,156 @@
-import requests
-import logging
-import json
-import os
 import time
+import re
 import yaml
+import os
 from PySide6.QtCore import QObject, Signal
-from core.config_loader import load_secure_config
-from core.utils import get_project_root
-
+from core.config_paths import CONFIG_DIR
 
 class AutoMapperWorker(QObject):
-    """
-    V7.2 Auto-Discovery Worker.
-
-    Pipeline:
-    1. SCAN: Use executor.scan_page_elements() to extract interactive DOM elements
-    2. AI PREDICT: Send element list to AI to identify selectors
-    3. VERIFY: Physically test each selector on the live page
-    4. SAVE: Write validated selectors to config/selectors.yaml
-    """
     finished = Signal(dict)
-    error = Signal(str)
-    status = Signal(str)
-
-    # Resilient model list (Feb 2026)
-    AI_MODELS = [
-        "anthropic/claude-3.5-sonnet",
-        "openai/gpt-oss-120b:free",
-        "qwen/qwen-3-coder-480b-a35b-instruct:free",
-        "google/gemini-2.0-flash-lite-preview-02-05:free",
-        "arcee-ai/trinity-large-preview:free",
-    ]
+    log = Signal(str)
 
     def __init__(self, executor, url):
         super().__init__()
         self.executor = executor
         self.url = url
-        self.logger = logging.getLogger("SuperAgent")
-        self.secrets = load_secure_config()
-        self.api_key = self.secrets.get("openrouter_api_key")
 
     def run(self):
-        """Execute the full auto-discovery pipeline."""
         try:
-            # 1. SCAN
-            self.status.emit(f"Scanning DOM structure: {self.url}...")
-            elements = self.executor.scan_page_elements(self.url)
+            self.log.emit(f"🚀 AI Auto-Mapping: {self.url}")
 
-            if not elements:
-                self.error.emit("Scanner failed: could not read page elements.")
+            if not self.executor.launch_browser():
+                self.log.emit("❌ Browser non avviato")
                 self.finished.emit({})
                 return
 
-            self.status.emit(f"AI analyzing {len(elements)} interactive elements...")
-
-            # 2. AI PREDICT
-            found_selectors = self._ask_ai_for_selectors(elements)
-
-            if not found_selectors:
-                self.error.emit("AI could not find valid selector matches.")
-                self.finished.emit({})
-                return
-
-            # 3. VERIFY
-            self.status.emit("Physically verifying selectors on page...")
-            validated = {}
-            for key, selector in found_selectors.items():
-                if selector == "NOT_FOUND":
-                    continue
-
-                self.status.emit(f"Testing {key}: {selector}...")
-                if self.executor.verify_selector_validity(selector):
-                    self.logger.info(f"✅ {key} CONFIRMED: {selector}")
-                    validated[key] = selector
-                else:
-                    self.logger.warning(f"⚠️ {key} discarded (element not responsive): {selector}")
-
-            # 4. SAVE
-            if validated:
-                self._save_selectors(validated)
-                self.status.emit(f"Saved {len(validated)} validated selectors.")
-            else:
-                self.status.emit("No selectors passed physical verification.")
-
-            self.finished.emit(validated)
-
-        except Exception as e:
-            self.logger.error(f"AutoMapper critical error: {e}", exc_info=True)
-            self.error.emit(f"Critical error: {str(e)}")
-
-    def _ask_ai_for_selectors(self, elements):
-        """Send element list to AI with model fallback chain."""
-        if not self.api_key:
-            self.error.emit("OpenRouter API key missing.")
-            return {}
-
-        prompt = (
-            "You are an expert in Web Scraping and Browser Automation.\n"
-            "Here is a JSON list of interactive elements extracted from a bookmaker page:\n\n"
-            f"{json.dumps(elements[:150])}\n\n"
-            "Identify the correct CSS selectors for these functions:\n"
-            '1. "login_button": Button to log in (text: Accedi, Login, Entra)\n'
-            '2. "balance_selector": Element showing account balance\n'
-            '3. "search_button": Button to open search\n'
-            '4. "search_input": Input field for searching events\n'
-            '5. "stake_input": Input where bet amount is typed\n'
-            '6. "place_button": Final bet placement button (Scommetti, Piazza)\n'
-            '7. "bet_confirm_msg": Confirmation message after bet\n\n'
-            'Respond ONLY with JSON: { "login_button": "...", ... }\n'
-            'Use "NOT_FOUND" if uncertain.'
-        )
-
-        for model in self.AI_MODELS:
-            self.logger.info(f"Trying model: {model}")
+            page = self.executor.page
             try:
-                response = requests.post(
-                    url="https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "HTTP-Referer": "https://github.com/petiro/Dom2",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.1,
-                    },
-                    timeout=45,
-                )
+                page.goto(self.url, timeout=60000)
+                page.wait_for_load_state("domcontentloaded")
+            except:
+                self.log.emit("⚠️ Timeout pagina, continuo")
 
-                if response.status_code == 200:
-                    data = response.json()
-                    choices = data.get("choices", [])
-                    if not choices:
-                        continue
-                    content = choices[0].get("message", {}).get("content", "")
-                    if not content:
-                        continue
+            self._auto_scroll(page)
 
-                    self.logger.info(f"✅ Mapping completed with {model}")
-                    return self._parse_ai_response(content)
+            # CDP invisibile
+            self.log.emit("🔌 Connessione CDP interna...")
+            cdp = page.context.new_cdp_session(page)
+            cdp.send("DOM.enable")
 
-                elif response.status_code in [429, 500, 502, 503]:
-                    self.logger.warning(
-                        f"Model {model} unavailable ({response.status_code}). Trying next..."
-                    )
-                    time.sleep(1)
-                    continue
-                else:
-                    self.logger.error(
-                        f"Unexpected {response.status_code} from {model}: {response.text}"
-                    )
-                    continue
+            self.log.emit("🕷️ Scansione DOM profondo...")
+            resp = cdp.send("DOM.getFlattenedDocument", {
+                "depth": -1,
+                "pierce": True
+            })
 
-            except Exception as e:
-                self.logger.error(f"Exception with model {model}: {e}")
-                continue
+            nodes = resp.get("nodes", [])
+            self.log.emit(f"🔍 Nodi analizzati: {len(nodes)}")
 
-        return {}
+            elements = self._extract(nodes)
+            selectors = self._ai_match(elements)
+            self._save(selectors)
 
-    def _parse_ai_response(self, content):
-        """Parse AI JSON response, stripping markdown fences."""
-        try:
-            clean = content.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean)
+            self.log.emit(f"✅ MAPPING COMPLETATO: {len(selectors)} campi.")
+            self.finished.emit(selectors)
+
         except Exception as e:
-            self.logger.error(f"AI response parse error: {e}")
-            return {"raw_response": content}
+            self.log.emit(f"❌ Mapper crash: {e}")
+            self.finished.emit({})
 
-    def _save_selectors(self, new_data):
-        """Merge validated selectors into existing config/selectors.yaml."""
-        path = os.path.join(get_project_root(), "config", "selectors.yaml")
-        current = {}
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    current = yaml.safe_load(f) or {}
-            except Exception as e:
-                self.logger.warning(f"Could not read existing selectors.yaml: {e}")
+    def _auto_scroll(self, page):
+        last = 0
+        for _ in range(5):
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
+            h = page.evaluate("document.body.scrollHeight")
+            if h == last: break
+            last = h
 
-        current.update(new_data)
+    def _extract(self, nodes):
+        found = []
+        for n in nodes:
+            if self._is_interactive(n):
+                css = self._css(n)
+                if css:
+                    found.append({
+                        "tag": n.get("nodeName","").lower(),
+                        "css": css,
+                        "text": self._text(n),
+                        "class": self._attr(n,"class")
+                    })
+        return found
+
+    def _ai_match(self, elements):
+        selectors = {}
+        keys = {
+            "stake_input": ["stake","importo","puntata","amount","wager"],
+            "place_button": ["scommetti","bet","place","gioca","piazza"],
+            "login_button": ["login","accedi","entra"],
+            "odds_value": ["quota","odd","price"],
+            "search_box": ["search","cerca","trova"]
+        }
+
+        for el in elements:
+            fingerprint = (el["tag"]+" "+el["text"]+" "+el["class"]).lower()
+            for field,words in keys.items():
+                if field in selectors: continue
+                if field=="stake_input" and el["tag"]!="input": continue
+                
+                if any(w in fingerprint for w in words):
+                    selectors[field]=el["css"]
+                    self.log.emit(f"✨ Match: {field} -> {el['css']}")
+
+        return selectors
+
+    def _save(self, selectors):
+        if not selectors: return
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        path = os.path.join(CONFIG_DIR, "selectors_auto.yaml")
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                yaml.dump(current, f, default_flow_style=False)
-        except Exception as e:
-            self.logger.error(f"Failed to save selectors.yaml: {e}")
+            with open(path, "w") as f:
+                yaml.dump(selectors, f, default_flow_style=False)
+            self.log.emit(f"💾 Salvato: {path}")
+        except: pass
+
+    # Helpers CDP
+    def _attrs(self, node):
+        a = node.get("attributes", [])
+        return dict(zip(a[::2], a[1::2]))
+
+    def _attr(self, node, name):
+        return self._attrs(node).get(name, "")
+
+    def _text(self, node):
+        a = self._attrs(node)
+        return (a.get("aria-label","") + a.get("placeholder","") + a.get("value",""))
+
+    def _is_interactive(self, node):
+        tag = node.get("nodeName","").upper()
+        if tag in ["BUTTON", "INPUT", "A", "SELECT", "TEXTAREA"]: return True
+        attrs = self._attrs(node)
+        if attrs.get("role") in ["button", "link", "textbox"]: return True
+        cls = attrs.get("class","").lower()
+        if any(x in cls for x in ["odd", "price", "quota", "btn"]): return True
+        return False
+
+    def _css(self, node):
+        attrs = self._attrs(node)
+        tag = node.get("nodeName","").lower()
+        
+        if "id" in attrs and len(attrs["id"]) < 32 and not re.search(r'\d{5,}', attrs["id"]):
+            return f"#{attrs['id']}"
+            
+        for k in attrs:
+            if k.startswith("data-"): return f"{tag}[{k}='{attrs[k]}']"
+            
+        if "name" in attrs: return f"{tag}[name='{attrs['name']}']"
+        
+        if "aria-label" in attrs:
+            clean = attrs['aria-label'].replace("'", "")
+            return f"{tag}[aria-label='{clean}']"
+            
+        if "class" in attrs:
+            for cls in attrs["class"].split():
+                if not re.search(r"css-|sc-|flex|grid", cls):
+                    return f"{tag}.{cls}"
+        return None
