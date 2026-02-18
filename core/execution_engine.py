@@ -20,7 +20,7 @@ class ExecutionEngine:
         self.log.info(f"🤖 Processing Signal: {teams} @ {market}")
 
         try:
-            # 1. CONTROLLI PRELIMINARI (Fail Fast)
+            # 1. CONTROLLI PRELIMINARI
             if not self.executor.ensure_login():
                 raise Exception("Login check failed")
 
@@ -30,7 +30,6 @@ class ExecutionEngine:
             # 2. LETTURA QUOTE & VALIDAZIONE
             odds = self.executor.find_odds(teams, market)
             
-            # Safety Check: Quote irrealistiche (OCR/DOM error)
             if odds < 1.01 or odds > 50.0:
                 raise Exception(f"Invalid odds detected: {odds}")
 
@@ -41,16 +40,15 @@ class ExecutionEngine:
 
             self.log.info(f"💰 Validated: Odds {odds} | Stake {stake}€")
 
-            # 4. TRANSAZIONE ACID (Prenotazione)
-            # Prenotiamo i soldi PRIMA di cliccare "Scommetti" per evitare scoperti
+            # 4. TRANSAZIONE ACID
+            # Qui money_manager.reserve ora ritorna correttamente tx_id (UUID)
             tx_id = money_manager.reserve(stake)
 
-            # 5. ESECUZIONE BET (Critical Section)
+            # 5. ESECUZIONE BET
             if not self.executor.place_bet(teams, market, float(stake)):
-                # Se il click fallisce, l'eccezione triggera il rollback nel catch
                 raise Exception("Place bet button click failed")
 
-            # 6. VERIFICA FINALE (Anti-False-Positive)
+            # 6. VERIFICA FINALE
             if not self.executor.verify_bet_success(teams):
                  raise Exception("Bet verification failed (No confirmation)")
 
@@ -69,9 +67,8 @@ class ExecutionEngine:
             self.log.error(f"❌ Execution Fail: {e}")
             
             # ROLLBACK SICURO
-            # Emettiamo evento fallimento che triggera il refund nel Controller/MoneyManager
             self.bus.emit(AppEvent.BET_FAILED, {
-                "tx_id": tx_id, # Se None, il manager ignora
+                "tx_id": tx_id, 
                 "reason": str(e),
                 "teams": teams
             })
