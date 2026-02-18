@@ -12,7 +12,7 @@ class MoneyManager:
         try:
             bal = self.db.get_balance()
             
-            # Strategia 2%
+            # Strategia 2% (Modificabile)
             stake = bal * Decimal("0.02")
             cap = bal * Decimal("0.25")
             stake = min(stake, cap)
@@ -28,6 +28,7 @@ class MoneyManager:
             return Decimal("0.00")
 
     def reserve(self, amount):
+        # FIX APPLICATO: Generazione UUID e return per Engine
         tx = str(uuid.uuid4())
         self.db.reserve(tx, amount)
         return tx
