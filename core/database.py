@@ -26,11 +26,24 @@ class Database:
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
 
-        # WAL Mode per Concorrenza 10/10
+        # WAL Mode & Settings
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
+        self.conn.execute("PRAGMA busy_timeout=5000;") # Wait up to 5s
 
         self._create()
+
+    def _execute_retry(self, func, *args):
+        """Wrapper per gestire i lock di SQLite in modalità WAL."""
+        for i in range(5):
+            try:
+                return func(*args)
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower():
+                    time.sleep(0.1 + (i * 0.1)) # Backoff
+                    continue
+                raise
+        raise sqlite3.OperationalError("Database locked after 5 retries")
 
     def _create(self):
         with self._lock:
@@ -62,52 +75,59 @@ class Database:
             return Decimal(row[0])
 
     def reserve(self, tx_id, stake):
+        def _op():
+            bal = self.get_balance()
+            s = Decimal(str(stake))
+            if s > bal: raise ValueError("Insufficient funds")
+
+            self.conn.execute("INSERT INTO journal VALUES(?,?,?,?,?,?)",
+                              (tx_id,"PENDING",str(stake),"0",time.time(),0))
+            
+            new = bal - s
+            self.conn.execute("UPDATE bankroll SET amount=?,updated=? WHERE id=1",
+                              (str(new),time.time()))
+            self.conn.commit()
+
         with self._lock:
             try:
-                bal = self.get_balance()
-                s = Decimal(str(stake))
-
-                if s > bal:
-                    raise ValueError("Insufficient funds")
-
-                self.conn.execute("INSERT INTO journal VALUES(?,?,?,?,?,?)",
-                                  (tx_id,"PENDING",str(stake),"0",time.time(),0))
-
-                new = bal - s
-                self.conn.execute("UPDATE bankroll SET amount=?,updated=? WHERE id=1",
-                                  (str(new),time.time()))
-                self.conn.commit()
+                self._execute_retry(_op)
             except Exception as e:
                 self.conn.rollback()
                 raise e
 
     def commit(self, tx_id, payout=0):
+        def _op():
+            if payout > 0:
+                bal = self.get_balance()
+                new = bal + Decimal(str(payout))
+                self.conn.execute("UPDATE bankroll SET amount=?,updated=? WHERE id=1",
+                                  (str(new),time.time()))
+
+            self.conn.execute("UPDATE journal SET status='DONE',completed=? WHERE tx_id=?",
+                              (time.time(),tx_id))
+            self.conn.commit()
+
         with self._lock:
             try:
-                if payout > 0:
-                    bal = self.get_balance()
-                    new = bal + Decimal(str(payout))
-                    self.conn.execute("UPDATE bankroll SET amount=?,updated=? WHERE id=1",
-                                      (str(new),time.time()))
-
-                self.conn.execute("UPDATE journal SET status='DONE',completed=? WHERE tx_id=?",
-                                  (time.time(),tx_id))
-                self.conn.commit()
+                self._execute_retry(_op)
             except:
                 self.conn.rollback()
 
     def rollback(self, tx_id):
+        def _op():
+            row = self.conn.execute("SELECT stake,status FROM journal WHERE tx_id=?",(tx_id,)).fetchone()
+            if row and row["status"]=="PENDING":
+                stake = Decimal(row["stake"])
+                bal = self.get_balance()
+                self.conn.execute("UPDATE bankroll SET amount=?,updated=? WHERE id=1",
+                                  (str(bal+stake),time.time()))
+                self.conn.execute("UPDATE journal SET status='ROLLBACK',completed=? WHERE tx_id=?",
+                                  (time.time(),tx_id))
+                self.conn.commit()
+
         with self._lock:
             try:
-                row = self.conn.execute("SELECT stake,status FROM journal WHERE tx_id=?",(tx_id,)).fetchone()
-                if row and row["status"]=="PENDING":
-                    stake = Decimal(row["stake"])
-                    bal = self.get_balance()
-                    self.conn.execute("UPDATE bankroll SET amount=?,updated=? WHERE id=1",
-                                      (str(bal+stake),time.time()))
-                    self.conn.execute("UPDATE journal SET status='ROLLBACK',completed=? WHERE tx_id=?",
-                                      (time.time(),tx_id))
-                    self.conn.commit()
+                self._execute_retry(_op)
             except:
                 self.conn.rollback()
 
