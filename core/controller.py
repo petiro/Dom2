@@ -3,6 +3,7 @@ import threading
 import time
 import yaml
 import os
+import json # FIX APPLICATO: Import necessario per save/load state
 from PySide6.QtCore import QObject, Signal
 
 from core.event_bus import bus
@@ -13,7 +14,10 @@ from core.dom_executor_playwright import DomExecutorPlaywright
 from core.database import Database
 from core.auto_mapper_worker import AutoMapperWorker
 from core.dom_self_healing import DOMSelfHealing
+from core.multi_site_scanner import MultiSiteScanner
 from core.config_paths import CONFIG_DIR
+
+STATE_FILE = os.path.join(CONFIG_DIR, "runtime_state.json")
 
 class SuperAgentController(QObject):
     log_message = Signal(str)
@@ -21,96 +25,121 @@ class SuperAgentController(QObject):
     def __init__(self, logger):
         super().__init__()
         self.logger = logger
-
-        # 1. Core Data
+        
         self.db = Database()
-        self.money = MoneyManager()
-
-        # 2. Core Execution
+        self.money_manager = MoneyManager()
+        
         self.worker = PlaywrightWorker(logger)
         self.worker.executor = DomExecutorPlaywright(logger=logger)
         self.engine = ExecutionEngine(bus, self.worker.executor)
-        
-        # 3. Intelligence
+
         self.self_healer = DOMSelfHealing(self.worker.executor)
-
-        # 4. State
+        self.scanner = MultiSiteScanner(self.worker.executor)
+        
         self.fail_count = 0
-        self.circuit = False
+        self.circuit_open = False
         self._lock = threading.Lock()
+        self._last_signal_time = 0
 
-        # 5. Startup
-        bus.subscribe("BET_SUCCESS", self._win)
-        bus.subscribe("BET_FAILED", self._fail)
+        self._load_state()
 
+        bus.subscribe("BET_SUCCESS", self._on_bet_success)
+        bus.subscribe("BET_FAILED", self._on_bet_failed)
+        
         self.worker.start()
         bus.start()
-        self._recovery()
+        
+        threading.Thread(target=self._browser_watchdog, daemon=True).start()
+        self._perform_recovery()
+        
+        self.log_message.emit("✅ SISTEMA V8.4 STABLE AVVIATO")
 
-        threading.Thread(target=self._watchdog, daemon=True).start()
-        self.log_message.emit("✅ SISTEMA V8.4 SINGOLARITÀ ATTIVO")
-
-    def _recovery(self):
-        pending = self.db.pending()
-        if pending:
-            self.logger.warning(f"Recovery: {len(pending)} transazioni appese.")
-            for p in pending:
-                self.money.refund(p["tx_id"])
+    def _perform_recovery(self):
+        try:
+            pending = self.db.pending()
+            if pending:
+                self.logger.warning(f"Recovery: {len(pending)} transazioni pendenti.")
+                for row in pending:
+                    self.money_manager.refund(row['tx_id'])
+        except Exception as e:
+            self.logger.error(f"Recovery error: {e}")
 
     def start_auto_mapping(self, url):
-        self.log_message.emit(f"🧠 Avvio AI Auto-Mapping su {url}...")
+        self.log_message.emit(f"🧠 AVVIO AUTO-MAPPING: {url}")
         self.mapper = AutoMapperWorker(self.worker.executor, url)
         self.mapper.log.connect(self.log_message.emit)
         self.mapper.finished.connect(self._on_mapping_done)
         self.worker.submit(self.mapper.run)
 
     def _on_mapping_done(self, selectors):
-        if not selectors:
-            self.log_message.emit("❌ Mapping fallito o vuoto.")
-            return
-        
-        self.log_message.emit(f"✅ Mapping OK: {len(selectors)} selettori salvati.")
-        # Reload immediato executor se necessario
-        # self.worker.executor.reload_selectors()
+        if selectors:
+            self.log_message.emit(f"✅ MAPPING OK: {len(selectors)} selettori.")
+        else:
+            self.log_message.emit("❌ MAPPING FALLITO.")
+
+    def scan_multiple_sites(self, url_list):
+        self.log_message.emit(f"🌐 Avvio Multi-Scan ({len(url_list)} siti)...")
+        self.worker.submit(lambda: self.scanner.scan(url_list))
 
     def handle_signal(self, data):
-        if self.circuit:
-            self.logger.warning("Circuito aperto. Segnale ignorato.")
-            return
-        self.worker.submit(self.engine.process_signal, data, self.money)
+        if not self.worker.running: return
 
-    def _win(self, payload):
+        if self.circuit_open:
+            self.logger.warning("Circuit Breaker attivo. Ignoro.")
+            return
+
+        now = time.time()
+        if now - self._last_signal_time < 1.0: return
+        self._last_signal_time = now
+
+        self.worker.submit(self.engine.process_signal, data, self.money_manager)
+
+    def _on_bet_success(self, payload):
         with self._lock:
             self.fail_count = 0
-            self.circuit = False
+            self.circuit_open = False
+            self._save_state()
         
-        tx = payload.get("tx_id")
-        payout = payload.get("payout", 0)
-        if tx: self.money.win(tx, payout)
-        
-        bal = self.money.bankroll()
-        self.log_message.emit(f"💰 WIN | Nuovo Saldo: {bal:.2f}€")
+        tx_id = payload.get("tx_id")
+        if tx_id: self.money_manager.win(tx_id, payload.get("payout", 0))
+        self.log_message.emit(f"💰 WIN | Saldo: {self.money_manager.bankroll():.2f}€")
 
-    def _fail(self, payload):
-        tx = payload.get("tx_id")
-        if tx: self.money.refund(tx)
+    def _on_bet_failed(self, payload):
+        tx_id = payload.get("tx_id")
+        if tx_id: self.money_manager.refund(tx_id)
         
         with self._lock:
             self.fail_count += 1
             if self.fail_count >= 3:
-                self.circuit = True
-                self.log_message.emit("⛔ CIRCUIT BREAKER ATTIVATO")
-                self.worker.stop()
-        
-        self.log_message.emit(f"❌ FAIL: {payload.get('reason','')}")
+                self.circuit_open = True
+                self.log_message.emit("⛔ SISTEMA IN PAUSA DI SICUREZZA.")
+            self._save_state()
 
-    def _watchdog(self):
+    def _save_state(self):
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump({"fail_count": self.fail_count, "circuit_open": self.circuit_open}, f)
+        except: pass
+
+    def _load_state(self):
+        try:
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE) as f:
+                    data = json.load(f)
+                    self.fail_count = data.get("fail_count", 0)
+                    self.circuit_open = data.get("circuit_open", False)
+        except: pass
+
+    def _browser_watchdog(self):
         while True:
-            time.sleep(10)
-            ex = self.worker.executor
-            if ex and getattr(ex, "page", None):
-                try:
-                    if ex.page.is_closed():
-                        self.logger.warning("Watchdog: Browser crash. Restarting...")
-                        ex.recycle_browser()
-                except: pass
+            time.sleep(15)
+            if not self.worker.running: continue
+            try: self.worker.submit(self._safe_browser_check)
+            except: pass
+
+    def _safe_browser_check(self):
+        ex = self.worker.executor
+        if ex and getattr(ex, "page", None):
+            try:
+                if ex.page.is_closed(): ex.recycle_browser()
+            except: ex.recycle_browser()
