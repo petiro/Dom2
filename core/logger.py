@@ -11,7 +11,6 @@ MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 BACKUP_COUNT = 3
 
 # --- 1. Classe Segnale Separata (Pattern Composizione) ---
-# Evita conflitti di ereditarietà multipla con PySide6
 class LogSignaler(QObject):
     log_signal = Signal(str, str)  # level, message
 
@@ -24,8 +23,11 @@ class QtLogHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            # Emette il segnale tramite l'oggetto composito
-            self.signaler.log_signal.emit(record.levelname, msg)
+            # FIX 2: Protezione contro crash Qt se la GUI viene chiusa mentre il thread logga
+            try:
+                self.signaler.log_signal.emit(record.levelname, msg)
+            except RuntimeError:
+                pass # La GUI è stata distrutta, ignoriamo l'emit
         except Exception:
             self.handleError(record)
 
@@ -45,10 +47,13 @@ def setup_logger():
     # Configurazione Logger "SuperAgent"
     logger = logging.getLogger("SuperAgent")
     logger.setLevel(logging.INFO)
-    logger.propagate = False  # Evita duplicati
+    logger.propagate = False 
+
+    # FIX 3: Silenzia logger di terze parti (Playwright, urllib3, ecc) per evitare spam
+    logging.getLogger().setLevel(logging.CRITICAL) 
     
-    # Pulisce handler precedenti per evitare log doppi al riavvio
-    if logger.handlers:
+    # FIX 1: Evita handler duplicati se setup_logger viene chiamato due volte
+    if logger.hasHandlers():
         logger.handlers.clear()
 
     formatter = logging.Formatter(
@@ -74,8 +79,6 @@ def setup_logger():
     qt_handler.setFormatter(formatter)
     logger.addHandler(qt_handler)
 
-    # Test immediato di scrittura
-    logger.info("=== 🚀 SISTEMA DI LOG AVVIATO ===")
+    logger.info("=== 🚀 SISTEMA DI LOG V8.4 (FROZEN) AVVIATO ===")
     
-    # Restituiamo il logger E il signaler (che contiene il segnale Qt)
     return logger, qt_handler.signaler
