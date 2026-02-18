@@ -2,14 +2,16 @@ import time
 import threading
 import logging
 import re
-from playwright.sync_api import sync_playwright
-from core.human_mouse import HumanMouse
-from core.config_paths import TIMEOUT_MEDIUM
-from core.dom_self_healing import DOMSelfHealing
-from core.anti_detect import STEALTH_INJECTION_V4
 import os
 import yaml
-from core.config_paths import CONFIG_DIR
+from playwright.sync_api import sync_playwright
+
+from core.human_mouse import HumanMouse
+from core.config_paths import TIMEOUT_MEDIUM, CONFIG_DIR
+from core.anti_detect import STEALTH_INJECTION_V4
+
+# FIX CIRCULAR IMPORT: Importiamo il modulo intero, non la classe
+import core.dom_self_healing 
 
 class DomExecutorPlaywright:
     def __init__(self, logger=None, headless=False, allow_place=False, **kwargs):
@@ -22,10 +24,11 @@ class DomExecutorPlaywright:
         self.page = None
         self.mouse = None
 
-        self._internal_lock = threading.RLock() # RLock confermato
+        self._internal_lock = threading.RLock() 
         self._initialized = False
 
-        self.healer = DOMSelfHealing(self)
+        # FIX: Istanziazione tramite modulo
+        self.healer = core.dom_self_healing.DOMSelfHealing(self)
         self._heal_attempts = 0
 
     def launch_browser(self):
@@ -79,7 +82,6 @@ class DomExecutorPlaywright:
                 return self._smart_locate(key, new_sel)
             return None
 
-    # FIX APPLICATO: Signature corretta (teams=None)
     def verify_bet_success(self, teams=None):
         if not self.allow_place: return True
         try:
