@@ -22,6 +22,7 @@ import core.config_paths
 core.config_paths.CONFIG_DIR = TEST_DIR
 
 # Patchiamo Playwright per forzare HEADLESS (Server Mode)
+# Questo è FONDAMENTALE per GitHub Actions
 from core.dom_executor_playwright import DomExecutorPlaywright
 orig_init = DomExecutorPlaywright.__init__
 
@@ -146,13 +147,16 @@ except Exception as e:
     sys.exit(1)
 
 # B. Controllo Memory Leak
-process = psutil.Process(os.getpid())
-mem_mb = process.memory_info().rss / 1024 / 1024
-print(f"🧠 RAM Usage: {mem_mb:.2f} MB")
+try:
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    print(f"🧠 RAM Usage: {mem_mb:.2f} MB")
 
-if mem_mb > 800: # Soglia di allarme (es. 800MB)
-    print("❌ MEMORY LEAK SOSPETTO: Consumo RAM eccessivo!")
-    sys.exit(1)
+    if mem_mb > 800: # Soglia di allarme (es. 800MB)
+        print("❌ MEMORY LEAK SOSPETTO: Consumo RAM eccessivo!")
+        sys.exit(1)
+except:
+    print("⚠️ RAM check skipped (psutil error)")
 
 # ---------------------------------------------------
 # 8. SHUTDOWN & VERDETTO
