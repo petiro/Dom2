@@ -1,15 +1,15 @@
 # ========================================================
-#  SUPERAGENT V8 CONFIGURATION - SENTINEL EDITION
+#  SUPERAGENT V8.4 CONFIGURATION - SENTINEL EDITION
 # ========================================================
 
 # --- IMPOSTAZIONI DI SISTEMA ---
 system:
   debug_level: "info"   # Opzioni: debug, info, warning, error
-  version: "5.5"
+  version: "8.4"        # Aggiornato alla versione corrente
 
 # --- OPENROUTER API (AI BRAIN) ---
 openrouter:
-  api_key: "sk-or-..."  # Inserisci qui la tua chiave (o lasciala vuota e usa la UI)
+  api_key: "sk-or-..."  # Inserisci qui la tua chiave
   model: "google/gemini-2.0-flash-lite-preview-02-05:free"
 
 # --- TELEGRAM API (CONNESSIONE) ---
@@ -30,9 +30,16 @@ rpa:
   enabled: true
   headless: false        # false = vedi il browser (consigliato per debug)
   stealth_mode: "pro"    # Opzioni: slow (umano), balanced, pro (veloce/stealth)
-  autobet: false         # ⚠️ ATTENZIONE: Se true, piazza scommesse reali
   pin: "0000"            # PIN rapido per i siti di betting
   bookmaker_url: "https://www.bet365.it"
+
+# --- ⚠️ MODALITÀ SCOMMESSA (CRITICO) ---
+# Questa sezione controlla se il bot spende soldi veri o no.
+betting:
+  allow_place: true     # 🔴 FALSE = SIMULAZIONE (Safe) | 🟢 TRUE = SOLDI VERI (Real)
+  stake_amount: 10.0     # Importo default per scommessa
+  max_daily_loss: 50.0   # Stop Loss giornaliero
+  strategy: "conservative"
 
 # --- APPRENDIMENTO AUTOMATICO ---
 learning:
