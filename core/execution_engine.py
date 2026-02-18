@@ -1,5 +1,4 @@
-# Script di emergenza per sovrascrivere core/execution_engine.py
-code = r"""import logging
+import logging
 import time
 from core.events import AppEvent
 from core.event_bus import bus
@@ -76,8 +75,3 @@ class ExecutionEngine:
                 "reason": str(e),
                 "teams": teams
             })
-"""
-
-with open("core/execution_engine.py", "w", encoding="utf-8") as f:
-    f.write(code)
-print("File core/execution_engine.py ripristinato con successo.")
