@@ -10,7 +10,7 @@ DB_PATH = os.path.join(CONFIG_DIR, "dom2_cluster.db")
 
 class Database:
     _instance = None
-    _instance_lock = threading.Lock() # Lock per la creazione del Singleton
+    _instance_lock = threading.Lock()
 
     def __new__(cls):
         if not cls._instance:
@@ -24,8 +24,6 @@ class Database:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         self.logger = logging.getLogger("Database")
         
-        # IMPORTANTE: RLock permette allo stesso thread di rientrare nel lock
-        # Essenziale per metodi che ne chiamano altri (es. reserve -> get_balance)
         self._lock = threading.RLock()
 
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -45,7 +43,7 @@ class Database:
                 return func()
             except sqlite3.OperationalError as e:
                 if "locked" in str(e).lower():
-                    time.sleep(0.15 * (i + 1)) # Backoff progressivo
+                    time.sleep(0.15 * (i + 1))
                     continue
                 raise
         raise sqlite3.OperationalError("Database locked after 6 retries")
@@ -81,14 +79,12 @@ class Database:
 
     def reserve(self, tx_id, stake):
         def _op():
-            # RLock permette di chiamare get_balance() anche se siamo già nel lock
             bal = self.get_balance()
             s = Decimal(str(stake))
             
             if s <= 0: raise ValueError("Invalid stake")
             if s > bal: raise ValueError("Insufficient funds")
 
-            # Check doppia spesa
             exists = self.conn.execute("SELECT tx_id FROM journal WHERE tx_id=?", (tx_id,)).fetchone()
             if exists: raise ValueError("TX already exists")
 
