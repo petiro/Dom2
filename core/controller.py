@@ -3,7 +3,7 @@ import threading
 import time
 import yaml
 import os
-import json # FIX APPLICATO: Import necessario per save/load state
+import json
 from PySide6.QtCore import QObject, Signal
 
 from core.event_bus import bus
@@ -16,6 +16,7 @@ from core.auto_mapper_worker import AutoMapperWorker
 from core.dom_self_healing import DOMSelfHealing
 from core.multi_site_scanner import MultiSiteScanner
 from core.config_paths import CONFIG_DIR
+from core.config_loader import ConfigLoader  # ✅ IMPORT AGGIUNTO
 
 STATE_FILE = os.path.join(CONFIG_DIR, "runtime_state.json")
 
@@ -26,11 +27,30 @@ class SuperAgentController(QObject):
         super().__init__()
         self.logger = logger
         
+        # --- 1. CONFIGURAZIONE MODALITÀ REALE/SIMULAZIONE ---
+        self.config_loader = ConfigLoader()
+        self.config = self.config_loader.load_config()
+        
+        # Leggiamo il flag dal config.yaml. Se non esiste, Default = False (Safe)
+        allow_bets = self.config.get("betting", {}).get("allow_place", False)
+        
+        if allow_bets:
+            self.logger.warning("⚠️ ATTENZIONE: MODALITÀ SCOMMESSA REALE ATTIVA! (Soldi veri)")
+            # Emettiamo il segnale subito dopo l'avvio della UI, qui lo logghiamo solo
+        else:
+            self.logger.info("🛡️ MODALITÀ SIMULAZIONE (Safe Mode)")
+
         self.db = Database()
         self.money_manager = MoneyManager()
         
         self.worker = PlaywrightWorker(logger)
-        self.worker.executor = DomExecutorPlaywright(logger=logger)
+        
+        # --- 2. INIEZIONE DEL FLAG NELL'EXECUTOR ---
+        self.worker.executor = DomExecutorPlaywright(
+            logger=logger,
+            allow_place=allow_bets  # ✅ Passiamo la decisione (True/False) all'Executor
+        )
+        
         self.engine = ExecutionEngine(bus, self.worker.executor)
 
         self.self_healer = DOMSelfHealing(self.worker.executor)
@@ -52,7 +72,8 @@ class SuperAgentController(QObject):
         threading.Thread(target=self._browser_watchdog, daemon=True).start()
         self._perform_recovery()
         
-        self.log_message.emit("✅ SISTEMA V8.4 STABLE AVVIATO")
+        msg_mode = "REAL MONEY 💸" if allow_bets else "SIMULATION 🛡️"
+        self.log_message.emit(f"✅ SISTEMA V8.4 AVVIATO - MODALITÀ: {msg_mode}")
 
     def _perform_recovery(self):
         try:
