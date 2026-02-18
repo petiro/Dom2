@@ -10,11 +10,11 @@ DB_PATH = os.path.join(CONFIG_DIR, "dom2_cluster.db")
 
 class Database:
     _instance = None
-    _lock = threading.Lock()
+    _instance_lock = threading.Lock() # Lock per la creazione del Singleton
 
     def __new__(cls):
         if not cls._instance:
-            with cls._lock:
+            with cls._instance_lock:
                 if not cls._instance:
                     cls._instance = super().__new__(cls)
                     cls._instance._init_db()
@@ -22,30 +22,35 @@ class Database:
 
     def _init_db(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        self.logger = logging.getLogger("DB")
+        self.logger = logging.getLogger("Database")
+        
+        # IMPORTANTE: RLock permette allo stesso thread di rientrare nel lock
+        # Essenziale per metodi che ne chiamano altri (es. reserve -> get_balance)
+        self._lock = threading.RLock()
+
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
 
         # WAL Mode & Settings
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
-        self.conn.execute("PRAGMA busy_timeout=5000;") # Wait up to 5s
+        self.conn.execute("PRAGMA busy_timeout=5000;")
 
-        self._create()
+        self._create_tables()
 
-    def _execute_retry(self, func, *args):
+    def _execute_retry(self, func):
         """Wrapper per gestire i lock di SQLite in modalità WAL."""
-        for i in range(5):
+        for i in range(6):
             try:
-                return func(*args)
+                return func()
             except sqlite3.OperationalError as e:
                 if "locked" in str(e).lower():
-                    time.sleep(0.1 + (i * 0.1)) # Backoff
+                    time.sleep(0.15 * (i + 1)) # Backoff progressivo
                     continue
                 raise
-        raise sqlite3.OperationalError("Database locked after 5 retries")
+        raise sqlite3.OperationalError("Database locked after 6 retries")
 
-    def _create(self):
+    def _create_tables(self):
         with self._lock:
             self.conn.execute("""
             CREATE TABLE IF NOT EXISTS bankroll(
@@ -76,9 +81,16 @@ class Database:
 
     def reserve(self, tx_id, stake):
         def _op():
+            # RLock permette di chiamare get_balance() anche se siamo già nel lock
             bal = self.get_balance()
             s = Decimal(str(stake))
+            
+            if s <= 0: raise ValueError("Invalid stake")
             if s > bal: raise ValueError("Insufficient funds")
+
+            # Check doppia spesa
+            exists = self.conn.execute("SELECT tx_id FROM journal WHERE tx_id=?", (tx_id,)).fetchone()
+            if exists: raise ValueError("TX already exists")
 
             self.conn.execute("INSERT INTO journal VALUES(?,?,?,?,?,?)",
                               (tx_id,"PENDING",str(stake),"0",time.time(),0))
@@ -93,10 +105,14 @@ class Database:
                 self._execute_retry(_op)
             except Exception as e:
                 self.conn.rollback()
-                raise e
+                self.logger.error(f"Reserve failed: {e}")
+                raise
 
     def commit(self, tx_id, payout=0):
         def _op():
+            row = self.conn.execute("SELECT status FROM journal WHERE tx_id=?", (tx_id,)).fetchone()
+            if not row or row["status"] != "PENDING": return
+
             if payout > 0:
                 bal = self.get_balance()
                 new = bal + Decimal(str(payout))
@@ -110,8 +126,9 @@ class Database:
         with self._lock:
             try:
                 self._execute_retry(_op)
-            except:
+            except Exception as e:
                 self.conn.rollback()
+                self.logger.error(f"Commit error {tx_id}: {e}")
 
     def rollback(self, tx_id):
         def _op():
@@ -128,8 +145,9 @@ class Database:
         with self._lock:
             try:
                 self._execute_retry(_op)
-            except:
+            except Exception as e:
                 self.conn.rollback()
+                self.logger.error(f"Rollback error {tx_id}: {e}")
 
     def pending(self):
         with self._lock:
