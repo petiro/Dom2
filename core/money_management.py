@@ -1,31 +1,24 @@
 import uuid
 import logging
 from decimal import Decimal, ROUND_DOWN
-from core.database import Database
 
 class MoneyManager:
-    def __init__(self):
-        self.db = Database()
+    def __init__(self, db):
+        self.db = db
         self.logger = logging.getLogger("Money")
 
     def get_stake(self, odds):
         try:
-            bal_float = self.db.get_balance()
-            if bal_float <= 0:
+            bal = Decimal(str(self.db.get_balance()))
+            if bal <= Decimal("0.00"): 
                 return Decimal("0.00")
-
-            # 🔴 FIX 1: Casting sicuro a Decimal tramite stringa
-            bal = Decimal(str(bal_float))
 
             stake = bal * Decimal("0.02")
             cap = bal * Decimal("0.25")
             stake = min(stake, cap)
 
-            if stake < Decimal("0.50"):
-                stake = Decimal("0.50")
-
-            if stake > bal:
-                return Decimal("0.00")
+            if stake < Decimal("0.50"): stake = Decimal("0.50")
+            if stake > bal: return Decimal("0.00")
 
             return stake.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
         except Exception as e:
@@ -52,4 +45,4 @@ class MoneyManager:
 
     def bankroll(self):
         try: return float(self.db.get_balance())
-        except: return 0.0
+        except Exception: return 0.0
