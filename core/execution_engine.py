@@ -1,74 +1,50 @@
-import logging
 import time
-from core.events import AppEvent
-from core.event_bus import bus
+import logging
 
 class ExecutionEngine:
-    def __init__(self, bus, executor):
+    def __init__(self, bus, executor, logger=None):
         self.bus = bus
         self.executor = executor
-        self.log = logging.getLogger("Engine")
+        self.logger = logger or logging.getLogger("ExecutionEngine")
 
-    def process_signal(self, data, money_manager):
-        """
-        Processa un segnale di scommessa con logica ACID V8.4.
-        """
-        tx_id = None
-        teams = data.get("teams", "Unknown")
-        market = data.get("market", "Unknown")
+    def process_signal(self, payload, money_manager):
+        self.logger.info(f"⚙️ Avvio processing segnale: {payload.get('teams')}")
         
-        self.log.info(f"🤖 Processing Signal: {teams} @ {market}")
-
         try:
-            # 1. CONTROLLI PRELIMINARI
-            if not self.executor.ensure_login():
-                raise Exception("Login check failed")
+            # 🔴 FIX 2 — BLOCCO SE BET APERTA
+            if self.executor.check_open_bet():
+                self.logger.warning("⚠️ Bet già aperta su Bet365. Salto segnale.")
+                self.bus.publish("BET_FAILED", {"reason": "Bet already open"}) # Sblocca il lock
+                return
 
-            if not self.executor.navigate_to_match(teams):
-                raise Exception(f"Match not found: {teams}")
-
-            # 2. LETTURA QUOTE & VALIDAZIONE
-            odds = self.executor.find_odds(teams, market)
+            teams = payload.get("teams")
+            market = payload.get("market")
             
-            if odds < 1.01 or odds > 50.0:
-                raise Exception(f"Invalid odds detected: {odds}")
+            nav_ok = self.executor.navigate_to_match(teams)
+            if not nav_ok:
+                self.logger.error("❌ Match non trovato")
+                self.bus.publish("BET_FAILED", {"reason": "Match not found"})
+                return
 
-            # 3. CALCOLO STAKE
-            stake = money_manager.get_stake(odds)
-            if stake <= 0:
-                raise Exception("Insufficient funds or invalid stake logic")
+            odds = self.executor.find_odds(teams, market)
+            if not odds:
+                self.logger.error("❌ Quota non trovata")
+                self.bus.publish("BET_FAILED", {"reason": "Odds not found"})
+                return
 
-            self.log.info(f"💰 Validated: Odds {odds} | Stake {stake}€")
+            stake = money_manager.current_stake
 
-            # 4. TRANSAZIONE ACID
-            # Qui money_manager.reserve ora ritorna correttamente tx_id (UUID)
-            tx_id = money_manager.reserve(stake)
-
-            # 5. ESECUZIONE BET
-            if not self.executor.place_bet(teams, market, float(stake)):
-                raise Exception("Place bet button click failed")
-
-            # 6. VERIFICA FINALE
-            if not self.executor.verify_bet_success(teams):
-                 raise Exception("Bet verification failed (No confirmation)")
-
-            # 7. SUCCESSO
-            payout = float(stake) * odds
-            self.bus.emit(AppEvent.BET_SUCCESS, {
-                "tx_id": tx_id,
-                "payout": payout,
-                "stake": float(stake),
-                "odds": odds,
-                "teams": teams
-            })
-            self.log.info(f"✅ BET PLACED: {teams} | {stake}€ @ {odds}")
+            # Esecuzione Reale
+            bet_ok = self.executor.place_bet(teams, market, stake)
+            
+            if bet_ok:
+                self.logger.info("✅ Scommessa piazzata con successo!")
+                self.bus.publish("BET_SUCCESS", {"teams": teams, "stake": stake, "odds": odds})
+            else:
+                self.logger.error("❌ Fallimento piazzamento scommessa")
+                self.bus.publish("BET_FAILED", {"reason": "Place bet failed"})
 
         except Exception as e:
-            self.log.error(f"❌ Execution Fail: {e}")
-            
-            # ROLLBACK SICURO
-            self.bus.emit(AppEvent.BET_FAILED, {
-                "tx_id": tx_id, 
-                "reason": str(e),
-                "teams": teams
-            })
+            # 🔴 FIX 1: GARANZIA SBLOCCO LOCK IN CASO DI CRASH
+            self.logger.critical(f"🔥 Crash in Execution Engine: {e}")
+            self.bus.publish("BET_FAILED", {"reason": str(e)})
