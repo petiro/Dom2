@@ -1,0 +1,25 @@
+# ========================================================
+# 🤖 DATABASE STRATEGIE MULTI-ROBOT (DOM2 V8.5)
+# ========================================================
+
+- name: "Esempio - Cecchino Over"
+  enabled: true
+  trigger_words: ["Over", "Gol", "Alta"]
+  exclude_words: ["Basket", "Tennis"]
+  mm_mode: "Fisso (€)"
+  stake_value: 10.0
+  specific_chat_id: ""  # Lascia vuoto per tutti i canali
+  msg_template: ""
+  logic_description: ""
+  ai_interpretation: ""
+
+- name: "Esempio - VIP Roserpina"
+  enabled: false
+  trigger_words: []     # Vuoto = Prende tutto
+  exclude_words: []
+  mm_mode: "Roserpina (Progressione)"
+  stake_value: 0.0      # Non serve con Roserpina
+  specific_chat_id: "-100123456789" # Ascolta solo questo
+  msg_template: ""
+  logic_description: ""
+  ai_interpretation: ""
