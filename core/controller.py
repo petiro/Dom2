@@ -32,20 +32,20 @@ class SuperAgentController(QObject):
         allow_bets = self.config.get("betting", {}).get("allow_place", False)
 
         self.db = Database()
-        self.money_manager = MoneyManager()
+        self.money_manager = MoneyManager(self.db)
+        
         self.worker = PlaywrightWorker(logger)
-
-        self.worker.executor = DomExecutorPlaywright(
-            logger=logger,
-            allow_place=allow_bets
-        )
-
+        self.worker.executor = DomExecutorPlaywright(logger=logger, allow_place=allow_bets)
         self.engine = ExecutionEngine(bus, self.worker.executor, logger)
 
         self.bet_lock = False
         self.circuit_open = False
         self._lock = threading.Lock()
-        self.last_desync_check = 0 
+        
+        self.last_bet_ts = 0 
+        self.last_signal_ts = 0
+        self.consecutive_crashes = 0
+        self.last_desync_check = 0
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
@@ -69,7 +69,7 @@ class SuperAgentController(QObject):
                 if resp.status_code == 200:
                     self.ai_analysis_ready.emit(f"✅ (Modello: {model})\n\n" + resp.json()['choices'][0]['message']['content'])
                     return
-            except: continue
+            except Exception: continue
 
     def fallback_parse(self, msg):
         m = re.search(r'(\d+)\s*-\s*(\d+)', msg)
@@ -83,26 +83,20 @@ class SuperAgentController(QObject):
         if "OVER" in text.upper(): extracted["market"] = "OVER"
         return extracted
 
-    # 🔴 FIX CI: TYPING ESPLICITO DI `data`
     def handle_signal(self, data: Dict[str, Any]) -> None:
         if not self.worker.running or self.circuit_open: return
 
-        pending_tx = self.db.pending()
-        if pending_tx:
-            last = pending_tx[-1]
-            tx_time = last.get("timestamp", 0) 
-            if time.time() - tx_time > 7200:
-                self.logger.warning(f"⚠️ Pending TX bloccata da >2h. Eseguo Refund Sicurezza.")
-                self.money_manager.refund(last["tx_id"])
-            else:
-                self.logger.warning(f"🚨 TRANSAZIONE PENDENTE NEL DB! Blocco segnali.")
-                return
+        if time.time() - self.last_signal_ts < 5:
+            self.logger.warning("Spam segnali. Ignorato per cooldown.")
+            return
+        self.last_signal_ts = time.time()
 
         with self._lock:
             if self.bet_lock:
                 self.logger.warning("⚠️ Bet logica già in corso.")
                 return
             self.bet_lock = True
+            self.last_bet_ts = time.time() 
 
         try:
             raw_text = data.get("raw_text", "")
@@ -137,40 +131,55 @@ class SuperAgentController(QObject):
             with self._lock: self.bet_lock = False
 
     def _on_bet_success(self, payload):
+        self.consecutive_crashes = 0
         with self._lock:
             self.bet_lock = False
             self.circuit_open = False
         self.log_message.emit("💰 BET INVIATA AL BOOKMAKER.")
 
     def _on_bet_failed(self, payload):
+        self.consecutive_crashes += 1
+        
+        if self.consecutive_crashes >= 3:
+            self.logger.critical("🚨 CIRCUIT BREAKER: 3 Crash Consecutivi. Stop operazioni.")
+            self.circuit_open = True
+
         with self._lock: self.bet_lock = False
         self.log_message.emit(f"❌ BET FALLITA: {payload.get('reason', 'errore')}")
-        tx = payload.get("tx_id")
-        if tx: self.money_manager.refund(tx)
 
     def _settled_watchdog(self):
         while True:
             time.sleep(60)
             if not self.worker.running: continue
-            
             try:
                 self.worker.submit(self._worker_maintenance_task)
-            except: pass
+            except Exception: pass
 
     def _worker_maintenance_task(self):
+        if self.bet_lock and time.time() - self.last_bet_ts > 180:
+            self.logger.critical("🚨 DEADLOCK RESET: bet_lock bloccato da >3 min.")
+            self.bet_lock = False
+
+        if self.worker.executor.login_fails >= 3:
+            self.logger.critical("🚨 CIRCUIT BREAKER: 3 Login Falliti.")
+            self.circuit_open = True
+            return
+
         try:
             if self.worker.executor.page:
                 state = self.worker.executor.page.evaluate("() => document.readyState")
+                title = self.worker.executor.page.title()
                 if state not in ["complete", "interactive"]:
                     raise Exception("DOM not ready")
         except Exception:
-            self.logger.warning("💀 Sessione Heartbeat morta (Playwright freeze) → Riavvio browser preventivo.")
+            self.logger.warning("💀 Sessione Heartbeat morta → Recycle preventivo.")
             self.worker.executor.recycle_browser()
             return 
 
         if hasattr(self.worker.executor, 'start_time') and self.worker.executor.start_time:
-            if time.time() - self.worker.executor.start_time > 14400: 
-                self.logger.info("🔄 Browser aperto da 4 ore. Riciclo programmato...")
+            uptime = time.time() - self.worker.executor.start_time
+            if uptime > 14400 or self.worker.executor.bet_count >= 20: 
+                self.logger.info("🔄 Recycle Predittivo (Uptime > 4h o Bets >= 20).")
                 self.worker.executor.recycle_browser()
                 return
 
@@ -178,12 +187,13 @@ class SuperAgentController(QObject):
             if not self.bet_lock and not self.db.pending():
                 if time.time() - self.last_desync_check > 300:
                     self.last_desync_check = time.time()
-                    saldo_book = self.worker.executor.get_balance()
-                    saldo_db = self.money_manager.bankroll()
-                    if saldo_book is not None and saldo_db is not None:
-                        if abs(saldo_book - saldo_db) > 1.0: 
-                            self.logger.warning(f"⚠️ DESYNC SALDO: Bookmaker ({saldo_book}€) vs Database ({saldo_db}€)")
-        except: pass
+                    book = self.worker.executor.get_balance()
+                    db_bal = self.money_manager.bankroll()
+                    if book is not None and db_bal is not None:
+                        if abs(book - db_bal) > 2.0: 
+                            self.logger.critical(f"🚨 DESYNC SALDO: Bookmaker ({book}€) vs DB ({db_bal}€). Attivo Circuit Breaker.")
+                            self.circuit_open = True
+        except Exception: pass
 
         if not self.bet_lock:
             self._check_settled()
