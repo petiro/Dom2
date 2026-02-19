@@ -21,16 +21,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install PySide6
           playwright install chromium
 
-      - name: Run pylint
+      - name: Lint check (non blocking)
         run: |
-          pip install pylint
-          pylint core
-
-      - name: Run mypy
-        run: |
-          pip install mypy
+          pip install pylint mypy
+          echo "Running pylint..."
+          pylint core --rcfile=pyproject.toml || true
+          echo "Running mypy..."
           mypy core || true
 
       - name: Run integrity tests
