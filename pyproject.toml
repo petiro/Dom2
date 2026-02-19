@@ -1,0 +1,28 @@
+[tool.pylint.main]
+ignore-patterns = ["venv", ".venv"]
+jobs = 0
+persistent = true
+
+[tool.pylint.messages_control]
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-few-public-methods",
+    "broad-except",
+    "import-outside-toplevel",
+]
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint.design]
+max-args = 10
+max-attributes = 20
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+warn_unused_ignores = false
