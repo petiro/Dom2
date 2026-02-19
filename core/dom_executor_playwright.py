@@ -142,6 +142,10 @@ class DomExecutorPlaywright:
 
     # 🔴 FIX 2 — CONTROLLO BET APERTA (NAVIGAZIONE DOM SPA)
     def check_open_bet(self):
+        # FIX: Assicurati che il browser sia aperto prima di cercare la pagina!
+        if not self.launch_browser(): 
+            return False
+            
         try:
             self.logger.info("🔍 Controllo scommesse aperte (via DOM)...")
             my_bets_btn = self.page.locator(".hm-MainHeaderCentreWide_MyBets, .hm-MainHeader_MyBets").first
@@ -169,6 +173,10 @@ class DomExecutorPlaywright:
 
     # 🔴 FIX 3 & 4 — LETTURA ESITO 1° RIGA + PAYOUT REALE
     def check_settled_bets(self):
+        # FIX: Assicurati che il browser sia aperto!
+        if not self.launch_browser(): 
+            return None
+            
         try:
             my_bets_btn = self.page.locator(".hm-MainHeaderCentreWide_MyBets, .hm-MainHeader_MyBets").first
             if my_bets_btn.is_visible():
@@ -200,7 +208,6 @@ class DomExecutorPlaywright:
                 if payout_el.is_visible():
                     pay_txt = payout_el.inner_text().replace("€","").replace(",",".").strip()
                     try:
-                        # Cerca il numero dentro il testo (es. "Ritorno: 25.50")
                         payout = float(re.search(r"(\d+\.\d+)", pay_txt).group(1))
                     except: pass
 
