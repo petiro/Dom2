@@ -42,10 +42,11 @@ class SuperAgentController(QObject):
         self.circuit_open = False
         self._lock = threading.Lock()
         
+        # 🔴 FIX 7: Rate Limit (Anti-Spam) init
         self.last_bet_ts = 0 
         self.last_signal_ts = 0
         self.consecutive_crashes = 0
-        self.last_desync_check = time.time()  # Inizializzazione timer sync
+        self.last_desync_check = time.time()
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
@@ -86,8 +87,9 @@ class SuperAgentController(QObject):
     def handle_signal(self, data: Dict[str, Any]) -> None:
         if not self.worker.running or self.circuit_open: return
 
-        if time.time() - self.last_signal_ts < 5:
-            self.logger.warning("Spam segnali. Ignorato per cooldown.")
+        # 🔴 FIX 7: Rate Limit Segnali Globali
+        if time.time() - self.last_signal_ts < 2:
+            self.logger.warning("Spam segnali (Rate Limit < 2s). Ignorato.")
             return
         self.last_signal_ts = time.time()
 
@@ -160,8 +162,9 @@ class SuperAgentController(QObject):
             self.logger.critical("🚨 DEADLOCK RESET: bet_lock bloccato da >3 min.")
             self.bet_lock = False
 
+        # 🔴 FIX 6: Circuit Breaker Login Fail
         if self.worker.executor.login_fails >= 3:
-            self.logger.critical("🚨 CIRCUIT BREAKER: 3 Login Falliti.")
+            self.logger.critical("🚨 Troppi login falliti -> CIRCUIT OPEN")
             self.circuit_open = True
             return
 
@@ -182,7 +185,6 @@ class SuperAgentController(QObject):
                 self.worker.executor.recycle_browser()
                 return
 
-        # 🔴 FIX: SALDO BOOKMAKER MASTER SYNC (Ogni 10 minuti = 600s)
         try:
             if not self.bet_lock and not self.db.pending():
                 if time.time() - self.last_desync_check > 600:
