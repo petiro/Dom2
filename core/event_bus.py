@@ -12,47 +12,77 @@ class EventBus:
         self._dispatcher: threading.Thread | None = None
         self.logger = logging.getLogger("EventBus")
 
+    # -------------------------------------------------
+    # SUBSCRIBE
+    # -------------------------------------------------
     def subscribe(self, event: Any, callback: Callable):
         self._subscribers.setdefault(event, []).append(callback)
 
+    # -------------------------------------------------
+    # EMIT (UNICO METODO CONSENTITO)
+    # -------------------------------------------------
     def emit(self, event: Any, payload: dict | None = None):
         if not self._running:
             return
 
+        # anti overflow sicurezza hedge
         if self._queue.qsize() > 5000:
-            self.logger.warning("EventBus queue overflow. Dropping event.")
+            self.logger.warning("⚠️ EventBus overflow. Evento scartato.")
             return
 
         self._queue.put((event, payload or {}))
 
+    # -------------------------------------------------
+    # START
+    # -------------------------------------------------
     def start(self):
-        if self._running: return
-        self._running = True
-        self._dispatcher = threading.Thread(target=self._dispatch_loop, daemon=True)
-        self._dispatcher.start()
+        if self._running:
+            return
 
+        self._running = True
+        self._dispatcher = threading.Thread(
+            target=self._dispatch_loop,
+            daemon=True,
+            name="EventBusDispatcher"
+        )
+        self._dispatcher.start()
+        self.logger.info("EventBus avviato.")
+
+    # -------------------------------------------------
+    # STOP
+    # -------------------------------------------------
     def stop(self):
         self._running = False
-        if self._dispatcher: self._dispatcher.join(timeout=3)
+        if self._dispatcher:
+            self._dispatcher.join(timeout=3)
 
+    # -------------------------------------------------
+    # LOOP DISPATCH
+    # -------------------------------------------------
     def _dispatch_loop(self):
         while self._running or not self._queue.empty():
             try:
                 event, payload = self._queue.get(timeout=0.5)
-                
+
                 callbacks = self._subscribers.get(event, [])
+
                 for cb in callbacks:
                     try:
                         cb(payload)
-                    except Exception:
-                        self.logger.exception(f"[EventBus] callback crash on {event}")
+                    except Exception as e:
+                        self.logger.exception(
+                            f"🔥 Callback crash su evento {event}: {e}"
+                        )
 
                 self._queue.task_done()
 
             except queue.Empty:
                 continue
-            except Exception:
-                self.logger.exception("🔥 EventBus dispatcher crash prevented")
+
+            except Exception as e:
+                # blackbox anti crash dispatcher
+                self.logger.exception("🔥 EventBus dispatcher crash evitato")
                 time.sleep(0.5)
 
+# singleton globale
 bus = EventBus()
