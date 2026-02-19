@@ -1,11 +1,17 @@
+import sys
+import os
+
+# 🔴 FIX PATH PER GITHUB ACTIONS
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
 import json
-import threading
 import time
 from tests.stress_lab.mock_executor import MockExecutor
 from tests.stress_lab.stability_metrics import StabilityMetrics
 from tests.stress_lab.quant_monitor import append_record, generate_chart
 
 TEST_SECONDS = 180  # 3 minuti CI
+
 
 def run_stress():
 
