@@ -10,15 +10,22 @@ class MoneyManager:
 
     def get_stake(self, odds):
         try:
-            bal = self.db.get_balance()
-            if bal <= 0: return Decimal("0.00")
+            bal_float = self.db.get_balance()
+            if bal_float <= 0:
+                return Decimal("0.00")
+
+            # 🔴 FIX 1: Casting sicuro a Decimal tramite stringa
+            bal = Decimal(str(bal_float))
 
             stake = bal * Decimal("0.02")
             cap = bal * Decimal("0.25")
             stake = min(stake, cap)
 
-            if stake < Decimal("0.50"): stake = Decimal("0.50")
-            if stake > bal: return Decimal("0.00")
+            if stake < Decimal("0.50"):
+                stake = Decimal("0.50")
+
+            if stake > bal:
+                return Decimal("0.00")
 
             return stake.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
         except Exception as e:
