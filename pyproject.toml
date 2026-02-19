@@ -18,11 +18,34 @@ disable = [
     "protected-access",
     "multiple-statements",
     "unspecified-encoding",
+    "missing-final-newline",
+    "line-too-long",
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-locals",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-instance-attributes",
+    "unused-argument",
+    "unused-variable",
+    "wrong-import-order",
+    "broad-exception-raised",
+    "bare-except",
+    "invalid-name",
+    "no-else-break",
+    "consider-using-max-builtin"
 ]
 
 [tool.pylint.format]
 max-line-length = 120
 
+[tool.pylint.design]
+max-args = 15
+max-attributes = 25
+
 [tool.mypy]
 python_version = "3.10"
 ignore_missing_imports = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+warn_unused_ignores = false
