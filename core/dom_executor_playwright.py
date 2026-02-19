@@ -39,37 +39,114 @@ class DomExecutorPlaywright:
             except Exception as e:
                 return False
 
-    def ensure_login(self): return True
-
-    def navigate_to_match(self, teams):
+    # =================================================================
+    # 1. LOGIN REALE
+    # =================================================================
+    def ensure_login(self):
         if not self.launch_browser(): return False
+        
         try:
-            search_btn = self.page.locator(".hm-MainHeaderCentreWide_SearchIcon, .hm-MainHeader_SearchIcon").first
-            if search_btn.is_visible(): search_btn.click()
-            time.sleep(1.5)
+            # 1. Controlla se siamo già loggati (il Saldo è visibile)
+            if self.page.locator(".hm-Balance").count() > 0:
+                return True
+
+            self.logger.info("🔑 Esecuzione Login su Bet365...")
             
+            # Leggi credenziali dal config
+            config_loader = __import__('core.config_loader').config_loader.ConfigLoader()
+            config = config_loader.load_config()
+            username = config.get("betting", {}).get("username", "")
+            password = config.get("betting", {}).get("password", "")
+
+            if not username or not password:
+                self.logger.error("❌ Credenziali mancanti in config.yaml")
+                return False
+
+            # 2. Clicca 'Accedi/Login'
+            login_btn = self.page.locator(".hm-MainHeaderRHSLoggedOutWide_Login, text='Login', text='Accedi'").first
+            if login_btn.is_visible():
+                login_btn.click()
+                self.page.wait_for_timeout(1500)
+
+            # 3. Compila Username e Password
+            self.page.locator(".lms-StandardLogin_Username, input[type='text']").first.fill(username)
+            self.page.locator(".lms-StandardLogin_Password, input[type='password']").first.fill(password)
+            self.page.wait_for_timeout(500)
+
+            # 4. Clicca Invia
+            self.page.locator(".lms-LoginButton").first.click()
+
+            # 5. Attendi il caricamento del saldo come prova di login
+            self.page.wait_for_selector(".hm-Balance", timeout=10000)
+            self.logger.info("✅ Login effettuato con successo!")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Login Fallito: {e}")
+            return False
+
+    # =================================================================
+    # 2. NAVIGAZIONE REALE (Ricerca Partita)
+    # =================================================================
+    def navigate_to_match(self, teams):
+        if not self.ensure_login(): return False
+        
+        try:
+            self.logger.info(f"🔍 Cerco la partita: {teams}")
+            
+            # 1. Apri la barra di ricerca
+            search_btn = self.page.locator(".hm-MainHeaderCentreWide_SearchIcon, .hm-MainHeader_SearchIcon").first
+            if search_btn.is_visible(): 
+                search_btn.click()
+            self.page.wait_for_timeout(1500)
+            
+            # 2. Estrai la squadra di casa per la ricerca (più affidabile)
             home_team = teams.split("-")[0].strip() if "-" in teams else teams
+            
+            # 3. Scrivi il nome
             input_box = self.page.locator("input.hm-MainHeaderCentreWide_SearchInput, input.sml-SearchInput").first
             input_box.fill(home_team)
-            time.sleep(2.5)
+            self.page.wait_for_timeout(3000) # Attendi che appaiano i risultati live
 
-            results = self.page.locator(".sml-SearchParticipant_Name")
+            # 4. Clicca il primo risultato pertinente
+            results = self.page.locator(".sml-SearchParticipant_Name, .sml-EventParticipant")
             if results.count() > 0:
                 results.first.click()
                 self.page.wait_for_load_state("domcontentloaded")
+                self.logger.info(f"🎯 Partita trovata e aperta!")
                 return True
+                
+            self.logger.error(f"❌ Nessun risultato trovato per: {home_team}")
             return False
-        except Exception: return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Errore ricerca: {e}")
+            return False
 
+    # =================================================================
+    # 3. LETTURA QUOTA REALE
+    # =================================================================
     def find_odds(self, teams, market):
         try:
+            self.logger.info(f"📊 Cerco la quota per il mercato: {market}")
+            self.page.wait_for_timeout(2000) # Attendi che i mercati si carichino
+            
             odds_elements = self.page.locator(".gl-Participant_General > .gl-Participant_Odds")
             if odds_elements.count() > 0:
-                return float(odds_elements.first.inner_text().strip())
+                quota_text = odds_elements.first.inner_text().strip()
+                quota = float(quota_text.replace(",", "."))
+                self.logger.info(f"📈 Quota trovata: {quota}")
+                return quota
+                
+            self.logger.error("❌ Quota non trovata o mercato sospeso.")
             return None
-        except: return None
+        except Exception as e:
+            self.logger.error(f"❌ Errore lettura quota: {e}")
+            return None
 
-    # 🟡 FIX 5 — LETTURA SALDO BOOKMAKER REALE
+    # =================================================================
+    # 🟡 LETTURA SALDO BOOKMAKER REALE
+    # =================================================================
     def get_balance(self):
         try:
             bal_el = self.page.locator(".hm-Balance").first
@@ -79,10 +156,12 @@ class DomExecutorPlaywright:
             return None
         except: return None
 
-    # 🔴 FIX 1 & 5 — EXECUTOR REALE, BLOCCO SALDO & QUOTA CAMBIATA
+    # =================================================================
+    # 4. PIAZZAMENTO SCOMMESSA REALE
+    # =================================================================
     def place_bet(self, teams, market, stake):
         if not self.allow_place:
-            self.logger.warning("🛡️ SAFE MODE ATTIVO - bet bloccata, eseguo simulazione logica.")
+            self.logger.warning(f"🛡️ SAFE MODE: Simulazione avvenuta per {stake}€. Nessun clic reale inviato.")
         
         try:
             self.logger.info(f"💸 Tentativo bet: {teams} | Stake: {stake}€")
@@ -93,7 +172,7 @@ class DomExecutorPlaywright:
                 self.logger.error(f"❌ Saldo insufficiente ({balance}€ < {stake}€)")
                 if self.allow_place: raise Exception("Saldo insufficiente sul bookmaker")
 
-            # 1. Clic quota
+            # 1. Clicca sulla quota
             odds_btn = self.page.locator(".gl-Participant_Odds").first
             if not odds_btn.is_visible(): raise Exception("Quota non trovata o sospesa")
             odds_btn.click()
@@ -113,14 +192,14 @@ class DomExecutorPlaywright:
 
             # 4. Verifica quota disponibile / cambiata live
             body = self.page.inner_text("body").lower()
-            if "quota cambiata" in body or "non disponibile" in body or "suspended" in body:
+            if "quota cambiata" in body or "non disponibile" in body or "suspended" in body or "accetta modifiche" in body:
                 raise Exception("Quota cambiata live o mercato sospeso")
 
             # --- BLOCCO SICUREZZA ---
             if not self.allow_place:
                 close_btn = self.page.locator(".bs-BetSlipHeader_Close").first
                 if close_btn.is_visible(): close_btn.click()
-                return True # Test superato
+                return True # Test simulato superato
 
             # 5. Click piazza (SOLDI VERI)
             place_btn = self.page.locator("button.bs-PlaceBetButton, button.st-PlaceBetButton").first
@@ -129,18 +208,22 @@ class DomExecutorPlaywright:
 
             self.page.wait_for_timeout(2500)
             
-            # Verifica ricevuta
+            # 6. Verifica ricevuta
             receipt = self.page.locator(".bs-Receipt, .st-Receipt")
             if receipt.is_visible():
+                self.logger.info("✅ RICEVUTA CONFERMATA DA BET365!")
                 self.page.locator("button.bs-Receipt_Done").first.click()
                 return True
+                
             raise Exception("Ricevuta non confermata")
 
         except Exception as e:
             self.logger.error(f"❌ Bet fallita: {e}")
             return False
 
+    # =================================================================
     # 🔴 FIX 2 — CONTROLLO BET APERTA (NAVIGAZIONE DOM SPA)
+    # =================================================================
     def check_open_bet(self):
         # FIX: Assicurati che il browser sia aperto prima di cercare la pagina!
         if not self.launch_browser(): 
@@ -171,7 +254,9 @@ class DomExecutorPlaywright:
             self.logger.error(f"❌ Check bet open error: {e}")
             return False
 
+    # =================================================================
     # 🔴 FIX 3 & 4 — LETTURA ESITO 1° RIGA + PAYOUT REALE
+    # =================================================================
     def check_settled_bets(self):
         # FIX: Assicurati che il browser sia aperto!
         if not self.launch_browser(): 
