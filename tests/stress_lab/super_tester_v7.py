@@ -1,14 +1,17 @@
 import sys
 import os
 
-# 🔴 FIX PATH PER GITHUB ACTIONS
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# 🔴 FIX PATH ASSOLUTO PER GITHUB ACTIONS
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+sys.path.insert(0, ROOT)
 
 import json
 import time
-from tests.stress_lab.mock_executor import MockExecutor
-from tests.stress_lab.stability_metrics import StabilityMetrics
-from tests.stress_lab.quant_monitor import append_record, generate_chart
+
+# ✅ Import locali (NO tests.stress_lab)
+from mock_executor import MockExecutor
+from stability_metrics import StabilityMetrics
+from quant_monitor import append_record, generate_chart
 
 TEST_SECONDS = 180  # 3 minuti CI
 
