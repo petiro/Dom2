@@ -1,54 +1,29 @@
 # ========================================================
-#  SUPERAGENT V8.4 CONFIGURATION - SENTINEL EDITION
+#  SUPERAGENT V8.5 CONFIGURATION - AI STRATEGY EDITION
 # ========================================================
 
-# --- IMPOSTAZIONI DI SISTEMA ---
 system:
-  debug_level: "info"   # Opzioni: debug, info, warning, error
-  version: "8.4"        # Aggiornato alla versione corrente
+  debug_level: "info"
+  version: "8.5"
 
-# --- OPENROUTER API (AI BRAIN) ---
 openrouter:
-  api_key: "sk-or-..."  # Inserisci qui la tua chiave
+  api_key: "sk-or-TUACHIAVEQUI"  # Inserisci la tua API Key di OpenRouter
   model: "google/gemini-2.0-flash-lite-preview-02-05:free"
 
-# --- TELEGRAM API (CONNESSIONE) ---
 telegram:
-  api_id: ""       # ID numerico (es. 123456)
-  api_hash: ""     # Stringa hash (es. a1b2c3d4...)
-  phone: ""        # Numero con prefisso (es. +39...)
+  api_id: ""       
+  api_hash: ""     
+  phone: ""        
 
-# --- INTERFACCIA UTENTE ---
 ui:
   theme: "dark"
-  window_size: [1280, 800]
-  start_maximized: false
-  auto_save: true
+  window_size: [1300, 850]
 
-# --- RPA & AUTOMAZIONE (BROWSER) ---
 rpa:
   enabled: true
-  headless: false        # false = vedi il browser (consigliato per debug)
-  stealth_mode: "pro"    # Opzioni: slow (umano), balanced, pro (veloce/stealth)
-  pin: "0000"            # PIN rapido per i siti di betting
+  headless: false
   bookmaker_url: "https://www.bet365.it"
 
-# --- ⚠️ MODALITÀ SCOMMESSA (CRITICO) ---
-# Questa sezione controlla se il bot spende soldi veri o no.
+# --- ⚠️ MODALITÀ SCOMMESSA ---
 betting:
-  allow_place: true     # 🔴 FALSE = SIMULAZIONE (Safe) | 🟢 TRUE = SOLDI VERI (Real)
-  stake_amount: 10.0     # Importo default per scommessa
-  max_daily_loss: 50.0   # Stop Loss giornaliero
-  strategy: "conservative"
-
-# --- APPRENDIMENTO AUTOMATICO ---
-learning:
-  telegram:
-    enabled: true
-    min_examples: 3
-    confidence_threshold: 0.75
-    
-  rpa_healing:
-    enabled: true
-    auto_update: true
-    confidence_threshold: 0.80
+  allow_place: false     # 🔴 FALSE = SIMULAZIONE | 🟢 TRUE = SOLDI VERI
