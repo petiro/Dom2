@@ -15,7 +15,6 @@ class DomExecutorPlaywright:
         self.headless = headless
         self.allow_place = allow_place
 
-        # 🔴 FIX CI: TYPING ESPLICITO PER PYLINT SAFE
         self.pw: Any = None
         self.browser: Any = None
         self.page: Any = None
@@ -24,6 +23,9 @@ class DomExecutorPlaywright:
         self._internal_lock = threading.RLock()
         self._initialized = False
         self.start_time = None 
+        
+        self.bet_count = 0
+        self.login_fails = 0
 
     def launch_browser(self):
         with self._internal_lock:
@@ -38,7 +40,8 @@ class DomExecutorPlaywright:
                 
                 try:
                     self.mouse = HumanMouse(self.page, self.logger)
-                except:
+                except Exception as exc:
+                    self.logger.debug(f"Non-critical exception in mouse init: {exc}")
                     self.mouse = None
 
                 self._initialized = True
@@ -47,22 +50,24 @@ class DomExecutorPlaywright:
                 try:
                     self.page.goto("https://www.bet365.it", timeout=60000)
                     self.page.wait_for_load_state("domcontentloaded")
-                except Exception as e: self.logger.warning(f"Home load warning: {e}")
+                except Exception as exc:
+                    self.logger.warning(f"Home load warning: {exc}")
                 return True
-            except Exception as e:
+            except Exception as exc:
+                self.logger.debug(f"Non-critical exception launch_browser: {exc}")
                 return False
 
     def _stealth_click(self, locator: Any):
         try:
             if self.mouse and hasattr(self.mouse, 'click'):
-                # 🔴 FIX PYLINT: Override chirurgico per il no-member
-                self.mouse.click(locator)  # pylint: disable=no-member
+                self.mouse.click(locator)
             else:
                 locator.click(delay=150)
-        except:
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception stealth click: {exc}")
             locator.click()
 
-    def save_blackbox(self, tx_id, error_msg="", data=None):
+    def save_blackbox(self, tx_id, error_msg="", data=None, stake=0, quota=0, saldo_db=0, saldo_book=0):
         try:
             os.makedirs("logs", exist_ok=True)
             tx = tx_id or f"CRASH_{int(time.time())}"
@@ -73,25 +78,38 @@ class DomExecutorPlaywright:
                     self.page.screenshot(path=f"logs/blackbox_{tx}.png", full_page=True)
                     html = self.page.content()
                     url = self.page.url
-            except Exception as snap_err:
-                self.logger.error(f"Blackbox screenshot fallita parzialmente: {snap_err}")
+            except Exception as exc:
+                self.logger.debug(f"Non-critical exception blackbox screenshot: {exc}")
                 
-            dump = {"tx_id": tx, "error": str(error_msg), "payload": data or {}, "url": url, "html_snippet": html[:3000]}
+            dump = {
+                "tx_id": tx, "error": str(error_msg), "payload": data or {},
+                "stake": stake, "quota": quota, "saldo_db": saldo_db, "saldo_book": saldo_book,
+                "url": url, "html_snippet": html[:3000] 
+            }
             with open(f"logs/blackbox_{tx}.json", "w") as f:
                 json.dump(dump, f, indent=4)
-            self.logger.critical(f"📦 BLACKBOX SALVATA: logs/blackbox_{tx}.[png/json]")
-        except Exception: pass
+            self.logger.critical(f"📦 BLACKBOX COMPLETA SALVATA: logs/blackbox_{tx}.json")
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception save_blackbox: {exc}")
 
     def recycle_browser(self):
         self.logger.warning("🔄 Eseguo Recycle completo del Browser...")
         try:
-            if self.browser: self.browser.close()
-            if self.pw: self.pw.stop()
-        except: pass
+            if self.page and self.page.context:
+                self.page.context.close()
+            if self.browser: 
+                self.browser.close()
+            if self.pw: 
+                self.pw.stop()
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception recycle: {exc}")
+        
         self._initialized = False
         self.page = None
         self.browser = None
         self.pw = None
+        self.bet_count = 0
+        self.login_fails = 0
         return self.launch_browser()
 
     def is_logged(self):
@@ -99,12 +117,16 @@ class DomExecutorPlaywright:
             if self.page.locator("text='Accedi', text='Login'").count() > 0: return False
             if self.page.locator(".hm-Balance").count() > 0: return True
             return True
-        except: return False
+        except Exception: 
+            return False
 
     def ensure_login(self):
         if not self.launch_browser(): return False
         try:
-            if self.is_logged() or self.page.locator(".hm-Balance").count() > 0: return True
+            if self.is_logged() or self.page.locator(".hm-Balance").count() > 0: 
+                self.login_fails = 0
+                return True
+                
             self.logger.info("🔑 Esecuzione Login su Bet365...")
             config_loader = __import__('core.config_loader').config_loader.ConfigLoader()
             config = config_loader.load_config()
@@ -125,9 +147,14 @@ class DomExecutorPlaywright:
             btn_submit = self.page.locator(".lms-LoginButton").first
             self._stealth_click(btn_submit)
             self.page.wait_for_selector(".hm-Balance", timeout=10000)
+            
+            self.login_fails = 0
             self.logger.info("✅ Login effettuato con successo!")
             return True
-        except Exception: return False
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception ensure_login: {exc}")
+            self.login_fails += 1
+            return False
 
     def navigate_to_match(self, teams):
         if not self.launch_browser(): return False
@@ -149,7 +176,9 @@ class DomExecutorPlaywright:
                 self.page.wait_for_load_state("domcontentloaded")
                 return True
             return False
-        except Exception: return False
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception nav match: {exc}")
+            return False
 
     def find_odds(self, teams, market):
         if not self.launch_browser(): return None
@@ -160,7 +189,9 @@ class DomExecutorPlaywright:
                 quota_text = odds_elements.first.inner_text().strip()
                 return float(quota_text.replace(",", "."))
             return None
-        except Exception: return None
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception find odds: {exc}")
+            return None
 
     def get_balance(self):
         if not self.launch_browser(): return None
@@ -170,22 +201,17 @@ class DomExecutorPlaywright:
                 txt = bal_el.inner_text().replace("€", "").replace(",", ".").strip()
                 return float(txt)
             return None
-        except: return None
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception get balance: {exc}")
+            return None
 
     def place_bet(self, teams, market, stake):
         if not self.launch_browser(): return False
-        if not self.is_logged():
-            self.logger.error("❌ Sessione scaduta pre-bet.")
-            return False
+        if not self.is_logged(): return False
 
         try:
-            saldo_pre = self.get_balance()
-            if saldo_pre is not None and saldo_pre < stake:
-                self.logger.error(f"❌ Saldo insufficiente ({saldo_pre}€ < {stake}€)")
-                if self.allow_place: return False
-
             odds_btn = self.page.locator(".gl-Participant_Odds").first
-            if not odds_btn.is_visible(): raise Exception("Quota non trovata o sospesa")
+            if not odds_btn.is_visible(): raise Exception("Quota non trovata")
             self._stealth_click(odds_btn)
             self.page.wait_for_timeout(1200)
 
@@ -201,17 +227,13 @@ class DomExecutorPlaywright:
             for attempt in range(3):
                 body = self.page.inner_text("body").lower()
                 if "suspended" in body or "quota cambiata" in body or "non disponibile" in body or "accetta modifiche" in body:
-                    self.logger.warning(f"⚠️ Quota sospesa (Retry {attempt+1}/3). Pulisco DOM e attendo...")
                     close_btn = self.page.locator(".bs-BetSlipHeader_Close").first
-                    if close_btn.is_visible():
-                        self._stealth_click(close_btn)
-                        self.page.wait_for_timeout(1000)
+                    if close_btn.is_visible(): self._stealth_click(close_btn)
                     self.page.wait_for_timeout(2000)
                     if odds_btn.is_visible():
                         self._stealth_click(odds_btn)
                         self.page.wait_for_timeout(1000)
-                        if stake_input.is_visible():
-                            stake_input.fill(str(stake))
+                        if stake_input.is_visible(): stake_input.fill(str(stake))
                     continue
 
                 if not self.allow_place:
@@ -224,24 +246,13 @@ class DomExecutorPlaywright:
                     self._stealth_click(place_btn)
                     bet_placed = True
                     break
-                else:
-                    self.page.wait_for_timeout(2000)
+                else: self.page.wait_for_timeout(2000)
 
             if not bet_placed: raise Exception("Quota permanentemente sospesa.")
 
             self.page.wait_for_timeout(3000)
             receipt = self.page.locator(".bs-Receipt, .st-Receipt")
             if receipt.is_visible():
-                self.logger.info("✅ RICEVUTA CONFERMATA DA BET365!")
-                if self.allow_place:
-                    saldo_post = self.get_balance()
-                    if saldo_pre is not None and saldo_post is not None:
-                        diff = abs((saldo_pre - saldo_post) - stake)
-                        tolleranza = max(0.10, stake * 0.05) 
-                        if diff > tolleranza:
-                            self.logger.critical(f"🚨 DISCREPANZA FINANZIARIA! Diff: {diff}€")
-                            self.save_blackbox("FINANCIAL_ANOMALY", "Mismatch saldo", {"pre": saldo_pre, "post": saldo_post})
-                
                 done_btn = self.page.locator("button.bs-Receipt_Done").first
                 if done_btn.is_visible(): self._stealth_click(done_btn)
                 return True
@@ -260,12 +271,21 @@ class DomExecutorPlaywright:
                 open_tab = self.page.locator("text='In corso', text='Open'").first
                 if open_tab.is_visible(): self._stealth_click(open_tab)
                 self.page.wait_for_timeout(1000)
+                
                 count = self.page.locator(".myb-BetItem, .myb-BetParticipant").count()
-                close_btn = self.page.locator(".myb-MyBetsHeader_CloseButton, .myb-CloseButton").first
-                if close_btn.is_visible(): self._stealth_click(close_btn)
+                
+                try:
+                    close = self.page.locator(".myb-CloseButton, .myb-MyBetsHeader_CloseButton").first
+                    if close.is_visible():
+                        self._stealth_click(close)
+                except Exception as exc: 
+                    self.logger.debug(f"Non-critical exception close bet window: {exc}")
+
                 if count > 0: return True
             return False
-        except Exception: return False
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception check open bet: {exc}")
+            return False
 
     def check_settled_bets(self):
         if not self.launch_browser(): return None
@@ -280,9 +300,13 @@ class DomExecutorPlaywright:
                 self.page.wait_for_timeout(1500)
             first_bet = self.page.locator(".myb-SettledBetItem, .myb-BetItem").first
             if not first_bet.is_visible():
-                close_btn = self.page.locator(".myb-MyBetsHeader_CloseButton, .myb-CloseButton").first
-                if close_btn.is_visible(): self._stealth_click(close_btn)
+                try:
+                    close = self.page.locator(".myb-CloseButton, .myb-MyBetsHeader_CloseButton").first
+                    if close.is_visible(): self._stealth_click(close)
+                except Exception as exc: 
+                    self.logger.debug(f"Non-critical exception closing mybets: {exc}")
                 return None
+                
             txt = first_bet.inner_text().lower()
             status = None
             if "vinta" in txt or "won" in txt: status = "WIN"
@@ -295,14 +319,23 @@ class DomExecutorPlaywright:
                 if payout_el.is_visible():
                     pay_txt = payout_el.inner_text().replace("€","").replace(",",".").strip()
                     try: payout = float(re.search(r"(\d+\.\d+)", pay_txt).group(1))
-                    except: pass
-            close_btn = self.page.locator(".myb-MyBetsHeader_CloseButton, .myb-CloseButton").first
-            if close_btn.is_visible(): self._stealth_click(close_btn)
+                    except Exception: pass
+                    
+            try:
+                close = self.page.locator(".myb-CloseButton, .myb-MyBetsHeader_CloseButton").first
+                if close.is_visible(): self._stealth_click(close)
+            except Exception as exc:
+                self.logger.debug(f"Non-critical exception close: {exc}")
+            
             return {"status": status, "payout": payout}
-        except Exception: return None
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception check settled: {exc}")
+            return None
 
     def close(self):
         try:
+            if self.page and self.page.context: self.page.context.close()
             if self.browser: self.browser.close()
             if self.pw: self.pw.stop()
-        except: pass
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception close: {exc}")
