@@ -13,7 +13,7 @@ class ExecutionEngine:
         tx_id = None
 
         try:
-            # 1. BLOCCO SE BET APERTA
+            # 🔴 BLOCCO SE BET APERTA
             if self.executor.check_open_bet():
                 self.logger.warning("⚠️ Bet già aperta su Bet365. Salto.")
                 self.bus.emit("BET_FAILED", {"reason": "Bet already open"})
@@ -22,34 +22,39 @@ class ExecutionEngine:
             teams = payload.get("teams")
             market = payload.get("market")
 
-            # 2. NAVIGAZIONE
+            # NAVIGAZIONE
             nav_ok = self.executor.navigate_to_match(teams)
             if not nav_ok:
                 self.logger.error("❌ Match non trovato")
                 self.bus.emit("BET_FAILED", {"reason": "Match not found"})
                 return
 
-            # 3. QUOTA
+            # QUOTA
             odds = self.executor.find_odds(teams, market)
             if not odds:
                 self.logger.error("❌ Quota non trovata")
                 self.bus.emit("BET_FAILED", {"reason": "Odds not found"})
                 return
 
-            stake = getattr(money_manager, "current_stake", 2.0)
+            # 🔴 FIX 2: STAKE REALE DAL MONEY MANAGER
+            stake = money_manager.get_stake(odds)
+            if stake <= 0:
+                self.logger.error("❌ Stake zero o bankroll insufficiente")
+                self.bus.emit("BET_FAILED", {"reason": "Stake zero"})
+                return
 
-            # 🔴 FIX CRITICO — PRENOTAZIONE DB (ACID TRANSACTIONS)
+            # 🔴 FIX 1: RESERVE DB (CRITICO TRANSAZIONALE)
             tx_id = money_manager.reserve(stake)
 
-            # 4. ESECUZIONE REALE
-            bet_ok = self.executor.place_bet(teams, market, stake)
+            # ESECUZIONE REALE
+            bet_ok = self.executor.place_bet(teams, market, float(stake))
 
             if bet_ok:
                 self.logger.info("✅ Scommessa piazzata con successo!")
                 self.bus.emit("BET_SUCCESS", {
                     "tx_id": tx_id,
                     "teams": teams,
-                    "stake": stake,
+                    "stake": float(stake),
                     "odds": odds
                 })
             else:
