@@ -33,13 +33,18 @@ class SuperAgentController(QObject):
         self.db = Database()
         self.money_manager = MoneyManager()
         self.worker = PlaywrightWorker(logger)
-        self.worker.executor = DomExecutorPlaywright(logger=logger, allow_place=allow_bets)
+
+        self.worker.executor = DomExecutorPlaywright(
+            logger=logger,
+            allow_place=allow_bets
+        )
+
         self.engine = ExecutionEngine(bus, self.worker.executor, logger)
 
         self.bet_lock = False
         self.circuit_open = False
         self._lock = threading.Lock()
-        self.last_desync_check = 0 # 🔴 FIX: Timer per controllo saldo a 5 min
+        self.last_desync_check = 0 
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
@@ -80,12 +85,10 @@ class SuperAgentController(QObject):
     def handle_signal(self, data):
         if not self.worker.running or self.circuit_open: return
 
-        # 🔴 FIX: HARD LOCK DB CON TIMEOUT SICUREZZA 2 ORE
         pending_tx = self.db.pending()
         if pending_tx:
             last = pending_tx[-1]
             tx_time = last.get("timestamp", 0) 
-            
             if time.time() - tx_time > 7200:
                 self.logger.warning(f"⚠️ Pending TX bloccata da >2h. Eseguo Refund Sicurezza.")
                 self.money_manager.refund(last["tx_id"])
@@ -144,46 +147,54 @@ class SuperAgentController(QObject):
         tx = payload.get("tx_id")
         if tx: self.money_manager.refund(tx)
 
+    # ----------------------------------------------------------------------
+    # 🔴 FIX 2: IL WATCHDOG NON TOCCA PIÙ IL BROWSER DIRETTAMENTE
+    # Manda un unico mega-task di "Manutenzione" al worker, rendendolo 100% thread-safe.
+    # ----------------------------------------------------------------------
     def _settled_watchdog(self):
         while True:
             time.sleep(60)
-
             if not self.worker.running: continue
-
-            # 🔴 FIX: HEARTBEAT SESSIONE JS PURO
+            
+            # Delega l'intero check al worker per evitare il crash del Greenlet
             try:
-                if self.worker.executor.page:
-                    state = self.worker.executor.page.evaluate("() => document.readyState")
-                    if state != "complete" and state != "interactive":
-                        raise Exception("DOM not ready")
-            except Exception:
-                self.logger.warning("💀 Sessione Heartbeat morta (Playwright freeze) → Riavvio browser preventivo.")
-                self.worker.submit(self.worker.executor.recycle_browser)
-                continue
-
-            if hasattr(self.worker.executor, 'start_time') and self.worker.executor.start_time:
-                if time.time() - self.worker.executor.start_time > 14400: # 4h
-                    self.logger.info("🔄 Browser aperto da 4 ore. Riciclo programmato...")
-                    self.worker.submit(self.worker.executor.recycle_browser)
-                    continue
-
-            # 🔴 FIX: SNAPSHOT DESYNC SALDO OGNI 5 MIN
-            try:
-                if not self.bet_lock and not self.db.pending():
-                    if time.time() - self.last_desync_check > 300:
-                        self.last_desync_check = time.time()
-                        saldo_book = self.worker.executor.get_balance()
-                        saldo_db = self.money_manager.bankroll()
-                        if saldo_book is not None and saldo_db is not None:
-                            if abs(saldo_book - saldo_db) > 1.0: 
-                                self.logger.warning(f"⚠️ DESYNC SALDO: Bookmaker ({saldo_book}€) vs Database ({saldo_db}€)")
+                self.worker.submit(self._worker_maintenance_task)
             except: pass
 
-            if self.bet_lock: continue
+    def _worker_maintenance_task(self):
+        # 1. Heartbeat
+        try:
+            if self.worker.executor.page:
+                state = self.worker.executor.page.evaluate("() => document.readyState")
+                if state not in ["complete", "interactive"]:
+                    raise Exception("DOM not ready")
+        except Exception:
+            self.logger.warning("💀 Sessione Heartbeat morta (Playwright freeze) → Riavvio browser preventivo.")
+            self.worker.executor.recycle_browser()
+            return # Se lo riavvio, non controllo gli esiti
 
-            try:
-                self.worker.submit(self._check_settled)
-            except: pass
+        # 2. Recycle 4h
+        if hasattr(self.worker.executor, 'start_time') and self.worker.executor.start_time:
+            if time.time() - self.worker.executor.start_time > 14400: # 4h
+                self.logger.info("🔄 Browser aperto da 4 ore. Riciclo programmato...")
+                self.worker.executor.recycle_browser()
+                return
+
+        # 3. Snapshot Desync
+        try:
+            if not self.bet_lock and not self.db.pending():
+                if time.time() - self.last_desync_check > 300:
+                    self.last_desync_check = time.time()
+                    saldo_book = self.worker.executor.get_balance()
+                    saldo_db = self.money_manager.bankroll()
+                    if saldo_book is not None and saldo_db is not None:
+                        if abs(saldo_book - saldo_db) > 1.0: 
+                            self.logger.warning(f"⚠️ DESYNC SALDO: Bookmaker ({saldo_book}€) vs Database ({saldo_db}€)")
+        except: pass
+
+        # 4. Check Settled
+        if not self.bet_lock:
+            self._check_settled()
 
     def _check_settled(self):
         result = self.worker.executor.check_settled_bets()
