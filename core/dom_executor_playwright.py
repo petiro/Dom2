@@ -4,6 +4,7 @@ import logging
 import re
 import os
 import json
+from typing import Any
 from playwright.sync_api import sync_playwright
 from core.human_mouse import HumanMouse
 from core.anti_detect import STEALTH_INJECTION_V4
@@ -14,10 +15,12 @@ class DomExecutorPlaywright:
         self.headless = headless
         self.allow_place = allow_place
 
-        self.pw = None
-        self.browser = None
-        self.page = None
-        self.mouse = None
+        # 🔴 FIX CI: TYPING ESPLICITO PER PYLINT SAFE
+        self.pw: Any = None
+        self.browser: Any = None
+        self.page: Any = None
+        self.mouse: Any = None
+        
         self._internal_lock = threading.RLock()
         self._initialized = False
         self.start_time = None 
@@ -49,7 +52,7 @@ class DomExecutorPlaywright:
             except Exception as e:
                 return False
 
-    def _stealth_click(self, locator):
+    def _stealth_click(self, locator: Any):
         try:
             if self.mouse and hasattr(self.mouse, 'click'):
                 self.mouse.click(locator)
@@ -58,15 +61,12 @@ class DomExecutorPlaywright:
         except:
             locator.click()
 
-    # 🔴 FIX: BLACKBOX CRASH-PROOF
     def save_blackbox(self, tx_id, error_msg="", data=None):
         try:
             os.makedirs("logs", exist_ok=True)
             tx = tx_id or f"CRASH_{int(time.time())}"
-            
             html = "Page closed/None"
             url = "N/A"
-            
             try:
                 if self.page and not self.page.is_closed():
                     self.page.screenshot(path=f"logs/blackbox_{tx}.png", full_page=True)
@@ -75,26 +75,18 @@ class DomExecutorPlaywright:
             except Exception as snap_err:
                 self.logger.error(f"Blackbox screenshot fallita parzialmente: {snap_err}")
                 
-            dump = {
-                "tx_id": tx,
-                "error": str(error_msg),
-                "payload": data or {},
-                "url": url,
-                "html_snippet": html[:3000] 
-            }
+            dump = {"tx_id": tx, "error": str(error_msg), "payload": data or {}, "url": url, "html_snippet": html[:3000]}
             with open(f"logs/blackbox_{tx}.json", "w") as f:
                 json.dump(dump, f, indent=4)
             self.logger.critical(f"📦 BLACKBOX SALVATA: logs/blackbox_{tx}.[png/json]")
         except Exception: pass
 
-    # 🔴 FIX: PREVENZIONE MEMORY LEAK PLAYWRIGHT
     def recycle_browser(self):
         self.logger.warning("🔄 Eseguo Recycle completo del Browser...")
         try:
             if self.browser: self.browser.close()
             if self.pw: self.pw.stop()
         except: pass
-        
         self._initialized = False
         self.page = None
         self.browser = None
@@ -112,7 +104,6 @@ class DomExecutorPlaywright:
         if not self.launch_browser(): return False
         try:
             if self.is_logged() or self.page.locator(".hm-Balance").count() > 0: return True
-
             self.logger.info("🔑 Esecuzione Login su Bet365...")
             config_loader = __import__('core.config_loader').config_loader.ConfigLoader()
             config = config_loader.load_config()
@@ -132,7 +123,6 @@ class DomExecutorPlaywright:
 
             btn_submit = self.page.locator(".lms-LoginButton").first
             self._stealth_click(btn_submit)
-            
             self.page.wait_for_selector(".hm-Balance", timeout=10000)
             self.logger.info("✅ Login effettuato con successo!")
             return True
@@ -141,7 +131,6 @@ class DomExecutorPlaywright:
     def navigate_to_match(self, teams):
         if not self.launch_browser(): return False
         if not self.ensure_login(): return False
-        
         try:
             self.logger.info(f"🔍 Cerco la partita: {teams}")
             search_btn = self.page.locator(".hm-MainHeaderCentreWide_SearchIcon, .hm-MainHeader_SearchIcon").first
@@ -184,7 +173,6 @@ class DomExecutorPlaywright:
 
     def place_bet(self, teams, market, stake):
         if not self.launch_browser(): return False
-        
         if not self.is_logged():
             self.logger.error("❌ Sessione scaduta pre-bet.")
             return False
@@ -196,7 +184,7 @@ class DomExecutorPlaywright:
                 if self.allow_place: return False
 
             odds_btn = self.page.locator(".gl-Participant_Odds").first
-            if not odds_btn.is_visible(): raise Exception("Quota non trovata")
+            if not odds_btn.is_visible(): raise Exception("Quota non trovata o sospesa")
             self._stealth_click(odds_btn)
             self.page.wait_for_timeout(1200)
 
@@ -211,17 +199,13 @@ class DomExecutorPlaywright:
             bet_placed = False
             for attempt in range(3):
                 body = self.page.inner_text("body").lower()
-                
-                # 🔴 FIX: DIRTY LOOP SCHEDINA CON CHIUSURA FORZATA
                 if "suspended" in body or "quota cambiata" in body or "non disponibile" in body or "accetta modifiche" in body:
                     self.logger.warning(f"⚠️ Quota sospesa (Retry {attempt+1}/3). Pulisco DOM e attendo...")
                     close_btn = self.page.locator(".bs-BetSlipHeader_Close").first
                     if close_btn.is_visible():
                         self._stealth_click(close_btn)
                         self.page.wait_for_timeout(1000)
-                    
                     self.page.wait_for_timeout(2000)
-                    
                     if odds_btn.is_visible():
                         self._stealth_click(odds_btn)
                         self.page.wait_for_timeout(1000)
@@ -245,12 +229,9 @@ class DomExecutorPlaywright:
             if not bet_placed: raise Exception("Quota permanentemente sospesa.")
 
             self.page.wait_for_timeout(3000)
-            
             receipt = self.page.locator(".bs-Receipt, .st-Receipt")
             if receipt.is_visible():
                 self.logger.info("✅ RICEVUTA CONFERMATA DA BET365!")
-                
-                # 🔴 FIX: DOUBLE VALIDATION SALDO PERCENTUALE
                 if self.allow_place:
                     saldo_post = self.get_balance()
                     if saldo_pre is not None and saldo_post is not None:
@@ -263,9 +244,7 @@ class DomExecutorPlaywright:
                 done_btn = self.page.locator("button.bs-Receipt_Done").first
                 if done_btn.is_visible(): self._stealth_click(done_btn)
                 return True
-                
             raise Exception("Ricevuta non confermata")
-
         except Exception as e:
             self.logger.error(f"❌ Bet fallita: {e}")
             return False
@@ -277,15 +256,12 @@ class DomExecutorPlaywright:
             if my_bets_btn.is_visible():
                 self._stealth_click(my_bets_btn)
                 self.page.wait_for_timeout(1500)
-
                 open_tab = self.page.locator("text='In corso', text='Open'").first
                 if open_tab.is_visible(): self._stealth_click(open_tab)
                 self.page.wait_for_timeout(1000)
-
                 count = self.page.locator(".myb-BetItem, .myb-BetParticipant").count()
                 close_btn = self.page.locator(".myb-MyBetsHeader_CloseButton, .myb-CloseButton").first
                 if close_btn.is_visible(): self._stealth_click(close_btn)
-
                 if count > 0: return True
             return False
         except Exception: return False
@@ -297,18 +273,15 @@ class DomExecutorPlaywright:
             if my_bets_btn.is_visible():
                 self._stealth_click(my_bets_btn)
                 self.page.wait_for_timeout(1500)
-
             settled_tab = self.page.locator("text='Risolute', text='Settled'").first
             if settled_tab.is_visible():
                 self._stealth_click(settled_tab)
                 self.page.wait_for_timeout(1500)
-
             first_bet = self.page.locator(".myb-SettledBetItem, .myb-BetItem").first
             if not first_bet.is_visible():
                 close_btn = self.page.locator(".myb-MyBetsHeader_CloseButton, .myb-CloseButton").first
                 if close_btn.is_visible(): self._stealth_click(close_btn)
                 return None
-
             txt = first_bet.inner_text().lower()
             status = None
             if "vinta" in txt or "won" in txt: status = "WIN"
@@ -322,10 +295,8 @@ class DomExecutorPlaywright:
                     pay_txt = payout_el.inner_text().replace("€","").replace(",",".").strip()
                     try: payout = float(re.search(r"(\d+\.\d+)", pay_txt).group(1))
                     except: pass
-
             close_btn = self.page.locator(".myb-MyBetsHeader_CloseButton, .myb-CloseButton").first
             if close_btn.is_visible(): self._stealth_click(close_btn)
-
             return {"status": status, "payout": payout}
         except Exception: return None
 
