@@ -10,7 +10,7 @@ class Database:
         os.makedirs(DATA_DIR, exist_ok=True)
         self.db_path = os.path.join(DATA_DIR, "dom2.db")
         
-        # 🔴 FIX 3: Connessione persistente e thread-safe per il tester
+        # Connessione persistente e thread-safe
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._init_db()
@@ -42,23 +42,50 @@ class Database:
 
     def reserve(self, tx_id, amount):
         ts = int(time.time())
-        self.conn.execute("INSERT INTO journal (tx_id, amount, status, timestamp) VALUES (?, ?, 'PENDING', ?)", (tx_id, amount, ts))
-        self.conn.execute("UPDATE balance SET current_balance = current_balance - ? WHERE id = 1", (amount,))
+        
+        # 🔴 FIX CRITICO: SQLite non accetta Decimal. Cast a float per la persistenza.
+        amount = float(amount)
+        
+        self.conn.execute(
+            "INSERT INTO journal (tx_id, amount, status, timestamp) VALUES (?, ?, 'PENDING', ?)", 
+            (tx_id, amount, ts)
+        )
+        self.conn.execute(
+            "UPDATE balance SET current_balance = current_balance - ? WHERE id = 1", 
+            (amount,)
+        )
         self.conn.commit()
 
     def commit(self, tx_id, payout):
-        self.conn.execute("UPDATE journal SET status = 'SETTLED', payout = ? WHERE tx_id = ?", (payout, tx_id))
+        # 🔴 FIX CRITICO: Cast a float
+        payout = float(payout)
+        
+        self.conn.execute(
+            "UPDATE journal SET status = 'SETTLED', payout = ? WHERE tx_id = ?", 
+            (payout, tx_id)
+        )
         if payout > 0:
-            self.conn.execute("UPDATE balance SET current_balance = current_balance + ? WHERE id = 1", (payout,))
+            self.conn.execute(
+                "UPDATE balance SET current_balance = current_balance + ? WHERE id = 1", 
+                (payout,)
+            )
         self.conn.commit()
 
     def rollback(self, tx_id):
         cur = self.conn.execute("SELECT amount FROM journal WHERE tx_id = ? AND status = 'PENDING'", (tx_id,))
         row = cur.fetchone()
         if row:
-            amount = row["amount"]
-            self.conn.execute("UPDATE journal SET status = 'VOID' WHERE tx_id = ?", (tx_id,))
-            self.conn.execute("UPDATE balance SET current_balance = current_balance + ? WHERE id = 1", (amount,))
+            # 🔴 FIX CRITICO: Cast a float per sicurezza totale
+            amount = float(row["amount"])
+            
+            self.conn.execute(
+                "UPDATE journal SET status = 'VOID' WHERE tx_id = ?", 
+                (tx_id,)
+            )
+            self.conn.execute(
+                "UPDATE balance SET current_balance = current_balance + ? WHERE id = 1", 
+                (amount,)
+            )
             self.conn.commit()
 
     def pending(self):
