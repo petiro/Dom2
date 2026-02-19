@@ -55,7 +55,8 @@ class DomExecutorPlaywright:
     def _stealth_click(self, locator: Any):
         try:
             if self.mouse and hasattr(self.mouse, 'click'):
-                self.mouse.click(locator)
+                # 🔴 FIX PYLINT: Override chirurgico per il no-member
+                self.mouse.click(locator)  # pylint: disable=no-member
             else:
                 locator.click(delay=150)
         except:
