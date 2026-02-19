@@ -9,29 +9,31 @@ on:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: windows-latest
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           cache: 'pip'
-          
+
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
           pip install playwright
-          
+
       - name: Install Playwright Browsers
         run: python -m playwright install chromium
-        
+
       - name: Create Missing Folders
         # Crea le cartelle necessarie vuote
         run: |
@@ -56,7 +58,7 @@ jobs:
             --add-data "config;config" `
             --add-data "data;data" `
             main.py
-          
+
       - name: Verify Build Existence
         run: |
           if (Test-Path "dist/SuperAgent.exe") {
@@ -65,7 +67,7 @@ jobs:
               Write-Error "ERRORE: File .exe non trovato nella cartella dist/"
               exit 1
           }
-          
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
