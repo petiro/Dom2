@@ -1,40 +1,46 @@
 import os
 import asyncio
-import logging  # ✅ LOGGING
+import logging
 from queue import Full
-from PySide6.QtCore import QThread, Signal
+
+# 🔴 FIX PYSIDE6 IN GITHUB ACTIONS (Nessuna GUI sul server CI)
+try:
+    from PySide6.QtCore import QThread, Signal
+except ImportError:
+    class QThread: pass
+    class Signal:
+        def __init__(self, *args, **kwargs): pass
+        def emit(self, *args, **kwargs): pass
+
 from telethon import TelegramClient, events
 
-# ✅ SETUP LOGGER
 logger = logging.getLogger("SuperAgent")
 
 class TelegramWorker(QThread):
-    # Signals definiti correttamente
-    message_received = Signal(str)      # Payload: solo il testo
-    status_changed = Signal(str)        # Payload: messaggio di stato
-    error_occurred = Signal(str)        # Payload: messaggio di errore
+    message_received = Signal(str)
+    status_changed = Signal(str)
+    error_occurred = Signal(str)
 
     def __init__(self, config, message_queue=None):
         super().__init__()
-        logger.info("🛠️ Inizializzazione TelegramWorker...") # ✅ LOG
+        logger.info("🛠️ Inizializzazione TelegramWorker...")
         self.message_queue = message_queue
         self.client = None
         self.loop = None
         self.keep_alive_task = None
-        
-        # --- CONFIG VALIDATION SAFE ---
+
         try:
             raw_id = config.get('api_id', 0)
             self.api_id = int(raw_id) if raw_id else 0
         except (ValueError, TypeError):
             self.api_id = 0
+
         if not self.api_id:
             self.api_id = None
             logger.error("❌ Configurazione: API ID non valido o mancante")
-            
+
         self.api_hash = config.get('api_hash', '')
 
-        # --- CHATS TYPE CHECK ---
         raw_chats = config.get('selected_chats', [])
         if isinstance(raw_chats, str):
             self.selected_chats = [raw_chats]
@@ -43,17 +49,15 @@ class TelegramWorker(QThread):
         else:
             self.selected_chats = []
 
-        logger.debug(f"📋 Chat selezionate: {self.selected_chats}") # ✅ LOG
+        logger.debug("📋 Chat selezionate: %s", self.selected_chats)
 
-        # Path sicuro per la sessione
         _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self._data_dir = os.path.join(_base, "data")
         os.makedirs(self._data_dir, exist_ok=True)
 
     def run(self):
-        """Inizializza l'event loop isolato per questo thread"""
         if not self.api_id or not self.api_hash:
-            logger.critical("⛔ Impossibile avviare: Credenziali mancanti") # ✅ LOG
+            logger.critical("⛔ Impossibile avviare: Credenziali mancanti")
             self.error_occurred.emit("CONFIG ERROR: API ID o HASH mancanti/invalidi")
             return
 
@@ -62,54 +66,49 @@ class TelegramWorker(QThread):
         try:
             self.loop.run_until_complete(self._main())
         except Exception as e:
-            logger.critical(f"🔥 CRASH LOOP TELEGRAM: {e}", exc_info=True) # ✅ LOG
+            logger.critical("🔥 CRASH LOOP TELEGRAM: %s", e, exc_info=True)
             self.error_occurred.emit(f"CRITICAL LOOP ERROR: {str(e)}")
         finally:
             if not self.loop.is_closed():
                 self.loop.close()
-            logger.info("🛑 TelegramWorker Terminato") # ✅ LOG
+            logger.info("🛑 TelegramWorker Terminato")
 
     async def _main(self):
         session_path = os.path.join(self._data_dir, "session_v4")
         self.client = TelegramClient(session_path, self.api_id, self.api_hash)
-        
-        # --- ENTERPRISE FIX: NO START() ---
+
         self.status_changed.emit("Connessione in corso...")
-        logger.info("📡 Tentativo di connessione a Telegram...") # ✅ LOG
+        logger.info("📡 Tentativo di connessione a Telegram...")
         try:
             await self.client.connect()
         except Exception as e:
-            logger.error(f"❌ Connessione fallita: {e}") # ✅ LOG
+            logger.error("❌ Connessione fallita: %s", e)
             self.error_occurred.emit(f"CONNECTION FAILED: {str(e)}")
             return
-        
-        # Controllo Autenticazione senza input()
+
         if not await self.client.is_user_authorized():
-            logger.warning("⚠️ Sessione Telegram scaduta o mancante. Richiesto Login Manuale.") # ✅ LOG
+            logger.warning("⚠️ Sessione Telegram scaduta o mancante. Richiesto Login Manuale.")
             self.status_changed.emit("Richiesto Login")
             self.error_occurred.emit("SESSION_MISSING: Esegui l'app con --console per il primo login.")
             await self.client.disconnect()
             return
 
-        logger.info(f"✅ Telegram Connesso! User ID valido.") # ✅ LOG
+        logger.info("✅ Telegram Connesso! User ID valido.")
         self.status_changed.emit("Connesso")
 
-        # Handler Messaggi
         @self.client.on(events.NewMessage(chats=self.selected_chats if self.selected_chats else None))
         async def handler(event):
             msg_text = event.raw_text
-            # Loggo solo i primi 100 caratteri per non intasare
-            logger.info(f"📩 Messaggio Ricevuto: {msg_text[:100]}...") # ✅ LOG
-            
+            logger.info("📩 Messaggio Ricevuto: %s...", msg_text[:100])
+
             if self.message_queue:
-                try: 
+                try:
                     self.message_queue.put_nowait(msg_text)
-                except Full: 
-                    logger.warning("⚠️ Coda messaggi piena, messaggio scartato") # ✅ LOG
+                except Full:
+                    logger.warning("⚠️ Coda messaggi piena, messaggio scartato")
             else:
                 self.message_received.emit(msg_text)
 
-        # Keep-Alive Task
         async def keep_alive():
             while True:
                 try:
@@ -124,21 +123,21 @@ class TelegramWorker(QThread):
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    logger.debug(f"Keep-alive ping failed: {e}")
+                    logger.debug("Keep-alive ping failed: %s", e)
                 await asyncio.sleep(60)
 
         self.keep_alive_task = self.loop.create_task(keep_alive())
-        
+
         try:
             await self.client.run_until_disconnected()
         except asyncio.CancelledError:
-            pass 
+            pass
         finally:
             if self.keep_alive_task and not self.keep_alive_task.done():
                 self.keep_alive_task.cancel()
 
     def stop(self):
-        logger.info("🛑 Richiesta di stop ricevuta...") # ✅ LOG
+        logger.info("🛑 Richiesta di stop ricevuta...")
         if self.loop and self.loop.is_running():
             async def shutdown():
                 if self.keep_alive_task:
