@@ -33,29 +33,21 @@ class SuperAgentController(QObject):
         self.db = Database()
         self.money_manager = MoneyManager()
         self.worker = PlaywrightWorker(logger)
-
-        self.worker.executor = DomExecutorPlaywright(
-            logger=logger,
-            allow_place=allow_bets
-        )
-
+        self.worker.executor = DomExecutorPlaywright(logger=logger, allow_place=allow_bets)
         self.engine = ExecutionEngine(bus, self.worker.executor, logger)
 
-        # 🔴 FIX 6: LOCK GLOBALE ANTI DOPPIA BET
         self.bet_lock = False
         self.circuit_open = False
         self._lock = threading.Lock()
+        self.last_desync_check = 0 # 🔴 FIX: Timer per controllo saldo a 5 min
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
 
         self.worker.start()
         bus.start()
-
-        # Watchdog esiti e heartbeat
         threading.Thread(target=self._settled_watchdog, daemon=True).start()
 
-    # --- INTEGRAZIONE AI (OPENROUTER CON FALLBACK) ---
     def test_ai_strategy(self, description, msg_template):
         threading.Thread(target=self._run_ai_analysis, args=(description, msg_template)).start()
 
@@ -85,17 +77,25 @@ class SuperAgentController(QObject):
         if "OVER" in text.upper(): extracted["market"] = "OVER"
         return extracted
 
-    # ----------------------------------------------------
-    # HANDLE SEGNALE TELEGRAM
-    # ----------------------------------------------------
     def handle_signal(self, data):
-        if not self.worker.running or self.circuit_open:
-            return
+        if not self.worker.running or self.circuit_open: return
 
-        # 🔴 FIX 6: CONTROLLO LOCK GLOBALE REALE
+        # 🔴 FIX: HARD LOCK DB CON TIMEOUT SICUREZZA 2 ORE
+        pending_tx = self.db.pending()
+        if pending_tx:
+            last = pending_tx[-1]
+            tx_time = last.get("timestamp", 0) 
+            
+            if time.time() - tx_time > 7200:
+                self.logger.warning(f"⚠️ Pending TX bloccata da >2h. Eseguo Refund Sicurezza.")
+                self.money_manager.refund(last["tx_id"])
+            else:
+                self.logger.warning(f"🚨 TRANSAZIONE PENDENTE NEL DB! Blocco segnali.")
+                return
+
         with self._lock:
             if self.bet_lock:
-                self.logger.warning("⚠️ Bet già in corso → ignoro segnale per sicurezza.")
+                self.logger.warning("⚠️ Bet logica già in corso.")
                 return
             self.bet_lock = True
 
@@ -104,7 +104,6 @@ class SuperAgentController(QObject):
             chat_id = data.get("chat_id", "")
             active_robot = None
 
-            # Ricerca robot 
             if os.path.exists(ROBOTS_FILE):
                 with open(ROBOTS_FILE, "r") as f: robots = yaml.safe_load(f) or []
                 for robot in robots:
@@ -131,93 +130,79 @@ class SuperAgentController(QObject):
 
         except Exception as e:
             self.logger.error(f"Errore handle_signal: {e}")
-            with self._lock:
-                self.bet_lock = False
+            with self._lock: self.bet_lock = False
 
-    # ----------------------------------------------------
-    # CALLBACK SUCCESS
-    # ----------------------------------------------------
     def _on_bet_success(self, payload):
         with self._lock:
             self.bet_lock = False
             self.circuit_open = False
+        self.log_message.emit("💰 BET INVIATA AL BOOKMAKER.")
 
-        self.log_message.emit("💰 BET INVIATA AL BOOKMAKER. In attesa di esito reale...")
-        # 🔴 FIX 9: NON chiamare win(tx, 0) qui. Il payout si aggiorna solo nel watchdog.
-
-    # ----------------------------------------------------
-    # CALLBACK FAIL
-    # ----------------------------------------------------
     def _on_bet_failed(self, payload):
-        with self._lock:
-            self.bet_lock = False
-
-        reason = payload.get("reason", "errore")
-        self.log_message.emit(f"❌ BET FALLITA: {reason}")
-
-        # Rollback se la transazione era stata aperta in db
+        with self._lock: self.bet_lock = False
+        self.log_message.emit(f"❌ BET FALLITA: {payload.get('reason', 'errore')}")
         tx = payload.get("tx_id")
-        if tx:
-            self.money_manager.refund(tx)
+        if tx: self.money_manager.refund(tx)
 
-    # ----------------------------------------------------
-    # WATCHDOG ESITI REALI E HEARTBEAT BET365
-    # ----------------------------------------------------
     def _settled_watchdog(self):
         while True:
             time.sleep(60)
 
-            if not self.worker.running:
-                continue
+            if not self.worker.running: continue
 
-            # 🟡 FIX 11: HEARTBEAT SESSIONE
+            # 🔴 FIX: HEARTBEAT SESSIONE JS PURO
             try:
                 if self.worker.executor.page:
-                    self.worker.executor.page.title()
+                    state = self.worker.executor.page.evaluate("() => document.readyState")
+                    if state != "complete" and state != "interactive":
+                        raise Exception("DOM not ready")
             except Exception:
-                self.logger.warning("💀 Sessione Heartbeat morta → Riavvio browser preventivo.")
+                self.logger.warning("💀 Sessione Heartbeat morta (Playwright freeze) → Riavvio browser preventivo.")
                 self.worker.submit(self.worker.executor.recycle_browser)
                 continue
 
-            # 🟡 FIX 10: BROWSER RECYCLE 4 ORE
             if hasattr(self.worker.executor, 'start_time') and self.worker.executor.start_time:
-                if time.time() - self.worker.executor.start_time > 14400:
-                    self.logger.info("🔄 Browser aperto da 4 ore. Riciclo preventivo programmato...")
+                if time.time() - self.worker.executor.start_time > 14400: # 4h
+                    self.logger.info("🔄 Browser aperto da 4 ore. Riciclo programmato...")
                     self.worker.submit(self.worker.executor.recycle_browser)
                     continue
 
-            # Se sto scommettendo, salto il check settled
-            if self.bet_lock:
-                continue
+            # 🔴 FIX: SNAPSHOT DESYNC SALDO OGNI 5 MIN
+            try:
+                if not self.bet_lock and not self.db.pending():
+                    if time.time() - self.last_desync_check > 300:
+                        self.last_desync_check = time.time()
+                        saldo_book = self.worker.executor.get_balance()
+                        saldo_db = self.money_manager.bankroll()
+                        if saldo_book is not None and saldo_db is not None:
+                            if abs(saldo_book - saldo_db) > 1.0: 
+                                self.logger.warning(f"⚠️ DESYNC SALDO: Bookmaker ({saldo_book}€) vs Database ({saldo_db}€)")
+            except: pass
+
+            if self.bet_lock: continue
 
             try:
                 self.worker.submit(self._check_settled)
-            except:
-                pass
+            except: pass
 
     def _check_settled(self):
         result = self.worker.executor.check_settled_bets()
-        if not result:
-            return
+        if not result: return
 
         status = result.get("status")
         payout = result.get("payout", 0)
 
         pending = self.db.pending()
-        if not pending:
-            return
+        if not pending: return
 
         tx_id = pending[-1]["tx_id"]
 
-        # 🔴 FIX 9: SYNC PAYOUT REALE IMMEDITATO
         if status == "WIN":
-            self.logger.info(f"🏆 WIN reale (Payout letto: {payout}€). Aggiorno DB.")
+            self.logger.info(f"🏆 WIN reale ({payout}€). Aggiorno DB.")
             self.money_manager.win(tx_id, payout)
-
         elif status == "LOSS":
             self.logger.info("❌ LOSS reale. Aggiorno DB.")
             self.money_manager.loss(tx_id)
-
         elif status == "VOID":
             self.logger.info("🔄 VOID reale. Rollback DB.")
             self.money_manager.refund(tx_id)
