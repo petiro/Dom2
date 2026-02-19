@@ -45,7 +45,7 @@ class SuperAgentController(QObject):
         self.last_bet_ts = 0 
         self.last_signal_ts = 0
         self.consecutive_crashes = 0
-        self.last_desync_check = 0
+        self.last_desync_check = time.time()  # Inizializzazione timer sync
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
@@ -104,7 +104,7 @@ class SuperAgentController(QObject):
             active_robot = None
 
             if os.path.exists(ROBOTS_FILE):
-                with open(ROBOTS_FILE, "r") as f: robots = yaml.safe_load(f) or []
+                with open(ROBOTS_FILE, "r", encoding="utf-8") as f: robots = yaml.safe_load(f) or []
                 for robot in robots:
                     if not robot.get("enabled", True): continue
                     req_chats_raw = robot.get("specific_chat_id", "")
@@ -168,7 +168,6 @@ class SuperAgentController(QObject):
         try:
             if self.worker.executor.page:
                 state = self.worker.executor.page.evaluate("() => document.readyState")
-                title = self.worker.executor.page.title()
                 if state not in ["complete", "interactive"]:
                     raise Exception("DOM not ready")
         except Exception:
@@ -183,17 +182,24 @@ class SuperAgentController(QObject):
                 self.worker.executor.recycle_browser()
                 return
 
+        # 🔴 FIX: SALDO BOOKMAKER MASTER SYNC (Ogni 10 minuti = 600s)
         try:
             if not self.bet_lock and not self.db.pending():
-                if time.time() - self.last_desync_check > 300:
+                if time.time() - self.last_desync_check > 600:
                     self.last_desync_check = time.time()
-                    book = self.worker.executor.get_balance()
+                    
+                    book_bal = self.worker.executor.get_balance()
                     db_bal = self.money_manager.bankroll()
-                    if book is not None and db_bal is not None:
-                        if abs(book - db_bal) > 2.0: 
-                            self.logger.critical(f"🚨 DESYNC SALDO: Bookmaker ({book}€) vs DB ({db_bal}€). Attivo Circuit Breaker.")
+                    
+                    if book_bal is not None and db_bal is not None:
+                        drift = abs(book_bal - db_bal)
+                        if drift > 2.0: 
+                            self.logger.critical(f"🚨 FINANCIAL DESYNC (Bookmaker Master): Bet365 ({book_bal}€) vs Database ({db_bal}€). Drift di {drift}€. HARD STOP.")
                             self.circuit_open = True
-        except Exception: pass
+                        else:
+                            self.logger.info(f"✅ Sync Saldo OK. Bookmaker: {book_bal}€ | DB: {db_bal}€")
+        except Exception as exc:
+            self.logger.debug(f"Non-critical exception sync saldo: {exc}")
 
         if not self.bet_lock:
             self._check_settled()
