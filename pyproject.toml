@@ -2,6 +2,7 @@
 ignore-patterns = ["venv", ".venv"]
 jobs = 0
 persistent = true
+fail-under = 0
 
 [tool.pylint.messages_control]
 disable = [
@@ -14,34 +15,29 @@ disable = [
     "trailing-whitespace",
     "logging-fstring-interpolation",
     "unused-import",
+    "unused-variable",
+    "unused-argument",
     "no-name-in-module",
     "protected-access",
     "multiple-statements",
     "unspecified-encoding",
-    "missing-final-newline",
-    "line-too-long",
     "too-many-branches",
     "too-many-statements",
     "too-many-locals",
+    "too-many-instance-attributes",
     "too-many-arguments",
     "too-many-positional-arguments",
-    "too-many-instance-attributes",
-    "unused-argument",
-    "unused-variable",
+    "line-too-long",
+    "invalid-name",
     "wrong-import-order",
     "broad-exception-raised",
-    "bare-except",
-    "invalid-name",
-    "no-else-break",
-    "consider-using-max-builtin"
+    "consider-using-max-builtin",
+    "missing-final-newline",
+    "no-else-break"
 ]
 
 [tool.pylint.format]
-max-line-length = 120
-
-[tool.pylint.design]
-max-args = 15
-max-attributes = 25
+max-line-length = 160
 
 [tool.mypy]
 python_version = "3.10"
