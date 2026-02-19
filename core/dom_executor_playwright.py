@@ -4,6 +4,7 @@ import logging
 import re
 import os
 import json
+import random
 from typing import Any
 from playwright.sync_api import sync_playwright
 from core.human_mouse import HumanMouse
@@ -210,6 +211,17 @@ class DomExecutorPlaywright:
         if not self.is_logged(): return False
 
         try:
+            saldo_pre = self.get_balance()
+            
+            # 🔴 FIX 1: FAIL HARD se saldo non leggibile
+            if saldo_pre is None:
+                self.logger.error("❌ Saldo bookmaker NON leggibile → abort bet sicurezza")
+                return False
+
+            if saldo_pre < stake:
+                self.logger.error(f"❌ Saldo insufficiente: {saldo_pre} < {stake}")
+                return False
+
             odds_btn = self.page.locator(".gl-Participant_Odds").first
             if not odds_btn.is_visible(): raise Exception("Quota non trovata")
             self._stealth_click(odds_btn)
@@ -252,10 +264,39 @@ class DomExecutorPlaywright:
 
             self.page.wait_for_timeout(3000)
             receipt = self.page.locator(".bs-Receipt, .st-Receipt")
+            
             if receipt.is_visible():
+                self.logger.info("✅ RICEVUTA CONFERMATA A SCHERMO!")
+                
+                if self.allow_place:
+                    # 🔴 FIX 4: DOUBLE CONFIRMATION POST-BET
+                    time.sleep(random.uniform(1.2, 2.2))
+                    
+                    saldo_post = self.get_balance()
+                    
+                    if saldo_post is None:
+                        self.logger.error("❌ Saldo post-bet non leggibile → bet incerta")
+                        return False
+                        
+                    # se saldo non sceso → bet probabilmente non piazzata
+                    if saldo_post >= saldo_pre:
+                        self.logger.error("❌ Saldo non cambiato dopo bet → fallita")
+                        return False
+                        
+                    # verifica schedina aperta/chiusa (non bloccante)
+                    try:
+                        open_bet = self.check_open_bet()
+                        if open_bet:
+                            self.logger.info("Schedina confermata aperta")
+                    except Exception:
+                        pass
+                        
+                    self.logger.info(f"✅ Bet confermata finanziariamente. Saldo: {saldo_pre} → {saldo_post}")
+
                 done_btn = self.page.locator("button.bs-Receipt_Done").first
                 if done_btn.is_visible(): self._stealth_click(done_btn)
                 return True
+                
             raise Exception("Ricevuta non confermata")
         except Exception as e:
             self.logger.error(f"❌ Bet fallita: {e}")
@@ -317,9 +358,18 @@ class DomExecutorPlaywright:
             if status == "WIN":
                 payout_el = first_bet.locator(".myb-BetItem_Return, .myb-SettledBetItem_Returns").first
                 if payout_el.is_visible():
-                    pay_txt = payout_el.inner_text().replace("€","").replace(",",".").strip()
-                    try: payout = float(re.search(r"(\d+\.\d+)", pay_txt).group(1))
-                    except Exception: pass
+                    # 🔴 FIX 3: PARSING PAYOUT MULTI-LOCALE ROBUSTO
+                    pay_txt = payout_el.inner_text()
+                    pay_txt = pay_txt.replace("€","").replace("$","").strip()
+                    pay_txt = pay_txt.replace(".", "").replace(",", ".")
+                    
+                    match = re.search(r"(\d+\.\d+)", pay_txt)
+                    if match:
+                        try:
+                            payout = float(match.group(1))
+                        except Exception:
+                            self.logger.error(f"Parsing payout fallito: {pay_txt}")
+                            payout = 0.0
                     
             try:
                 close = self.page.locator(".myb-CloseButton, .myb-MyBetsHeader_CloseButton").first
