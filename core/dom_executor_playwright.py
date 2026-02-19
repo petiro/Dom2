@@ -22,7 +22,6 @@ class DomExecutorPlaywright:
         self.mouse: Any = None
         
         self._internal_lock = threading.RLock()
-        self._initialized = False
         self.start_time = None 
         
         self.bet_count = 0
@@ -31,7 +30,10 @@ class DomExecutorPlaywright:
     def launch_browser(self):
         with self._internal_lock:
             try:
-                if self._initialized and self.page and not self.page.is_closed(): return True
+                # 🔴 FIX 3: Race condition launch browser
+                if self.page and not self.page.is_closed():
+                    return True
+                    
                 self.logger.info(f"🚀 Launching Browser (Headless={self.headless})...")
                 if not self.pw: self.pw = sync_playwright().start()
                 self.browser = self.pw.chromium.launch(headless=self.headless, args=["--no-sandbox"])
@@ -45,7 +47,6 @@ class DomExecutorPlaywright:
                     self.logger.debug(f"Non-critical exception in mouse init: {exc}")
                     self.mouse = None
 
-                self._initialized = True
                 self.start_time = time.time()
                 
                 try:
@@ -59,14 +60,10 @@ class DomExecutorPlaywright:
                 return False
 
     def _stealth_click(self, locator: Any):
-        try:
-            if self.mouse and hasattr(self.mouse, 'click'):
-                self.mouse.click(locator)
-            else:
-                locator.click(delay=150)
-        except Exception as exc:
-            self.logger.debug(f"Non-critical exception stealth click: {exc}")
-            locator.click()
+        # 🔴 FIX 1: Blocca fallback bot click (No teletrasporto)
+        if not self.mouse:
+            raise RuntimeError("HumanMouse non inizializzato")
+        self.mouse.click(locator)
 
     def save_blackbox(self, tx_id, error_msg="", data=None, stake=0, quota=0, saldo_db=0, saldo_book=0):
         try:
@@ -105,7 +102,6 @@ class DomExecutorPlaywright:
         except Exception as exc:
             self.logger.debug(f"Non-critical exception recycle: {exc}")
         
-        self._initialized = False
         self.page = None
         self.browser = None
         self.pw = None
@@ -199,8 +195,15 @@ class DomExecutorPlaywright:
         try:
             bal_el = self.page.locator(".hm-Balance").first
             if bal_el.is_visible():
-                txt = bal_el.inner_text().replace("€", "").replace(",", ".").strip()
-                return float(txt)
+                # 🔴 FIX 2: Parsing saldo multi-locale
+                txt = bal_el.inner_text()
+                txt = txt.replace("€","").replace("$","").strip()
+                txt = txt.replace(".", "").replace(",", ".")
+                try:
+                    return float(txt)
+                except Exception:
+                    self.logger.error(f"Parsing saldo fallito: {txt}")
+                    return None
             return None
         except Exception as exc:
             self.logger.debug(f"Non-critical exception get balance: {exc}")
@@ -213,7 +216,6 @@ class DomExecutorPlaywright:
         try:
             saldo_pre = self.get_balance()
             
-            # 🔴 FIX 1: FAIL HARD se saldo non leggibile
             if saldo_pre is None:
                 self.logger.error("❌ Saldo bookmaker NON leggibile → abort bet sicurezza")
                 return False
@@ -221,6 +223,14 @@ class DomExecutorPlaywright:
             if saldo_pre < stake:
                 self.logger.error(f"❌ Saldo insufficiente: {saldo_pre} < {stake}")
                 return False
+
+            # 🔴 FIX 4: Blocco doppia bet pre-piazzamento
+            try:
+                if self.check_open_bet():
+                    self.logger.warning("⚠ Bet già aperta → abort nuova bet sicurezza")
+                    return False
+            except Exception:
+                pass
 
             odds_btn = self.page.locator(".gl-Participant_Odds").first
             if not odds_btn.is_visible(): raise Exception("Quota non trovata")
@@ -251,7 +261,8 @@ class DomExecutorPlaywright:
                 if not self.allow_place:
                     close_btn = self.page.locator(".bs-BetSlipHeader_Close").first
                     if close_btn.is_visible(): self._stealth_click(close_btn)
-                    return True 
+                    bet_placed = True
+                    break
 
                 place_btn = self.page.locator("button.bs-PlaceBetButton, button.st-PlaceBetButton").first
                 if place_btn.is_enabled():
@@ -265,25 +276,21 @@ class DomExecutorPlaywright:
             self.page.wait_for_timeout(3000)
             receipt = self.page.locator(".bs-Receipt, .st-Receipt")
             
-            if receipt.is_visible():
+            if receipt.is_visible() or not self.allow_place:
                 self.logger.info("✅ RICEVUTA CONFERMATA A SCHERMO!")
                 
                 if self.allow_place:
-                    # 🔴 FIX 4: DOUBLE CONFIRMATION POST-BET
                     time.sleep(random.uniform(1.2, 2.2))
-                    
                     saldo_post = self.get_balance()
                     
                     if saldo_post is None:
                         self.logger.error("❌ Saldo post-bet non leggibile → bet incerta")
                         return False
                         
-                    # se saldo non sceso → bet probabilmente non piazzata
                     if saldo_post >= saldo_pre:
                         self.logger.error("❌ Saldo non cambiato dopo bet → fallita")
                         return False
                         
-                    # verifica schedina aperta/chiusa (non bloccante)
                     try:
                         open_bet = self.check_open_bet()
                         if open_bet:
@@ -295,6 +302,18 @@ class DomExecutorPlaywright:
 
                 done_btn = self.page.locator("button.bs-Receipt_Done").first
                 if done_btn.is_visible(): self._stealth_click(done_btn)
+
+                # 🔴 FIX 5: HARD recycle se memoria alta (Anti memory leak Chromium)
+                try:
+                    import psutil
+                    process = psutil.Process(os.getpid())
+                    ram = process.memory_info().rss / 1024 / 1024
+                    if ram > 1200:
+                        self.logger.critical(f"🚨 RAM alta {ram:.0f}MB → recycle browser preventivo")
+                        self.recycle_browser()
+                except Exception:
+                    pass
+
                 return True
                 
             raise Exception("Ricevuta non confermata")
@@ -358,7 +377,6 @@ class DomExecutorPlaywright:
             if status == "WIN":
                 payout_el = first_bet.locator(".myb-BetItem_Return, .myb-SettledBetItem_Returns").first
                 if payout_el.is_visible():
-                    # 🔴 FIX 3: PARSING PAYOUT MULTI-LOCALE ROBUSTO
                     pay_txt = payout_el.inner_text()
                     pay_txt = pay_txt.replace("€","").replace("$","").strip()
                     pay_txt = pay_txt.replace(".", "").replace(",", ".")
