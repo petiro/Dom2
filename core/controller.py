@@ -5,6 +5,7 @@ import os
 import yaml
 import re
 import requests
+from typing import Dict, Any
 from PySide6.QtCore import QObject, Signal
 
 from core.event_bus import bus
@@ -82,7 +83,8 @@ class SuperAgentController(QObject):
         if "OVER" in text.upper(): extracted["market"] = "OVER"
         return extracted
 
-    def handle_signal(self, data):
+    # 🔴 FIX CI: TYPING ESPLICITO DI `data`
+    def handle_signal(self, data: Dict[str, Any]) -> None:
         if not self.worker.running or self.circuit_open: return
 
         pending_tx = self.db.pending()
@@ -111,7 +113,6 @@ class SuperAgentController(QObject):
                 with open(ROBOTS_FILE, "r") as f: robots = yaml.safe_load(f) or []
                 for robot in robots:
                     if not robot.get("enabled", True): continue
-                    
                     req_chats_raw = robot.get("specific_chat_id", "")
                     if req_chats_raw:
                         allowed_chats = [c.strip() for c in str(req_chats_raw).split(',') if c.strip()]
@@ -147,22 +148,16 @@ class SuperAgentController(QObject):
         tx = payload.get("tx_id")
         if tx: self.money_manager.refund(tx)
 
-    # ----------------------------------------------------------------------
-    # 🔴 FIX 2: IL WATCHDOG NON TOCCA PIÙ IL BROWSER DIRETTAMENTE
-    # Manda un unico mega-task di "Manutenzione" al worker, rendendolo 100% thread-safe.
-    # ----------------------------------------------------------------------
     def _settled_watchdog(self):
         while True:
             time.sleep(60)
             if not self.worker.running: continue
             
-            # Delega l'intero check al worker per evitare il crash del Greenlet
             try:
                 self.worker.submit(self._worker_maintenance_task)
             except: pass
 
     def _worker_maintenance_task(self):
-        # 1. Heartbeat
         try:
             if self.worker.executor.page:
                 state = self.worker.executor.page.evaluate("() => document.readyState")
@@ -171,16 +166,14 @@ class SuperAgentController(QObject):
         except Exception:
             self.logger.warning("💀 Sessione Heartbeat morta (Playwright freeze) → Riavvio browser preventivo.")
             self.worker.executor.recycle_browser()
-            return # Se lo riavvio, non controllo gli esiti
+            return 
 
-        # 2. Recycle 4h
         if hasattr(self.worker.executor, 'start_time') and self.worker.executor.start_time:
-            if time.time() - self.worker.executor.start_time > 14400: # 4h
+            if time.time() - self.worker.executor.start_time > 14400: 
                 self.logger.info("🔄 Browser aperto da 4 ore. Riciclo programmato...")
                 self.worker.executor.recycle_browser()
                 return
 
-        # 3. Snapshot Desync
         try:
             if not self.bet_lock and not self.db.pending():
                 if time.time() - self.last_desync_check > 300:
@@ -192,7 +185,6 @@ class SuperAgentController(QObject):
                             self.logger.warning(f"⚠️ DESYNC SALDO: Bookmaker ({saldo_book}€) vs Database ({saldo_db}€)")
         except: pass
 
-        # 4. Check Settled
         if not self.bet_lock:
             self._check_settled()
 
