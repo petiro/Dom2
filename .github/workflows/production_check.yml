@@ -8,7 +8,7 @@ on:
 
 jobs:
   hedge-test:
-    # 1. FIX OS: Usiamo ubuntu-22.04 per compatibilità librerie Playwright (libasound2)
+    # 1. FIX OS: Usiamo ubuntu-22.04 per stabilità nativa (Playwright + PySide6)
     runs-on: ubuntu-22.04
     
     # 2. FIX SAFETY: Kill switch assoluto di GitHub se il test dura più di 6 minuti
@@ -35,10 +35,10 @@ jobs:
 
       - name: 🎭 Install Playwright Browsers
         run: |
+          # 🔴 FIX 3: Solo Chromium. install-deps rimosso o eseguito su 22.04 per evitare crash
           playwright install chromium
-          playwright install-deps
 
-      # 🔴 FIX 3: Avvia con xvfb-run (Simula il monitor)
+      # 🔴 FIX 4: Avvia con xvfb-run (Simula il monitor)
       - name: 🚀 RUN HEDGE TEST
         env:
           QT_QPA_PLATFORM: offscreen
