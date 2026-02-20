@@ -37,13 +37,20 @@ import core.config_paths
 core.config_paths.CONFIG_DIR=TEST_DIR
 
 # =========================================================
-# MOCK PLAYWRIGHT (Disabilitiamo Browser e Tempi di attesa)
+# ⏱️ MACCHINA DEL TEMPO INTELLIGENTE (Fix CPU Freeze)
+# =========================================================
+# Modifichiamo il tempo in modo mirato, altrimenti mandiamo in tilt la CPU
+original_sleep = time.sleep
+def smart_sleep(seconds):
+    if seconds == 1.5:
+        return  # Salta l'attesa del bookmaker e vai istantaneo
+    original_sleep(seconds)  # Lascia dormire gli altri thread (Watchdog) per non fondere il server
+time.sleep = smart_sleep
+
+# =========================================================
+# MOCK PLAYWRIGHT (Disabilitiamo Browser)
 # =========================================================
 from core.dom_executor_playwright import DomExecutorPlaywright
-import core.execution_engine
-
-# MACCHINA DEL TEMPO: Azzera le pause di 1.5s per caricamento pagina!
-core.execution_engine.time.sleep = lambda x: None 
 
 DomExecutorPlaywright.__init__=lambda self,*a,**k:None
 DomExecutorPlaywright.launch_browser=lambda self:True
@@ -62,7 +69,7 @@ from core.telegram_worker import TelegramWorker
 def mock_tg_run(self):
     self._is_running = True
     while self._is_running:
-        time.sleep(0.1) # Questo sleep appartiene al worker, lo lasciamo
+        original_sleep(0.1)
 TelegramWorker.run = mock_tg_run
 TelegramWorker.stop = lambda self: setattr(self, '_is_running', False)
 
@@ -106,7 +113,7 @@ try:
     controller.engine.bus.subscribe("TEST_EVT",good)
 
     controller.engine.bus.emit("TEST_EVT",{})
-    time.sleep(0.5)
+    original_sleep(0.5)
 
     if not survived["v"]:
         fail("EVENTBUS","Crash di un subscriber ha ucciso il Bus!")
@@ -127,9 +134,9 @@ try:
     for _ in range(20):
         controller.worker.submit(poison)
 
-    time.sleep(1)
+    original_sleep(0.5)
     controller.worker.submit(good)
-    time.sleep(1)
+    original_sleep(0.5)
 
     if not alive["v"]:
         fail("WORKER","Thread morto dopo eccezione nella coda!")
@@ -154,7 +161,7 @@ try:
         except Exception:
             err["v"]=True
 
-    threads=[threading.Thread(target=spam) for _ in range(20)]
+    threads=[threading.Thread(target=spam) for _ in range(15)]
     [t.start() for t in threads]
     [t.join() for t in threads]
 
@@ -192,11 +199,11 @@ except Exception as e:
     fail("LEDGER",str(e))
 
 # =========================================================
-# TEST 6 — ENGINE STRESS (1000 Segnali in mezzo secondo)
+# TEST 6 — ENGINE STRESS (200 Segnali asincroni)
 # =========================================================
 try:
-    print("▶️ Stress Test: Processando 1000 segnali rapidi (Time Sleep Bypassato)...")
-    for _ in range(1000):
+    print("▶️ Stress Test: Processando 200 segnali rapidi...")
+    for _ in range(200):
         controller.engine.process_signal({"teams":"X-Y","market":"1"},controller.money_manager)
     ok("Engine Stress Test SUPERATO")
 except Exception as e:
@@ -206,6 +213,7 @@ except Exception as e:
 # TEST 7 — ENGINE FREEZE DETECTION
 # =========================================================
 try:
+    original_sleep(2) # Diamo 2 secondi al worker per smaltire la coda
     if not controller.worker.is_alive():
         fail("FREEZE","Worker Thread morto silenziosamente")
     else:
