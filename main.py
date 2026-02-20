@@ -14,7 +14,7 @@ from core.lifecycle import SystemWatchdog
 from core.command_parser import CommandParser
 from core.logger import setup_logger
 from core.event_bus import bus
-from core.heartbeat import AppHeartbeat  # 🔴 IMPORT BATTITO CARDIACO
+from core.heartbeat import AppHeartbeat  # 🔴 BATTITO
 
 def main():
     multiprocessing.freeze_support()
@@ -23,7 +23,7 @@ def main():
     logger, log_signaler = setup_logger()
     logger.info("🚀 MAIN: Inizializzazione architettura ULTRA BUILD 11/10 (Hedge-Grade)...")
 
-    # 🔴 AVVIO HEARTBEAT (Per il Supervisor OS-Level)
+    # 🔴 AVVIO HEARTBEAT ISOLATO
     AppHeartbeat.start()
 
     try:
