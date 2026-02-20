@@ -12,6 +12,7 @@ class ExecutionEngine:
         self.logger.info(f"⚙️ Avvio processing segnale: {payload.get('teams')}")
         tx_id = None
         stake = 0.0
+        bet_placed_on_bookmaker = False  # 🔴 FIX 3: Flag di salvaguardia Ledger
 
         try:
             is_open = self.executor.check_open_bet()
@@ -58,14 +59,20 @@ class ExecutionEngine:
                 self.bus.emit("BET_FAILED", {"tx_id": tx_id, "reason": "Place bet failed"})
                 return
 
+            # 🔴 DA QUI I SOLDI SONO EFFETTIVAMENTE PUNTATI SUL BOOKMAKER
+            bet_placed_on_bookmaker = True
+            
             self.executor.bet_count += 1
             self.logger.info("✅ Scommessa piazzata con successo!")
             self.bus.emit("BET_SUCCESS", {"tx_id": tx_id, "teams": teams, "stake": stake, "odds": odds})
 
         except Exception as e:
             self.logger.critical(f"🔥 Crash in Execution Engine: {e}")
-            if tx_id:
+            
+            # 🔴 FIX 3: Rimborsa SOLO se la bet NON è andata a buon fine sul sito
+            if tx_id and not bet_placed_on_bookmaker:
                 money_manager.refund(tx_id)
+                self.logger.warning(f"🔄 Refund DB eseguito per TX {tx_id[:8]} causa Crash prima del piazzamento.")
                 
             if hasattr(self.executor, 'save_blackbox'):
                 self.executor.save_blackbox(
