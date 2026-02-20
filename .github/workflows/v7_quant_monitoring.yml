@@ -19,12 +19,22 @@ jobs:
         with:
           python-version: '3.10'
 
+      # 🔴 FIX 1: Ambiente grafico virtuale per evitare crash di PySide6/Playwright su Linux
+      - name: Install System Dependencies (XVFB)
+        run: sudo apt-get update && sudo apt-get install -y xvfb x11-utils
+
+      # 🔴 FIX 2: Installa tutti i requirements completi (pre-compilati) + tool dei test
       - name: Install Dependencies
         run: |
-          pip install psutil matplotlib
+          python -m pip install --upgrade pip wheel setuptools
+          pip install --prefer-binary -r requirements.txt
+          pip install psutil matplotlib playwright
+          playwright install chromium
+          playwright install-deps
 
+      # 🔴 FIX 3: Avvia i test dentro lo schermo virtuale headless
       - name: Run Stress Test
-        run: python tests/stress_lab/super_tester_v7.py
+        run: xvfb-run python tests/stress_lab/super_tester_v7.py
 
       - name: Evaluate Stability
         run: python quant_ci_evaluator.py
