@@ -60,12 +60,13 @@ class TelegramWorker(QThread):
             logger.critical("🔥 CRASH LOOP TELEGRAM: %s", e, exc_info=True)
             self.error_occurred.emit(f"CRITICAL LOOP ERROR: {str(e)}")
         finally:
+            pending = asyncio.all_tasks(loop=self.loop)
+            for task in pending: task.cancel()
             if not self.loop.is_closed():
                 self.loop.close()
-            logger.info("🛑 TelegramWorker Terminato")
+            logger.info("🛑 TelegramWorker Terminato Pulito")
 
     async def _main(self):
-        # 🔴 PATH SICURO LOCALE (Windows / Linux)
         save_dir = os.path.join(str(Path.home()), ".superagent_data")
         os.makedirs(save_dir, exist_ok=True)
         session_file = os.path.join(save_dir, "telegram_session.dat")
@@ -75,7 +76,6 @@ class TelegramWorker(QThread):
             with open(session_file, "r", encoding="utf-8") as f:
                 session_string = f.read().strip()
 
-        # Inizializza con StringSession (Vuota al primo avvio, popolata ai successivi)
         self.client = TelegramClient(
             StringSession(session_string), 
             self.api_id, 
@@ -95,20 +95,21 @@ class TelegramWorker(QThread):
             return
 
         if not await self.client.is_user_authorized():
-            logger.warning("⚠️ Sessione Telegram non autorizzata. Richiesto primo login.")
+            logger.warning("⚠️ Sessione Telegram vuota o scaduta. Incolla la StringSession generata.")
             self.status_changed.emit("Richiesto Login")
-            self.error_occurred.emit("SESSION_MISSING: Login richiesto dalla console o UI.")
-            # Attende login (adattalo se usi input da console o UI specifica)
+            self.error_occurred.emit("SESSION_MISSING: Login richiesto dalla UI.")
             await self.client.disconnect()
             return
         else:
-            # 🔴 AUTO-SALVATAGGIO IMMORTALE
-            # Se siamo loggati, salviamo la StringSession su disco per non chiedere mai più SMS
             current_session = self.client.session.save()
-            with open(session_file, "w", encoding="utf-8") as f:
-                f.write(current_session)
             
-            logger.info("✅ Telegram Connesso! (Sessione immortale salvata al sicuro).")
+            # 🔴 FIX HEDGE-GRADE: Scrittura Atomica della sessione
+            tmp_file = session_file + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                f.write(current_session)
+            os.replace(tmp_file, session_file)
+            
+            logger.info("✅ Telegram Connesso! Vault Session Atomica in uso.")
             self.status_changed.emit("Connesso")
 
         @self.client.on(events.NewMessage(chats=self.selected_chats if self.selected_chats else None))
