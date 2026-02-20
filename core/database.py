@@ -3,21 +3,31 @@ import os
 import time
 import logging
 import threading
-from core.config_paths import DATA_DIR
+from pathlib import Path
+
+# 🔴 Database Finanziario nel Vault immortale
+DB_DIR = os.path.join(str(Path.home()), ".superagent_data")
+os.makedirs(DB_DIR, exist_ok=True)
+DB_FILE = "money_db.sqlite"
+DB_PATH = os.path.join(DB_DIR, DB_FILE)
 
 class Database:
     def __init__(self):
         self.logger = logging.getLogger("Database")
-        os.makedirs(DATA_DIR, exist_ok=True)
-        self.db_path = os.path.join(DATA_DIR, "dom2.db")
         
+        # 🔴 FIX HEDGE-GRADE: Threading sicuro + Timeout anti-lock
         self.conn = sqlite3.connect(
-            self.db_path, 
+            DB_PATH, 
             check_same_thread=False,
             timeout=30,
             isolation_level=None
         )
         self.conn.row_factory = sqlite3.Row
+        
+        # 🔴 FIX HEDGE-GRADE: PRAGMA WAL per scritture concorrenti UI/Worker
+        self.conn.execute("PRAGMA journal_mode=WAL;")
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
+        
         self._lock = threading.RLock()
         self._init_db()
 
@@ -39,7 +49,8 @@ class Database:
                     current_balance REAL
                 )
             """)
-            self.conn.execute("INSERT OR IGNORE INTO balance (id, current_balance) VALUES (1, 100.0)")
+            # Inizializza saldo a 1000 se vuoto (adattalo se vuoi un altro default)
+            self.conn.execute("INSERT OR IGNORE INTO balance (id, current_balance) VALUES (1, 1000.0)")
 
     def get_balance(self):
         with self._lock:
