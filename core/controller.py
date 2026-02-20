@@ -5,6 +5,7 @@ import os
 import yaml
 import re
 import requests
+import psutil
 from typing import Dict, Any
 from PySide6.QtCore import QObject, Signal
 
@@ -42,11 +43,14 @@ class SuperAgentController(QObject):
         self.circuit_open = False
         self._lock = threading.Lock()
         
-        # 🔴 FIX 7: Rate Limit (Anti-Spam) init
         self.last_bet_ts = 0 
         self.last_signal_ts = 0
         self.consecutive_crashes = 0
         self.last_desync_check = time.time()
+        
+        # ☢️ Init variabili di sicurezza estreme
+        self.last_worker_heartbeat = time.time()
+        self.nuclear_threshold = 90  # Secondi massimi di blocco prima del reset totale
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
@@ -54,6 +58,41 @@ class SuperAgentController(QObject):
         self.worker.start()
         bus.start()
         threading.Thread(target=self._settled_watchdog, daemon=True).start()
+
+    def _nuclear_restart(self):
+        self.logger.critical("☢️ NUCLEAR RESTART ATTIVATO")
+        try:
+            # 1. Stop forzato worker
+            try:
+                self.worker.stop()
+            except Exception:
+                pass
+
+            # 2. Stop forzato executor
+            try:
+                self.worker.executor.close()
+            except Exception:
+                pass
+
+            # 3. Reset stato interno
+            self.bet_lock = False
+            self.circuit_open = False
+            self.consecutive_crashes = 0
+
+            # 4. Ricrea executor pulito
+            allow_bets = self.config.get("betting", {}).get("allow_place", False)
+            self.worker.executor = DomExecutorPlaywright(
+                logger=self.logger,
+                allow_place=allow_bets
+            )
+
+            # 5. Riavvia worker
+            self.worker.start()
+            self.last_worker_heartbeat = time.time()
+
+            self.logger.critical("☢️ NUCLEAR RESTART COMPLETATO. Sistema di nuovo online.")
+        except Exception as e:
+            self.logger.critical(f"NUCLEAR FAILURE: {e}")
 
     def test_ai_strategy(self, description, msg_template):
         threading.Thread(target=self._run_ai_analysis, args=(description, msg_template)).start()
@@ -87,7 +126,7 @@ class SuperAgentController(QObject):
     def handle_signal(self, data: Dict[str, Any]) -> None:
         if not self.worker.running or self.circuit_open: return
 
-        # 🔴 FIX 7: Rate Limit Segnali Globali
+        # 🔴 Rate Limit Segnali Globali (Anti-Spam)
         if time.time() - self.last_signal_ts < 2:
             self.logger.warning("Spam segnali (Rate Limit < 2s). Ignorato.")
             return
@@ -141,7 +180,6 @@ class SuperAgentController(QObject):
 
     def _on_bet_failed(self, payload):
         self.consecutive_crashes += 1
-        
         if self.consecutive_crashes >= 3:
             self.logger.critical("🚨 CIRCUIT BREAKER: 3 Crash Consecutivi. Stop operazioni.")
             self.circuit_open = True
@@ -153,31 +191,69 @@ class SuperAgentController(QObject):
         while True:
             time.sleep(60)
             if not self.worker.running: continue
+
+            # ===============================
+            # 🔴 OS-LEVEL ZOMBIE KILLER
+            # ===============================
+            if time.time() - self.last_worker_heartbeat > 300:
+                self.logger.critical("💀 FREEZE TOTALE: Worker bloccato da >5 min (Chromium Zombie). Eseguo Hard Kill OS-level.")
+                try:
+                    for proc in psutil.process_iter(['pid', 'name']):
+                        name = proc.info.get('name', '').lower()
+                        if 'chrome' in name or 'chromium' in name:
+                            proc.kill() 
+                except Exception as exc:
+                    self.logger.debug(f"Hard kill fallback: {exc}")
+                
+                self.last_worker_heartbeat = time.time()
+                self.bet_lock = False
+                
+                try:
+                    self.worker.submit(self.worker.executor.recycle_browser)
+                except Exception: pass
+                continue
+
             try:
                 self.worker.submit(self._worker_maintenance_task)
             except Exception: pass
 
     def _worker_maintenance_task(self):
-        if self.bet_lock and time.time() - self.last_bet_ts > 180:
-            self.logger.critical("🚨 DEADLOCK RESET: bet_lock bloccato da >3 min.")
-            self.bet_lock = False
+        # ☢️ NUCLEAR FREEZE MONITOR
+        if self.bet_lock:
+            freeze_time = time.time() - self.last_bet_ts
+            if freeze_time > self.nuclear_threshold:
+                self.logger.critical(f"☢️ Freeze > {self.nuclear_threshold}s → Nuclear Restart")
+                self._nuclear_restart()
+                return
 
-        # 🔴 FIX 6: Circuit Breaker Login Fail
         if self.worker.executor.login_fails >= 3:
-            self.logger.critical("🚨 Troppi login falliti -> CIRCUIT OPEN")
+            self.logger.critical("🚨 CIRCUIT BREAKER: 3 Login Falliti.")
             self.circuit_open = True
             return
 
+        # ===============================
+        # 🔴 CHROMIUM FREEZE WATCHDOG INVISIBILE
+        # ===============================
         try:
             if self.worker.executor.page:
+                start = time.time()
+                self.worker.executor.page.evaluate("() => 1")
+                latency = time.time() - start
+
+                if latency > 5:
+                    self.logger.critical(f"💀 Chromium freeze rilevato ({latency:.2f}s) → recycle invisibile")
+                    self.worker.executor.recycle_browser()
+                    return
+
                 state = self.worker.executor.page.evaluate("() => document.readyState")
                 if state not in ["complete", "interactive"]:
-                    raise Exception("DOM not ready")
+                    raise Exception("DOM frozen")
         except Exception:
-            self.logger.warning("💀 Sessione Heartbeat morta → Recycle preventivo.")
+            self.logger.critical("💀 Chromium non risponde → HARD RECYCLE invisibile")
             self.worker.executor.recycle_browser()
-            return 
+            return
 
+        # Recycle Predittivo
         if hasattr(self.worker.executor, 'start_time') and self.worker.executor.start_time:
             uptime = time.time() - self.worker.executor.start_time
             if uptime > 14400 or self.worker.executor.bet_count >= 20: 
@@ -185,6 +261,7 @@ class SuperAgentController(QObject):
                 self.worker.executor.recycle_browser()
                 return
 
+        # Saldo Master Sync (Ogni 10 min)
         try:
             if not self.bet_lock and not self.db.pending():
                 if time.time() - self.last_desync_check > 600:
@@ -196,7 +273,7 @@ class SuperAgentController(QObject):
                     if book_bal is not None and db_bal is not None:
                         drift = abs(book_bal - db_bal)
                         if drift > 2.0: 
-                            self.logger.critical(f"🚨 FINANCIAL DESYNC (Bookmaker Master): Bet365 ({book_bal}€) vs Database ({db_bal}€). Drift di {drift}€. HARD STOP.")
+                            self.logger.critical(f"🚨 FINANCIAL DESYNC: Bet365 ({book_bal}€) vs Database ({db_bal}€). Drift di {drift}€. HARD STOP.")
                             self.circuit_open = True
                         else:
                             self.logger.info(f"✅ Sync Saldo OK. Bookmaker: {book_bal}€ | DB: {db_bal}€")
@@ -205,6 +282,9 @@ class SuperAgentController(QObject):
 
         if not self.bet_lock:
             self._check_settled()
+            
+        # 🔴 Aggiornamento heartbeat se tutto è andato a buon fine
+        self.last_worker_heartbeat = time.time()
 
     def _check_settled(self):
         result = self.worker.executor.check_settled_bets()
