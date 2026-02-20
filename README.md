@@ -1,119 +1,109 @@
-# 🚀 SuperAgent V4 Pro: Autonomous Betting Enterprise
+ 🤖 SuperAgent - Trading Automation OS (V8.5 Hedge-Grade)
 
-SuperAgent V4 Pro è un framework di automazione d'élite per il betting ad alta frequenza. Non è un semplice bot, ma un **Agente Autonomo Ridondante** che integra Intelligenza Artificiale multi-modello, navigazione stealth avanzata (Playwright) e un'architettura self-healing progettata per operare **24/7 senza supervisione umana**.
+SuperAgent non è un semplice script o un "bot Python", ma un **Sistema Operativo di Automazione Finanziaria (Trading OS)** progettato per operare in autonomia totale 24/7 su VPS/Server Dedicati.
 
----
-
-## 💎 Caratteristiche d'Élite
-
-### 🧠 1. AI Fallback Chain (5 Livelli di Resilienza)
-
-Il sistema garantisce il mapping del DOM e la logica decisionale anche in caso di outage delle API primarie, scalando automaticamente attraverso:
-
-- **Anthropic Claude 3.5 Sonnet**: Motore logico primario per precisione chirurgica.
-- **GPT-OSS-120b**: Fallback ad alte prestazioni.
-- **Qwen 3 Coder 480b**: Specialista nell'analisi di strutture HTML complesse.
-- **Gemini 2.0 Flash Lite**: Velocità estrema per decisioni real-time.
-- **Arcee-AI Trinity**: L'ultima linea di difesa per la continuità operativa.
-
-### 🛡️ 2. Architettura Sentinel & Guardian
-
-Il cuore del sistema è protetto da tre layer di supervisione:
-
-- **Sentinel Core**: Monitora la latenza e attiva l'Hot-Swap tra istanze parallele di Chrome se rileva anomalie.
-- **Guardian Core**: Previene il "suicidio" del bot monitorando loop infiniti e streak di fallimenti.
-- **Autonomous Healer**: Ripara automaticamente la connessione CDP e ricicla il browser in caso di memory leak o freeze.
-
-### 🔌 3. Bet365.it Real-Time Bridge
-
-Integrazione nativa e profonda per Bet365.it:
-
-- **Stealth Tracking**: Movimenti del mouse basati su curve di Bezier umane e digitazione dinamica.
-- **DOM Monitoring**: Rilevamento istantaneo di cambi quota e mercati sospesi.
-- **Anti-Bot Bypass**: Gestione avanzata di fingerprinting (Canvas, WebGL, AudioContext).
+È strutturato per intercettare segnali da Telegram, analizzarli tramite AI, mappare i selettori DOM e piazzare scommesse sportive in modo totalmente invisibile ai sistemi anti-frode (Datadome, Akamai), garantendo un uptime del 100% grazie al suo strato di supervisione OS e prevenendo qualsiasi perdita di dati.
 
 ---
 
-## 📊 Algoritmi di Money Management
+## 🌟 Il Ciclo di Vita del Sistema (24/7 Unattended)
 
-Il sistema automatizza la gestione del rischio applicando il **Criterio di Kelly** e tabelle di progressione dinamiche.
+Il sistema è progettato per non fermarsi letteralmente **mai**. Ecco come si comporta in produzione:
 
-Tutti i calcoli sono eseguiti nel `BetWorker` in un thread isolato, garantendo che la UI rimanga fluida anche durante operazioni massive.
+1. **Il Risveglio (Supervisor):** L'esecuzione non parte da `main.py`, ma da `supervisor.py` (installato come Task di Sistema in Windows). Questo guardiano esterno lancia il Core e resta in ascolto.
+2. **Il Battito Cardiaco (Heartbeat):** Il Core emette un "pulsare" ogni 10 secondi (`heartbeat.dat`). Se Chromium va in deadlock, la rete salta o il GIL di Python si congela, l'impulso si ferma. Dopo 60 secondi di silenzio, il Supervisor esegue un *Hard Kill* dell'albero dei processi e resuscita il sistema istantaneamente.
+3. **Il Vault (Persistenza Sicura):** All'avvio, il sistema non usa file di configurazione nel repository. Accede alla cartella segreta `~/.superagent_data/`, decripta le credenziali in memoria tramite **AES-256** e carica la sessione immortale di Telegram.
+4. **L'Ascolto (Event Bus):** Il nodo Telegram legge i segnali dai tipster in modo asincrono e li spara nell'Event Bus.
+5. **L'Intelligenza (AI & Rules):** L'AI interpreta il segnale, capisce se rispetta le regole dei *Robot* impostati (stake, esclusione parole, mercato) ed estrapola l'azione.
+6. **L'Azione (RPA Stealth V4):** Playwright si avvia iniettando il codice Anti-Detect prima del caricamento pagina. Usa curve di Bézier per simulare il movimento del mouse umano, logga, piazza la scommessa, verifica il saldo reale e chiude.
+7. **Il Sonno Sicuro (Auto-Backup):** Ogni 30 minuti, un demone silenzioso applica un Lock Atomico al database SQLite, clona l'intero Vault crittografato e crea uno `.zip` (Disaster Recovery).
 
 ---
 
-## 🛠️ Setup Tecnico
+## 🚀 Architettura e Moduli Principali
 
-### Prerequisiti
+### 🔐 1. OpSec & Sicurezza Militare (Crypto Vault)
 
-- **Python 3.10.11** (Versione raccomandata per stabilità PySide6)
-- **Chrome** (Avviato con porta di debug: `chrome.exe --remote-debugging-port=9222`)
-- **Hardware Vault**: Il sistema richiede l'inizializzazione del `vault.bin` locale per il salvataggio criptato (AES-256) delle chiavi API.
+* **Zero Leak Repository:** Nessuna API Key (OpenRouter), password o StringSession viene mai salvata nel codice o in `config.yaml`.
+* **Storage Isolato:** I dati risiedono fuori dal repo, nella root utente (`~/.superagent_data/`). Disinstallare o aggiornare il bot tramite git non causa perdita di bankroll o impostazioni.
+* **Crittografia AES-256:** Le password dei bookmaker inserite nella UI vengono crittografate su disco con una `.master.key` unica per macchina.
+* **SecretFilter Globale:** Il sistema di logging analizza ogni stringa in nanosecondi. Se individua una chiave API o un Token che per errore sta per finire nei log di testo o a schermo, lo maschera irreversibilmente con `██SECRET_MASKED██`.
 
-### Installazione (Developer Mode)
+### 🛟 2. Resilienza e Disaster Recovery
+
+* **Atomic SQLite Backup:** Usa l'API nativa `sqlite3.backup()` per clonare il database dei fondi a livello C++, prevenendo la corruzione in caso di crash durante la scrittura.
+* **Hard Recycle Preventivo:** Se Chromium inizia a soffrire di *memory leak* superando i 1.2GB di RAM, il processo viene piallato e ricaricato pulito tra una bet e l'altra.
+* **Auto-Boot Windows Task:** Script di installazione (`setup_vps_task.py`) che infila il bot nello *SchTasks* di Windows con privilegi di amministratore. Se il VPS si riavvia di notte, SuperAgent è già operativo prima del login.
+
+### 🕵️‍♂️ 3. Ingegneria Anti-Detect
+
+* **Iniezione JS V4:** Modifica di `navigator.webdriver`, falsificazione dei plugin di sistema, WebGL vendor masking e noise injection su Canvas.
+* **Human Mouse:** Il mouse non si teletrasporta (`click()`), ma viaggia sullo schermo rallentando in prossimità del target con lievi tremolii (Jitter).
+* **Doppia Conferma Finanziaria:** Nessuna scommessa viene considerata "Piazzata" se il saldo del bookmaker, letto dal DOM *dopo* l'azione, non risulta effettivamente decurtato (Circuit Breaker Finanziario).
+
+### 🧠 4. Piattaforma Multi-Tenant (GUI)
+
+* **Bookmaker Manager:** Gestione di infiniti account (es. *Bet365_Main*, *Sisal_P1*) associabili a robot diversi.
+* **Robot & Strategy Manager:** Creazione di agenti autonomi indipendenti. Ogni robot ha i propri trigger, la sua gestione del capitale (Fisso o Progressioni) e il suo target di bookmaker.
+* **Selettori AI:** Possibilità di iniettare XPath/CSS personalizzati senza toccare il codice, salvandoli stabilmente nel Vault. Utile se il bookmaker cambia interfaccia.
+* **Telegram Session Immortale:** Zero file `.session` temporanei. Accesso tramite StringSession auto-rigenerante che non richiede mai più di un SMS di accesso nella vita.
+
+---
+
+## 📁 Struttura del Vault di Produzione
+
+In ambiente Live, il sistema dipende dalla cartella locale e protetta:
+
+```text
+C:\Users\TUO_NOME\.superagent_data\
+ ├── .master.key               # Chiave militare generata al primo avvio
+ ├── heartbeat.dat             # Pulsazione vitale letta dal Supervisor
+ ├── money_db.sqlite           # Database tracking scommesse e ROI
+ ├── telegram_session.dat      # Login immortale
+ ├── openrouter_key.dat        # API Key AI (Mai su GitHub)
+ ├── bookmakers.json           # Account bookmaker con PWD crittografate
+ ├── robots.json               # I bot e le logiche di puntata
+ ├── selectors.json            # Mappatura DOM (XPath/CSS)
+ └── backups/
+      └── superagent_backup_20260220_1530.zip # Archivio zippato auto-generato
+
+```
+
+---
+
+## 💻 Installazione e Deploy (VPS)
+
+### 1. Requisiti e Dipendenze
+
+Installa Python 3.10+ e le dipendenze di crittografia e OS:
 
 ```bash
-# Clona il repository
-git clone https://github.com/petiro/Dom2.git
-
-# Installa le dipendenze (congelate a NumPy 1.26.4 per compatibilità)
 pip install -r requirements.txt
-
-# Inizializza Playwright
 python -m playwright install chromium
+
 ```
 
-### Compilazione Enterprise EXE
+### 2. Configurazione VPS (Esegui 1 volta sola)
 
-Il progetto include una spec di compilazione avanzata che gestisce i browser hooks e riduce i falsi positivi degli antivirus:
+Per rendere il bot immortale ai riavvii di Windows Server, apri il terminale **come Amministratore** ed esegui:
 
 ```bash
-python -m PyInstaller SuperAgent_V4_Enterprise.spec --clean
+python setup_vps_task.py
+
 ```
 
----
+### 3. Avvio Quotidiano
 
-## 📦 Struttura del Progetto
-
-- **`core/`**: Logica di business, orchestratori (Sentinel, Guardian) e gestione browser.
-- **`ui/`**: Interfaccia grafica basata su PySide6 (Qt).
-- **`data/`**: Database locale delle sessioni e file di configurazione (YAML).
-- **`main.py`**: Entry point con splash screen asincrono e inizializzazione logger.
-- **`main_v6.py`**: Entry point V6 con core loop unificato (usa `DOM2_API_ID`/`DOM2_API_HASH`).
-- **`core_loop.py`** / **`core_services.py`**: Loop asyncio centralizzato e servizi unificati.
-
----
-
-## 🔍 Audit del Repository (Bug e Miglioramenti)
-
-Per scansionare il repository alla ricerca di pattern noti (es. `shell=True`, `except:` bare, TODO/FIXME), esegui:
+In produzione, non interagire mai direttamente con il file del codice. Usa il Supervisor:
 
 ```bash
-python repo_audit.py
+python supervisor.py
+
 ```
 
-Il report elenca le occorrenze con percorso e numero di riga.
-
 ---
 
-## 📜 Logica di Stabilità V4.x
+## ⚠️ Sicurezza e Responsabilità
 
-- **Thread Safety**: Comunicazione sicura via segnali Qt tra Watchdog (thread demone) e Controller (thread principale).
-- **Zero-Deadlock**: Gestione del flag `is_pending` centralizzata per prevenire blocchi logici sui segnali Telegram.
-- **Auto-Recovery**: Riavvio controllato delle sessioni CDP senza perdita dello stato della scommessa.
-
----
-
-> **Disclaimer**: Questo software è inteso per scopi di ricerca sull'automazione e l'intelligenza artificiale. L'utente si assume la piena responsabilità per l'uso dello strumento in contesti di gambling reale.
-# SuperAgent DOM2 - V7.4 Hardening Enterprise
-
-## Architecture
-```mermaid
-graph TD
-    UI[Desktop App PySide6] --> Controller
-    Telegram --> Controller
-    Controller -->|Submit Task| PlaywrightWorker
-    PlaywrightWorker -->|Execute| DomExecutor
-    DomExecutor -->|Control| Browser(Chrome/Playwright)
-    EventBus -->|Events| UI
-    EventBus -->|Events| Controller
+SuperAgent OS gestisce capitali reali ed è progettato con strumenti elusivi avanzati.
+Anche se le protezioni interne prevengono il leak di credenziali via log, è responsabilità dell'utente mantenere inviolato il server VPS e il contenuto crittografato della directory `~/.superagent_data/`.
