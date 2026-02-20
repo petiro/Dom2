@@ -11,8 +11,8 @@ jobs:
     # 1. FIX OS: Usiamo ubuntu-22.04 per stabilità nativa (Playwright + PySide6)
     runs-on: ubuntu-22.04
     
-    # 2. FIX SAFETY: Kill switch assoluto di GitHub se il test dura più di 6 minuti
-    timeout-minutes: 6
+    # 2. FIX SAFETY: Kill switch assoluto di GitHub se il test dura più di 8 minuti
+    timeout-minutes: 8
 
     steps:
       - uses: actions/checkout@v4
@@ -35,12 +35,18 @@ jobs:
 
       - name: 🎭 Install Playwright Browsers
         run: |
-          # 🔴 FIX 3: Solo Chromium. install-deps rimosso o eseguito su 22.04 per evitare crash
           playwright install chromium
 
-      # 🔴 FIX 4: Avvia con xvfb-run (Simula il monitor)
-      - name: 🚀 RUN HEDGE TEST
+      # 🔴 STEP 3: BASE STABILITY TEST (Verifica Funzionale)
+      - name: 🧪 Base Hedge Test
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           xvfb-run python hedge_super_tester.py
+
+      # 🔴 STEP 4: GOD MODE CHAOS AUDIT (Certificazione Hedge-Grade)
+      - name: 🧠 GOD MODE CHAOS (Absolute System Test)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          xvfb-run python tests/stress_lab/GOD_MODE_chaos.py
