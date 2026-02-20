@@ -79,7 +79,6 @@ try:
     def crash(p): raise RuntimeError("BOOM! Subscriber Crash")
     def good(p): survived["v"]=True
 
-    # Iscriviamo un killer e un sopravvissuto
     controller.engine.bus.subscribe("TEST_EVT",crash)
     controller.engine.bus.subscribe("TEST_EVT",good)
 
@@ -102,12 +101,10 @@ try:
     def poison(): raise ValueError("SEGNALE CORROTTO")
     def good(): alive["v"]=True
 
-    # Iniettiamo 20 pillole avvelenate
     for _ in range(20):
         controller.worker.submit(poison)
 
     time.sleep(1)
-    # Iniettiamo task sano
     controller.worker.submit(good)
     time.sleep(1)
 
@@ -127,7 +124,6 @@ try:
     def spam():
         try:
             for _ in range(200):
-                # Lettura + Scrittura + Rollback concorrente
                 controller.money_manager.bankroll()
                 tx=str(random.random())
                 controller.money_manager.reserve(1.0)
@@ -135,7 +131,6 @@ try:
         except Exception:
             err["v"]=True
 
-    # 20 Thread contemporanei che martellano SQLite
     threads=[threading.Thread(target=spam) for _ in range(20)]
     [t.start() for t in threads]
     [t.join() for t in threads]
@@ -154,7 +149,6 @@ try:
     controller.money_manager.get_stake=lambda o:5.0
     before=controller.money_manager.bankroll()
 
-    # Manomettiamo l'EventBus per crashare DOPO il piazzamento
     orig=controller.engine.bus.emit
     def crash_emit(ev,p):
         if ev=="BET_SUCCESS":
@@ -165,7 +159,6 @@ try:
     controller.engine.process_signal({"teams":"A-B","market":"1"},controller.money_manager)
     after=controller.money_manager.bankroll()
 
-    # Se i soldi sono tornati indietro (refund), è un bug gravissimo
     if after==before:
         fail("LEDGER","CRITICO: Refund fantasma eseguito dopo bet piazzata sul sito!")
     else:
