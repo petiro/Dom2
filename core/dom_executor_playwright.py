@@ -30,7 +30,6 @@ class DomExecutorPlaywright:
     def launch_browser(self):
         with self._internal_lock:
             try:
-                # 🔴 FIX 3: Race condition launch browser
                 if self.page and not self.page.is_closed():
                     return True
                     
@@ -60,7 +59,6 @@ class DomExecutorPlaywright:
                 return False
 
     def _stealth_click(self, locator: Any):
-        # 🔴 FIX 1: Blocca fallback bot click (No teletrasporto)
         if not self.mouse:
             raise RuntimeError("HumanMouse non inizializzato")
         self.mouse.click(locator)
@@ -117,20 +115,23 @@ class DomExecutorPlaywright:
         except Exception: 
             return False
 
-    def ensure_login(self):
+    # 🔴 FIX DEFINITIVO 11/10: LOGIN DAL VAULT CRIPTATO
+    def ensure_login(self, account_id="bet365_main"):
         if not self.launch_browser(): return False
         try:
             if self.is_logged() or self.page.locator(".hm-Balance").count() > 0: 
                 self.login_fails = 0
                 return True
                 
-            self.logger.info("🔑 Esecuzione Login su Bet365...")
-            config_loader = __import__('core.config_loader').config_loader.ConfigLoader()
-            config = config_loader.load_config()
-            username = config.get("betting", {}).get("username", "")
-            password = config.get("betting", {}).get("password", "")
-
-            if not username or not password: return False
+            self.logger.info(f"🔑 Esecuzione Login per account: {account_id}...")
+            
+            # Lettura e Decriptazione AES al volo
+            from core.secure_storage import BookmakerManager
+            username, password = BookmakerManager().get_decrypted(account_id)
+            
+            if not username or not password:
+                self.logger.error(f"❌ Account {account_id} non trovato nel Vault o password illeggibile.")
+                return False
 
             login_btn = self.page.locator(".hm-MainHeaderRHSLoggedOutWide_Login, text='Login', text='Accedi'").first
             if login_btn.is_visible():
@@ -146,7 +147,7 @@ class DomExecutorPlaywright:
             self.page.wait_for_selector(".hm-Balance", timeout=10000)
             
             self.login_fails = 0
-            self.logger.info("✅ Login effettuato con successo!")
+            self.logger.info(f"✅ Login su account {account_id} effettuato con successo!")
             return True
         except Exception as exc:
             self.logger.debug(f"Non-critical exception ensure_login: {exc}")
@@ -195,12 +196,10 @@ class DomExecutorPlaywright:
         try:
             bal_el = self.page.locator(".hm-Balance").first
             if bal_el.is_visible():
-                # 🔴 FIX 2: Parsing saldo multi-locale
                 txt = bal_el.inner_text()
                 txt = txt.replace("€","").replace("$","").strip()
                 txt = txt.replace(".", "").replace(",", ".")
-                try:
-                    return float(txt)
+                try: return float(txt)
                 except Exception:
                     self.logger.error(f"Parsing saldo fallito: {txt}")
                     return None
@@ -215,22 +214,18 @@ class DomExecutorPlaywright:
 
         try:
             saldo_pre = self.get_balance()
-            
             if saldo_pre is None:
                 self.logger.error("❌ Saldo bookmaker NON leggibile → abort bet sicurezza")
                 return False
-
             if saldo_pre < stake:
                 self.logger.error(f"❌ Saldo insufficiente: {saldo_pre} < {stake}")
                 return False
 
-            # 🔴 FIX 4: Blocco doppia bet pre-piazzamento
             try:
                 if self.check_open_bet():
                     self.logger.warning("⚠ Bet già aperta → abort nuova bet sicurezza")
                     return False
-            except Exception:
-                pass
+            except Exception: pass
 
             odds_btn = self.page.locator(".gl-Participant_Odds").first
             if not odds_btn.is_visible(): raise Exception("Quota non trovata")
@@ -286,24 +281,20 @@ class DomExecutorPlaywright:
                     if saldo_post is None:
                         self.logger.error("❌ Saldo post-bet non leggibile → bet incerta")
                         return False
-                        
                     if saldo_post >= saldo_pre:
                         self.logger.error("❌ Saldo non cambiato dopo bet → fallita")
                         return False
                         
                     try:
                         open_bet = self.check_open_bet()
-                        if open_bet:
-                            self.logger.info("Schedina confermata aperta")
-                    except Exception:
-                        pass
+                        if open_bet: self.logger.info("Schedina confermata aperta")
+                    except Exception: pass
                         
                     self.logger.info(f"✅ Bet confermata finanziariamente. Saldo: {saldo_pre} → {saldo_post}")
 
                 done_btn = self.page.locator("button.bs-Receipt_Done").first
                 if done_btn.is_visible(): self._stealth_click(done_btn)
 
-                # 🔴 FIX 5: HARD recycle se memoria alta (Anti memory leak Chromium)
                 try:
                     import psutil
                     process = psutil.Process(os.getpid())
@@ -311,11 +302,9 @@ class DomExecutorPlaywright:
                     if ram > 1200:
                         self.logger.critical(f"🚨 RAM alta {ram:.0f}MB → recycle browser preventivo")
                         self.recycle_browser()
-                except Exception:
-                    pass
+                except Exception: pass
 
                 return True
-                
             raise Exception("Ricevuta non confermata")
         except Exception as e:
             self.logger.error(f"❌ Bet fallita: {e}")
@@ -333,19 +322,14 @@ class DomExecutorPlaywright:
                 self.page.wait_for_timeout(1000)
                 
                 count = self.page.locator(".myb-BetItem, .myb-BetParticipant").count()
-                
                 try:
                     close = self.page.locator(".myb-CloseButton, .myb-MyBetsHeader_CloseButton").first
-                    if close.is_visible():
-                        self._stealth_click(close)
-                except Exception as exc: 
-                    self.logger.debug(f"Non-critical exception close bet window: {exc}")
+                    if close.is_visible(): self._stealth_click(close)
+                except Exception: pass
 
                 if count > 0: return True
             return False
-        except Exception as exc:
-            self.logger.debug(f"Non-critical exception check open bet: {exc}")
-            return False
+        except Exception: return False
 
     def check_settled_bets(self):
         if not self.launch_browser(): return None
@@ -363,8 +347,7 @@ class DomExecutorPlaywright:
                 try:
                     close = self.page.locator(".myb-CloseButton, .myb-MyBetsHeader_CloseButton").first
                     if close.is_visible(): self._stealth_click(close)
-                except Exception as exc: 
-                    self.logger.debug(f"Non-critical exception closing mybets: {exc}")
+                except Exception: pass
                 return None
                 
             txt = first_bet.inner_text().lower()
@@ -377,33 +360,23 @@ class DomExecutorPlaywright:
             if status == "WIN":
                 payout_el = first_bet.locator(".myb-BetItem_Return, .myb-SettledBetItem_Returns").first
                 if payout_el.is_visible():
-                    pay_txt = payout_el.inner_text()
-                    pay_txt = pay_txt.replace("€","").replace("$","").strip()
-                    pay_txt = pay_txt.replace(".", "").replace(",", ".")
-                    
+                    pay_txt = payout_el.inner_text().replace("€","").replace("$","").strip().replace(".", "").replace(",", ".")
                     match = re.search(r"(\d+\.\d+)", pay_txt)
                     if match:
-                        try:
-                            payout = float(match.group(1))
-                        except Exception:
-                            self.logger.error(f"Parsing payout fallito: {pay_txt}")
-                            payout = 0.0
+                        try: payout = float(match.group(1))
+                        except Exception: payout = 0.0
                     
             try:
                 close = self.page.locator(".myb-CloseButton, .myb-MyBetsHeader_CloseButton").first
                 if close.is_visible(): self._stealth_click(close)
-            except Exception as exc:
-                self.logger.debug(f"Non-critical exception close: {exc}")
+            except Exception: pass
             
             return {"status": status, "payout": payout}
-        except Exception as exc:
-            self.logger.debug(f"Non-critical exception check settled: {exc}")
-            return None
+        except Exception: return None
 
     def close(self):
         try:
             if self.page and self.page.context: self.page.context.close()
             if self.browser: self.browser.close()
             if self.pw: self.pw.stop()
-        except Exception as exc:
-            self.logger.debug(f"Non-critical exception close: {exc}")
+        except Exception: pass
