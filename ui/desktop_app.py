@@ -1,16 +1,81 @@
 import sys
 import yaml
 import os
+from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QTextEdit, 
-                             QTabWidget, QLineEdit, QComboBox, QCheckBox, 
-                             QGroupBox, QFormLayout, QListWidget, QMessageBox, QSplitter)
+                             QTabWidget, QLineEdit, QComboBox, QGroupBox, 
+                             QFormLayout, QListWidget, QMessageBox, QSplitter)
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QFont
 
 from core.config_paths import CONFIG_DIR
 
 ROBOTS_FILE = os.path.join(CONFIG_DIR, "robots.yaml")
+
+class TelegramTab(QWidget):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        
+        # 🔴 Determina il percorso sicuro per la StringSession
+        self.save_dir = os.path.join(str(Path.home()), ".superagent_data")
+        os.makedirs(self.save_dir, exist_ok=True)
+        self.session_file = os.path.join(self.save_dir, "telegram_session.dat")
+
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        
+        self.api_id_input = QLineEdit(str(config.get("telegram", {}).get("api_id", "")))
+        self.api_hash_input = QLineEdit(config.get("telegram", {}).get("api_hash", ""))
+        self.phone_input = QLineEdit(config.get("telegram", {}).get("phone", ""))
+        
+        # 🔴 Nuovo Campo per la StringSession (Oscurato)
+        self.session_string_input = QLineEdit()
+        self.session_string_input.setPlaceholderText("Incolla qui la StringSession generata...")
+        self.session_string_input.setEchoMode(QLineEdit.Password)
+        
+        if os.path.exists(self.session_file):
+            with open(self.session_file, "r", encoding="utf-8") as f:
+                self.session_string_input.setText(f.read().strip())
+
+        form_layout.addRow("API ID:", self.api_id_input)
+        form_layout.addRow("API Hash:", self.api_hash_input)
+        form_layout.addRow("Telefono:", self.phone_input)
+        form_layout.addRow("🔑 Session String (Master):", self.session_string_input)
+        
+        layout.addLayout(form_layout)
+
+        save_btn = QPushButton("💾 Salva Credenziali Telegram")
+        save_btn.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold; padding: 8px;")
+        save_btn.clicked.connect(self._save_settings)
+        layout.addWidget(save_btn)
+        
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def _save_settings(self):
+        if "telegram" not in self.config:
+            self.config["telegram"] = {}
+            
+        self.config["telegram"]["api_id"] = self.api_id_input.text().strip()
+        self.config["telegram"]["api_hash"] = self.api_hash_input.text().strip()
+        self.config["telegram"]["phone"] = self.phone_input.text().strip()
+        
+        config_loader = __import__('core.config_loader').config_loader.ConfigLoader()
+        config_loader.save_config(self.config)
+        
+        # 🔴 Salva la StringSession nel file locale (FUORI DA GITHUB)
+        session_str = self.session_string_input.text().strip()
+        if session_str:
+            with open(self.session_file, "w", encoding="utf-8") as f:
+                f.write(session_str)
+        else:
+            if os.path.exists(self.session_file):
+                os.remove(self.session_file)
+
+        QMessageBox.information(self, "Successo", "Credenziali Telegram salvate con successo!\nLa Session String è al sicuro nel tuo PC.")
+
 
 class RobotsTab(QWidget):
     def __init__(self, logger, controller):
@@ -26,7 +91,6 @@ class RobotsTab(QWidget):
     def init_ui(self):
         layout = QHBoxLayout(self)
 
-        # SINISTRA
         left_panel = QVBoxLayout()
         self.robot_list = QListWidget()
         self.robot_list.currentRowChanged.connect(self.select_robot)
@@ -36,16 +100,15 @@ class RobotsTab(QWidget):
         left_panel.addWidget(self.robot_list)
         
         self.btn_add = QPushButton("➕ NUOVO ROBOT")
-        self.btn_add.setStyleSheet("background-color: #2980b9; color: white;")
+        self.btn_add.setStyleSheet("background-color: #2980b9; color: white; padding: 5px;")
         self.btn_add.clicked.connect(self.add_robot)
         self.btn_save = QPushButton("💾 SALVA TUTTO")
-        self.btn_save.setStyleSheet("background-color: #27ae60; color: white;")
+        self.btn_save.setStyleSheet("background-color: #27ae60; color: white; padding: 5px;")
         self.btn_save.clicked.connect(self.save_robots_to_disk)
         
         left_panel.addWidget(self.btn_add)
         left_panel.addWidget(self.btn_save)
 
-        # DESTRA
         self.right_group = QGroupBox("⚙️ CONFIGURAZIONE STRATEGIA")
         self.right_layout = QVBoxLayout()
 
@@ -72,14 +135,13 @@ class RobotsTab(QWidget):
         form_layout.addRow("Chat ID:", self.input_chat_ids)
         self.right_layout.addLayout(form_layout)
 
-        # SEZIONE AI
         ai_group = QGroupBox("🧠 AI STRATEGY ARCHITECT")
         ai_layout = QVBoxLayout()
         self.input_template = QTextEdit(); self.input_template.setMaximumHeight(60); self.input_template.textChanged.connect(self.update_data)
         self.input_logic = QTextEdit(); self.input_logic.setMaximumHeight(60); self.input_logic.textChanged.connect(self.update_data)
         
         btn_ai = QPushButton("🔮 INTERPRETA REGOLA")
-        btn_ai.setStyleSheet("background-color: #8e44ad; color: white; font-weight: bold;")
+        btn_ai.setStyleSheet("background-color: #8e44ad; color: white; font-weight: bold; padding: 5px;")
         btn_ai.clicked.connect(self.request_ai)
         
         self.txt_ai_feedback = QTextEdit()
@@ -104,7 +166,8 @@ class RobotsTab(QWidget):
 
     def load_robots(self):
         if os.path.exists(ROBOTS_FILE):
-            with open(ROBOTS_FILE, 'r') as f: self.robots_data = yaml.safe_load(f) or []
+            with open(ROBOTS_FILE, 'r', encoding='utf-8') as f: 
+                self.robots_data = yaml.safe_load(f) or []
         self.refresh_list()
 
     def refresh_list(self):
@@ -181,15 +244,18 @@ class RobotsTab(QWidget):
             self.refresh_list(); self.select_robot(-1)
 
     def save_robots_to_disk(self):
-        with open(ROBOTS_FILE, 'w') as f: yaml.dump(self.robots_data, f)
+        with open(ROBOTS_FILE, 'w', encoding='utf-8') as f: 
+            yaml.dump(self.robots_data, f)
         QMessageBox.information(self, "OK", "✅ Salvato!")
+
 
 class DesktopApp(QMainWindow):
     def __init__(self, logger, executor, config, monitor, controller):
         super().__init__()
         self.logger = logger
         self.controller = controller
-        self.setWindowTitle("DOM2 V8.5 - AI STRATEGY CENTER")
+        self.config = config
+        self.setWindowTitle("DOM2 V8.5 - SECURE AI STRATEGY CENTER")
         self.resize(1300, 850)
         
         main_widget = QWidget()
@@ -197,11 +263,24 @@ class DesktopApp(QMainWindow):
         layout = QVBoxLayout(main_widget)
         self.tabs = QTabWidget()
         
-        self.dashboard_tab = QWidget(); self.setup_dash(self.dashboard_tab); self.tabs.addTab(self.dashboard_tab, "📊 Dashboard")
-        self.robots_tab = RobotsTab(self.logger, self.controller); self.tabs.addTab(self.robots_tab, "🤖 ROBOT STRATEGY")
+        self.dashboard_tab = QWidget()
+        self.setup_dash(self.dashboard_tab)
+        self.tabs.addTab(self.dashboard_tab, "📊 Dashboard")
         
-        self.logs_tab = QWidget(); l = QVBoxLayout(self.logs_tab)
-        self.log_output = QTextEdit(); self.log_output.setReadOnly(True); l.addWidget(self.log_output)
+        self.robots_tab = RobotsTab(self.logger, self.controller)
+        self.tabs.addTab(self.robots_tab, "🤖 ROBOT STRATEGY")
+        
+        # 🔴 LA NUOVA TAB TELEGRAM INTEGRATA
+        self.telegram_tab = TelegramTab(self.config)
+        self.tabs.addTab(self.telegram_tab, "📲 Telegram")
+        
+        self.logs_tab = QWidget()
+        l = QVBoxLayout(self.logs_tab)
+        self.log_output = QTextEdit()
+        self.log_output.setReadOnly(True)
+        # Font tipo console per i log
+        self.log_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: monospace;")
+        l.addWidget(self.log_output)
         self.tabs.addTab(self.logs_tab, "📝 Logs")
         
         layout.addWidget(self.tabs)
@@ -209,7 +288,8 @@ class DesktopApp(QMainWindow):
 
     def setup_dash(self, tab):
         l = QVBoxLayout(tab)
-        l.addWidget(QLabel("SYSTEM STATUS: RUNNING (Vedi Config.yaml per modalita Real/Safe)"))
+        l.addWidget(QLabel("<h2>SYSTEM STATUS: 🟢 RUNNING</h2><p>Le tue credenziali Telegram sono processate in Secure Mode.</p>"))
+        l.addStretch()
 
 def run_app(logger, executor, config, monitor, controller):
     app = QApplication.instance()
