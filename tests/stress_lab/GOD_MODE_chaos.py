@@ -51,6 +51,17 @@ DomExecutorPlaywright.check_settled_bets=lambda self:None
 DomExecutorPlaywright.check_open_bet=lambda self:False
 
 # =========================================================
+# MOCK TELEGRAM (Fingiamo una connessione stabile)
+# =========================================================
+from core.telegram_worker import TelegramWorker
+def mock_tg_run(self):
+    self._is_running = True
+    while self._is_running:
+        time.sleep(0.1)
+TelegramWorker.run = mock_tg_run
+TelegramWorker.stop = lambda self: setattr(self, '_is_running', False)
+
+# =========================================================
 # BOOT CONTROLLER
 # =========================================================
 from core.controller import SuperAgentController
