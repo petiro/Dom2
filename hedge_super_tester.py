@@ -56,6 +56,18 @@ def mocked_place(self, teams, market, stake):
     return True
 DomExecutorPlaywright.place_bet = mocked_place
 
+# E. Patch check_open_bet (Evita blocco iniziale e timeout di rete)
+def mocked_check_open(self):
+    print("🔧 HEDGE MOCK: check_open_bet simulato (Nessuna bet aperta)")
+    return False
+DomExecutorPlaywright.check_open_bet = mocked_check_open
+
+# F. Patch get_balance (Evita blocco verifica fondi)
+def mocked_get_balance(self):
+    print("🔧 HEDGE MOCK: get_balance simulato (1000.0€)")
+    return 1000.0
+DomExecutorPlaywright.get_balance = mocked_get_balance
+
 # ---------------------------------------------------
 # 3. IMPORT CORE
 # ---------------------------------------------------
