@@ -12,14 +12,13 @@ from PySide6.QtCore import QObject, Signal
 
 from core.event_bus import bus
 from core.playwright_worker import PlaywrightWorker
+from core.telegram_worker import TelegramWorker  # 🔴 FIX 1: Import Telegram
 from core.execution_engine import ExecutionEngine
 from core.money_management import MoneyManager
 from core.dom_executor_playwright import DomExecutorPlaywright
 from core.database import Database
 from core.config_paths import CONFIG_DIR
 from core.config_loader import ConfigLoader
-
-# 🔴 FIX DEFINITIVO: Legge i robot dal Vault sicuro
 from core.secure_storage import RobotManager
 
 class SuperAgentController(QObject):
@@ -41,6 +40,10 @@ class SuperAgentController(QObject):
         self.worker.executor = DomExecutorPlaywright(logger=logger, allow_place=allow_bets)
         self.engine = ExecutionEngine(bus, self.worker.executor, logger)
 
+        # 🔴 FIX 1: Telegram Worker riattivato e collegato!
+        self.telegram = TelegramWorker(self.config)
+        self.telegram.message_received.connect(self.process_signal)
+
         self.bet_lock = False
         self.circuit_open = False
         self._lock = threading.Lock()
@@ -50,14 +53,14 @@ class SuperAgentController(QObject):
         self.consecutive_crashes = 0
         self.last_desync_check = time.time()
         
-        # ☢️ Init variabili di sicurezza estreme
         self.last_worker_heartbeat = time.time()
-        self.nuclear_threshold = 90  # Secondi massimi di blocco prima del reset totale
+        self.nuclear_threshold = 90  
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
 
         self.worker.start()
+        self.telegram.start()  # 🔴 FIX 1: Avvia l'ascolto!
         bus.start()
         threading.Thread(target=self._settled_watchdog, daemon=True).start()
 
@@ -68,6 +71,9 @@ class SuperAgentController(QObject):
         self.logger.critical("☢️ NUCLEAR RESTART ATTIVATO")
         try:
             try: self.worker.stop()
+            except Exception: pass
+            
+            try: self.telegram.stop()
             except Exception: pass
 
             try: self.worker.executor.close()
@@ -80,8 +86,11 @@ class SuperAgentController(QObject):
             allow_bets = self.config.get("betting", {}).get("allow_place", False)
             self.worker.executor = DomExecutorPlaywright(logger=self.logger, allow_place=allow_bets)
             self.worker.start()
+            self.telegram = TelegramWorker(self.config)
+            self.telegram.message_received.connect(self.process_signal)
+            self.telegram.start()
+            
             self.last_worker_heartbeat = time.time()
-
             self.logger.critical("☢️ NUCLEAR RESTART COMPLETATO. Sistema di nuovo online.")
         except Exception as e:
             self.logger.critical(f"NUCLEAR FAILURE: {e}")
@@ -97,7 +106,7 @@ class SuperAgentController(QObject):
                 api_key = f.read().strip()
                 
         if not api_key:
-            self.ai_analysis_ready.emit("❌ ERRORE: API Key OpenRouter mancante. Inseriscila nella UI (Tab Cloud & API).")
+            self.ai_analysis_ready.emit("❌ ERRORE: API Key OpenRouter mancante. Inseriscila nella UI.")
             return
             
         prompt = f"Regola: '{description}'. Messaggio: '{msg_template}'. Spiega: OBIETTIVO, DATI, LOGICA, MERCATO."
@@ -112,30 +121,19 @@ class SuperAgentController(QObject):
             except Exception: continue
         self.ai_analysis_ready.emit("❌ ERRORE: Analisi AI fallita o server OpenRouter non disponibile.")
 
-    # ==========================================
-    # 🔴 CORE LOGIC: PROCESSAMENTO SEGNALI (RIPRISTINATA)
-    # ==========================================
     def process_signal(self, payload):
-        """ Riceve il segnale e lo instrada al motore di esecuzione tramite la coda del Worker. """
         self.logger.info(f"📥 Controller instrada segnale: {payload}")
-        
-        # Se il segnale arriva come testo grezzo (es. dal tester o legacy) normalizzalo in dict
         if isinstance(payload, str):
-            payload = {"teams": "Simulazione Match", "market": "Test", "raw_text": payload}
+            payload = {"teams": "Analisi Auto", "market": "N/A", "raw_text": payload}
             
         if not self.worker.running:
             self.logger.error("❌ Worker spento. Segnale droppato.")
             return False
             
-        # 🔴 FIX DEFINITIVO: Accoda la richiesta all'ExecutionEngine dentro il PlaywrightWorker!
         self.worker.submit(self.engine.process_signal, payload, self.money_manager)
         return True
 
-    # ==========================================
-    # 🔴 COMPATIBILITY LAYER FOR HEDGE TEST CI
-    # ==========================================
     def handle_signal(self, signal):
-        """ Wrapper compatibile con hedge_super_tester.py """
         self.logger.info("🛠️ [COMPATIBILITY] Ricevuto segnale dal Tester, inoltro al motore V8...")
         return self.process_signal(signal)
 
@@ -145,5 +143,39 @@ class SuperAgentController(QObject):
     def _on_bet_failed(self, event):
         self.logger.info(f"❌ Bet Failed Event: {event}")
 
+    # 🔴 FIX 2: WATCHDOG IMPLEMENTATO (Sblocca i loop di pending eterni)
     def _settled_watchdog(self):
-        pass
+        self.logger.info("👁️ Watchdog Refertazione DB avviato in background.")
+        while True:
+            time.sleep(120)  # Controlla referti ogni 2 minuti
+            try:
+                pending_bets = self.money_manager.db.pending()
+                if not pending_bets:
+                    continue
+                
+                # Accodiamo al PlaywrightWorker il controllo del Bookmaker
+                def check_job():
+                    try:
+                        self.logger.info(f"⏳ Controllo {len(pending_bets)} referti pendenti su Bookmaker...")
+                        res = self.worker.executor.check_settled_bets()
+                        if res and res.get("status"):
+                            status = res["status"]
+                            payout = res.get("payout", 0.0)
+                            
+                            # Refertiamo la più vecchia pending in coda
+                            oldest_tx = pending_bets[0]["tx_id"]
+                            if status == "WIN":
+                                self.money_manager.win(oldest_tx, payout)
+                            elif status == "LOSS":
+                                self.money_manager.loss(oldest_tx)
+                            elif status == "VOID":
+                                self.money_manager.refund(oldest_tx)
+                                
+                            self.logger.info(f"⚖️ Esito refertato in DB! TX: {oldest_tx[:8]} -> {status} (€{payout})")
+                    except Exception as e:
+                        self.logger.error(f"Errore lettura referti bookmaker: {e}")
+                
+                self.worker.submit(check_job)
+                
+            except Exception as e:
+                self.logger.error(f"Errore Loop Watchdog PENDING: {e}")
