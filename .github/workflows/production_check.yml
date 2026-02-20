@@ -22,11 +22,15 @@ jobs:
         with:
           python-version: "3.10"
 
+      # 🔴 FIX 1: Installa dipendenze di sistema (Schermo virtuale) per PyAutoGUI
+      - name: 🖥️ Install XVFB for Headless GUI
+        run: sudo apt-get update && sudo apt-get install -y xvfb x11-utils
+
+      # 🔴 FIX 2: Usa prefer-binary per evitare timeout sulle dipendenze C++
       - name: 📦 Install Dependencies
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # Installiamo psutil per memory audit e playwright
+          python -m pip install --upgrade pip wheel setuptools
+          if [ -f requirements.txt ]; then pip install --prefer-binary -r requirements.txt; fi
           pip install playwright pytest psutil
 
       - name: 🎭 Install Playwright Browsers
@@ -34,9 +38,9 @@ jobs:
           playwright install chromium
           playwright install-deps
 
+      # 🔴 FIX 3: Avvia con xvfb-run (Simula il monitor)
       - name: 🚀 RUN HEDGE TEST
         env:
-          # Necessario per PySide6 su server headless (senza schermo)
           QT_QPA_PLATFORM: offscreen
         run: |
-          python hedge_super_tester.py
+          xvfb-run python hedge_super_tester.py
