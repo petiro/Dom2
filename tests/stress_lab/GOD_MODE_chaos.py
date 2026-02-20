@@ -37,9 +37,14 @@ import core.config_paths
 core.config_paths.CONFIG_DIR=TEST_DIR
 
 # =========================================================
-# MOCK PLAYWRIGHT (Disabilitiamo il Browser Reale)
+# MOCK PLAYWRIGHT (Disabilitiamo Browser e Tempi di attesa)
 # =========================================================
 from core.dom_executor_playwright import DomExecutorPlaywright
+import core.execution_engine
+
+# MACCHINA DEL TEMPO: Azzera le pause di 1.5s per caricamento pagina!
+core.execution_engine.time.sleep = lambda x: None 
+
 DomExecutorPlaywright.__init__=lambda self,*a,**k:None
 DomExecutorPlaywright.launch_browser=lambda self:True
 DomExecutorPlaywright.ensure_login=lambda self:True
@@ -57,7 +62,7 @@ from core.telegram_worker import TelegramWorker
 def mock_tg_run(self):
     self._is_running = True
     while self._is_running:
-        time.sleep(0.1)
+        time.sleep(0.1) # Questo sleep appartiene al worker, lo lasciamo
 TelegramWorker.run = mock_tg_run
 TelegramWorker.stop = lambda self: setattr(self, '_is_running', False)
 
@@ -97,7 +102,6 @@ try:
     def crash(p): raise RuntimeError("BOOM! Subscriber Crash")
     def good(p): survived["v"]=True
 
-    # Iscriviamo un killer e un sopravvissuto
     controller.engine.bus.subscribe("TEST_EVT",crash)
     controller.engine.bus.subscribe("TEST_EVT",good)
 
@@ -120,12 +124,10 @@ try:
     def poison(): raise ValueError("SEGNALE CORROTTO")
     def good(): alive["v"]=True
 
-    # Iniettiamo 20 pillole avvelenate
     for _ in range(20):
         controller.worker.submit(poison)
 
     time.sleep(1)
-    # Iniettiamo task sano
     controller.worker.submit(good)
     time.sleep(1)
 
@@ -145,7 +147,6 @@ try:
     def spam():
         try:
             for _ in range(200):
-                # Lettura + Scrittura + Rollback concorrente
                 controller.money_manager.bankroll()
                 tx=str(random.random())
                 controller.money_manager.reserve(1.0)
@@ -153,7 +154,6 @@ try:
         except Exception:
             err["v"]=True
 
-    # 20 Thread contemporanei che martellano SQLite
     threads=[threading.Thread(target=spam) for _ in range(20)]
     [t.start() for t in threads]
     [t.join() for t in threads]
@@ -172,7 +172,6 @@ try:
     controller.money_manager.get_stake=lambda o:5.0
     before=controller.money_manager.bankroll()
 
-    # Manomettiamo l'EventBus per crashare DOPO il piazzamento
     orig=controller.engine.bus.emit
     def crash_emit(ev,p):
         if ev=="BET_SUCCESS":
@@ -183,7 +182,6 @@ try:
     controller.engine.process_signal({"teams":"A-B","market":"1"},controller.money_manager)
     after=controller.money_manager.bankroll()
 
-    # Se i soldi sono tornati indietro (refund), è un bug gravissimo
     if after==before:
         fail("LEDGER","CRITICO: Refund fantasma eseguito dopo bet piazzata sul sito!")
     else:
@@ -194,10 +192,10 @@ except Exception as e:
     fail("LEDGER",str(e))
 
 # =========================================================
-# TEST 6 — ENGINE STRESS (5000 Segnali)
+# TEST 6 — ENGINE STRESS (1000 Segnali in mezzo secondo)
 # =========================================================
 try:
-    print("▶️ Stress Test: Processando 1000 segnali rapidi...")
+    print("▶️ Stress Test: Processando 1000 segnali rapidi (Time Sleep Bypassato)...")
     for _ in range(1000):
         controller.engine.process_signal({"teams":"X-Y","market":"1"},controller.money_manager)
     ok("Engine Stress Test SUPERATO")
