@@ -1,253 +1,79 @@
 import sys
-import yaml
 import os
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QLabel, QPushButton, QTextEdit, 
-                             QTabWidget, QLineEdit, QComboBox, QGroupBox, 
-                             QFormLayout, QListWidget, QMessageBox, QSplitter)
-from PySide6.QtCore import Qt, Slot
-from PySide6.QtGui import QFont
+                             QLabel, QTextEdit, QTabWidget, QLineEdit, QFormLayout, 
+                             QPushButton, QMessageBox)
 
-from core.config_paths import CONFIG_DIR
+# 🔴 IMPORTA I MODULI UI DEL VAULT SICURO
+from ui.bookmaker_tab import BookmakerTab
+from ui.selectors_tab import SelectorsTab
+from ui.robots_tab import RobotsTab
 
-ROBOTS_FILE = os.path.join(CONFIG_DIR, "robots.yaml")
-
-class TelegramTab(QWidget):
+class CloudApiTab(QWidget):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        
-        # 🔴 Determina il percorso sicuro per la StringSession
         self.save_dir = os.path.join(str(Path.home()), ".superagent_data")
         os.makedirs(self.save_dir, exist_ok=True)
+        
         self.session_file = os.path.join(self.save_dir, "telegram_session.dat")
+        self.openrouter_file = os.path.join(self.save_dir, "openrouter_key.dat")
 
         layout = QVBoxLayout()
         form_layout = QFormLayout()
         
         self.api_id_input = QLineEdit(str(config.get("telegram", {}).get("api_id", "")))
         self.api_hash_input = QLineEdit(config.get("telegram", {}).get("api_hash", ""))
-        self.phone_input = QLineEdit(config.get("telegram", {}).get("phone", ""))
         
-        # 🔴 Nuovo Campo per la StringSession (Oscurato)
         self.session_string_input = QLineEdit()
-        self.session_string_input.setPlaceholderText("Incolla qui la StringSession generata...")
         self.session_string_input.setEchoMode(QLineEdit.Password)
-        
         if os.path.exists(self.session_file):
-            with open(self.session_file, "r", encoding="utf-8") as f:
+            with open(self.session_file, "r", encoding="utf-8") as f: 
                 self.session_string_input.setText(f.read().strip())
 
+        self.openrouter_input = QLineEdit()
+        self.openrouter_input.setEchoMode(QLineEdit.Password)
+        if os.path.exists(self.openrouter_file):
+            with open(self.openrouter_file, "r", encoding="utf-8") as f: 
+                self.openrouter_input.setText(f.read().strip())
+
+        form_layout.addRow(QLabel("<b>📱 TELEGRAM CLOUD</b>"))
         form_layout.addRow("API ID:", self.api_id_input)
         form_layout.addRow("API Hash:", self.api_hash_input)
-        form_layout.addRow("Telefono:", self.phone_input)
-        form_layout.addRow("🔑 Session String (Master):", self.session_string_input)
+        form_layout.addRow("🔑 Session String:", self.session_string_input)
+        
+        form_layout.addRow(QLabel("<br><b>🧠 AI / OPENROUTER</b>"))
+        form_layout.addRow("🔑 API Key:", self.openrouter_input)
         
         layout.addLayout(form_layout)
 
-        save_btn = QPushButton("💾 Salva Credenziali Telegram")
-        save_btn.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold; padding: 8px;")
+        save_btn = QPushButton("💾 Salva Chiavi API & Cloud")
+        save_btn.setStyleSheet("background-color: #8e44ad; color: white; font-weight: bold; padding: 8px;")
         save_btn.clicked.connect(self._save_settings)
         layout.addWidget(save_btn)
-        
         layout.addStretch()
         self.setLayout(layout)
 
     def _save_settings(self):
-        if "telegram" not in self.config:
-            self.config["telegram"] = {}
-            
+        if "telegram" not in self.config: self.config["telegram"] = {}
         self.config["telegram"]["api_id"] = self.api_id_input.text().strip()
         self.config["telegram"]["api_hash"] = self.api_hash_input.text().strip()
-        self.config["telegram"]["phone"] = self.phone_input.text().strip()
         
         config_loader = __import__('core.config_loader').config_loader.ConfigLoader()
         config_loader.save_config(self.config)
         
-        # 🔴 Salva la StringSession nel file locale (FUORI DA GITHUB)
-        session_str = self.session_string_input.text().strip()
-        if session_str:
-            with open(self.session_file, "w", encoding="utf-8") as f:
-                f.write(session_str)
-        else:
-            if os.path.exists(self.session_file):
-                os.remove(self.session_file)
+        s_str = self.session_string_input.text().strip()
+        if s_str: 
+            with open(self.session_file, "w", encoding="utf-8") as f: f.write(s_str)
+        elif os.path.exists(self.session_file): os.remove(self.session_file)
 
-        QMessageBox.information(self, "Successo", "Credenziali Telegram salvate con successo!\nLa Session String è al sicuro nel tuo PC.")
+        or_key = self.openrouter_input.text().strip()
+        if or_key: 
+            with open(self.openrouter_file, "w", encoding="utf-8") as f: f.write(or_key)
+        elif os.path.exists(self.openrouter_file): os.remove(self.openrouter_file)
 
-
-class RobotsTab(QWidget):
-    def __init__(self, logger, controller):
-        super().__init__()
-        self.logger = logger
-        self.controller = controller
-        self.robots_data = []
-        self.current_index = -1
-        self.init_ui()
-        self.load_robots()
-        self.controller.ai_analysis_ready.connect(self.show_ai_response)
-
-    def init_ui(self):
-        layout = QHBoxLayout(self)
-
-        left_panel = QVBoxLayout()
-        self.robot_list = QListWidget()
-        self.robot_list.currentRowChanged.connect(self.select_robot)
-        font = QFont(); font.setPointSize(11); self.robot_list.setFont(font)
-        
-        left_panel.addWidget(QLabel("📋 SELEZIONA ROBOT:"))
-        left_panel.addWidget(self.robot_list)
-        
-        self.btn_add = QPushButton("➕ NUOVO ROBOT")
-        self.btn_add.setStyleSheet("background-color: #2980b9; color: white; padding: 5px;")
-        self.btn_add.clicked.connect(self.add_robot)
-        self.btn_save = QPushButton("💾 SALVA TUTTO")
-        self.btn_save.setStyleSheet("background-color: #27ae60; color: white; padding: 5px;")
-        self.btn_save.clicked.connect(self.save_robots_to_disk)
-        
-        left_panel.addWidget(self.btn_add)
-        left_panel.addWidget(self.btn_save)
-
-        self.right_group = QGroupBox("⚙️ CONFIGURAZIONE STRATEGIA")
-        self.right_layout = QVBoxLayout()
-
-        ctrl_layout = QHBoxLayout()
-        self.btn_toggle = QPushButton("⏸ PAUSA"); self.btn_toggle.clicked.connect(self.toggle_active)
-        self.btn_delete = QPushButton("🗑 ELIMINA"); self.btn_delete.clicked.connect(self.delete_robot)
-        ctrl_layout.addWidget(self.btn_toggle)
-        ctrl_layout.addWidget(self.btn_delete)
-        self.right_layout.addLayout(ctrl_layout)
-
-        form_layout = QFormLayout()
-        self.input_name = QLineEdit(); self.input_name.textChanged.connect(self.update_data)
-        self.input_triggers = QLineEdit(); self.input_triggers.textChanged.connect(self.update_data)
-        self.input_exclude = QLineEdit(); self.input_exclude.textChanged.connect(self.update_data)
-        self.combo_mm = QComboBox(); self.combo_mm.addItems(["Fisso (€)", "Roserpina (Progressione)"]); self.combo_mm.currentIndexChanged.connect(self.update_data)
-        self.input_stake = QLineEdit(); self.input_stake.textChanged.connect(self.update_data)
-        self.input_chat_ids = QLineEdit(); self.input_chat_ids.setPlaceholderText("-1001, -1002"); self.input_chat_ids.textChanged.connect(self.update_data)
-
-        form_layout.addRow("Nome:", self.input_name)
-        form_layout.addRow("Trigger:", self.input_triggers)
-        form_layout.addRow("Exclude:", self.input_exclude)
-        form_layout.addRow("Money M.:", self.combo_mm)
-        form_layout.addRow("Stake:", self.input_stake)
-        form_layout.addRow("Chat ID:", self.input_chat_ids)
-        self.right_layout.addLayout(form_layout)
-
-        ai_group = QGroupBox("🧠 AI STRATEGY ARCHITECT")
-        ai_layout = QVBoxLayout()
-        self.input_template = QTextEdit(); self.input_template.setMaximumHeight(60); self.input_template.textChanged.connect(self.update_data)
-        self.input_logic = QTextEdit(); self.input_logic.setMaximumHeight(60); self.input_logic.textChanged.connect(self.update_data)
-        
-        btn_ai = QPushButton("🔮 INTERPRETA REGOLA")
-        btn_ai.setStyleSheet("background-color: #8e44ad; color: white; font-weight: bold; padding: 5px;")
-        btn_ai.clicked.connect(self.request_ai)
-        
-        self.txt_ai_feedback = QTextEdit()
-        self.txt_ai_feedback.setStyleSheet("background-color: #2c3e50; color: #f1c40f;")
-        
-        ai_layout.addWidget(QLabel("1. Esempio Messaggio Telegram:")); ai_layout.addWidget(self.input_template)
-        ai_layout.addWidget(QLabel("2. Descrivi Regola:")); ai_layout.addWidget(self.input_logic)
-        ai_layout.addWidget(btn_ai)
-        ai_layout.addWidget(QLabel("3. Interpretazione (Modificabile):")); ai_layout.addWidget(self.txt_ai_feedback)
-        
-        ai_group.setLayout(ai_layout)
-        self.right_layout.addWidget(ai_group)
-        self.right_group.setLayout(self.right_layout)
-        self.right_group.setEnabled(False)
-
-        splitter = QSplitter(Qt.Horizontal)
-        left_widget = QWidget(); left_widget.setLayout(left_panel)
-        splitter.addWidget(left_widget)
-        splitter.addWidget(self.right_group)
-        splitter.setStretchFactor(1, 2)
-        layout.addWidget(splitter)
-
-    def load_robots(self):
-        if os.path.exists(ROBOTS_FILE):
-            with open(ROBOTS_FILE, 'r', encoding='utf-8') as f: 
-                self.robots_data = yaml.safe_load(f) or []
-        self.refresh_list()
-
-    def refresh_list(self):
-        self.robot_list.clear()
-        for r in self.robots_data:
-            s = "🟢" if r.get('enabled', True) else "⏸️"
-            self.robot_list.addItem(f"{s} {r.get('name', 'Nuovo')}")
-
-    def select_robot(self, idx):
-        if idx < 0 or idx >= len(self.robots_data):
-            self.right_group.setEnabled(False); return
-        self.current_index = idx
-        self.right_group.setEnabled(True)
-        data = self.robots_data[idx]
-        
-        self.block(True)
-        self.input_name.setText(data.get('name', ''))
-        self.input_triggers.setText(", ".join(data.get('trigger_words', [])))
-        self.input_exclude.setText(", ".join(data.get('exclude_words', [])))
-        self.combo_mm.setCurrentText(data.get('mm_mode', "Fisso (€)"))
-        self.input_stake.setText(str(data.get('stake_value', '')))
-        
-        chats = data.get('specific_chat_id', '')
-        if isinstance(chats, list): self.input_chat_ids.setText(", ".join(map(str, chats)))
-        else: self.input_chat_ids.setText(str(chats) if chats else "")
-
-        self.input_template.setPlainText(data.get('msg_template', ''))
-        self.input_logic.setPlainText(data.get('logic_description', ''))
-        self.txt_ai_feedback.setPlainText(data.get('ai_interpretation', ''))
-        self.block(False)
-
-    def update_data(self):
-        if self.current_index < 0: return
-        data = self.robots_data[self.current_index]
-        data['name'] = self.input_name.text()
-        data['trigger_words'] = [w.strip() for w in self.input_triggers.text().split(',') if w.strip()]
-        data['exclude_words'] = [w.strip() for w in self.input_exclude.text().split(',') if w.strip()]
-        data['mm_mode'] = self.combo_mm.currentText()
-        try: data['stake_value'] = float(self.input_stake.text())
-        except: data['stake_value'] = 0.0
-        data['specific_chat_id'] = self.input_chat_ids.text()
-        data['msg_template'] = self.input_template.toPlainText()
-        data['logic_description'] = self.input_logic.toPlainText()
-        
-        self.robot_list.item(self.current_index).setText(f"{'🟢' if data.get('enabled', True) else '⏸️'} {data['name']}")
-
-    def toggle_active(self):
-        if self.current_index < 0: return
-        self.robots_data[self.current_index]['enabled'] = not self.robots_data[self.current_index].get('enabled', True)
-        self.refresh_list(); self.robot_list.setCurrentRow(self.current_index)
-
-    def request_ai(self):
-        self.txt_ai_feedback.setPlainText("⏳ Analisi in corso...")
-        self.controller.test_ai_strategy(self.input_logic.toPlainText(), self.input_template.toPlainText())
-
-    @Slot(str)
-    def show_ai_response(self, response):
-        self.txt_ai_feedback.setPlainText(response)
-        if self.current_index >= 0:
-            self.robots_data[self.current_index]['ai_interpretation'] = response
-
-    def block(self, b):
-        self.input_name.blockSignals(b); self.input_triggers.blockSignals(b); self.input_exclude.blockSignals(b)
-        self.combo_mm.blockSignals(b); self.input_stake.blockSignals(b); self.input_chat_ids.blockSignals(b)
-        self.input_template.blockSignals(b); self.input_logic.blockSignals(b)
-
-    def add_robot(self):
-        self.robots_data.append({"name": "Nuovo Robot", "enabled": True})
-        self.refresh_list(); self.robot_list.setCurrentRow(len(self.robots_data)-1)
-
-    def delete_robot(self):
-        if self.current_index >= 0:
-            del self.robots_data[self.current_index]
-            self.refresh_list(); self.select_robot(-1)
-
-    def save_robots_to_disk(self):
-        with open(ROBOTS_FILE, 'w', encoding='utf-8') as f: 
-            yaml.dump(self.robots_data, f)
-        QMessageBox.information(self, "OK", "✅ Salvato!")
-
+        QMessageBox.information(self, "Successo", "Chiavi sicure salvate nel Vault Locale.")
 
 class DesktopApp(QMainWindow):
     def __init__(self, logger, executor, config, monitor, controller):
@@ -255,7 +81,7 @@ class DesktopApp(QMainWindow):
         self.logger = logger
         self.controller = controller
         self.config = config
-        self.setWindowTitle("DOM2 V8.5 - SECURE AI STRATEGY CENTER")
+        self.setWindowTitle("SUPERAGENT OS - HEDGE GRADE 24/7")
         self.resize(1300, 850)
         
         main_widget = QWidget()
@@ -264,32 +90,29 @@ class DesktopApp(QMainWindow):
         self.tabs = QTabWidget()
         
         self.dashboard_tab = QWidget()
-        self.setup_dash(self.dashboard_tab)
+        l = QVBoxLayout(self.dashboard_tab)
+        l.addWidget(QLabel("<h2>SYSTEM STATUS: 🟢 WATCHDOG OS ACTIVE</h2><p>Tutti i dati sono protetti in ~/.superagent_data/. Backup automatico attivo.</p>"))
+        l.addStretch()
         self.tabs.addTab(self.dashboard_tab, "📊 Dashboard")
         
-        self.robots_tab = RobotsTab(self.logger, self.controller)
-        self.tabs.addTab(self.robots_tab, "🤖 ROBOT STRATEGY")
+        # 🔴 LE TRE TAB MODULARI CHE LEGGONO DAL VAULT
+        self.tabs.addTab(BookmakerTab(), "💰 Bookmakers")
+        self.tabs.addTab(SelectorsTab(), "🧩 Selettori")
+        self.tabs.addTab(RobotsTab(self.logger, self.controller), "🤖 Robot & Strategie")
         
-        # 🔴 LA NUOVA TAB TELEGRAM INTEGRATA
-        self.telegram_tab = TelegramTab(self.config)
-        self.tabs.addTab(self.telegram_tab, "📲 Telegram")
+        # Cloud & AI
+        self.cloud_tab = CloudApiTab(self.config)
+        self.tabs.addTab(self.cloud_tab, "☁️ Cloud & API")
         
-        self.logs_tab = QWidget()
-        l = QVBoxLayout(self.logs_tab)
-        self.log_output = QTextEdit()
-        self.log_output.setReadOnly(True)
-        # Font tipo console per i log
+        # Logs
+        self.logs_tab = QWidget(); log_l = QVBoxLayout(self.logs_tab)
+        self.log_output = QTextEdit(); self.log_output.setReadOnly(True)
         self.log_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: monospace;")
-        l.addWidget(self.log_output)
+        log_l.addWidget(self.log_output)
         self.tabs.addTab(self.logs_tab, "📝 Logs")
         
         layout.addWidget(self.tabs)
         self.controller.log_message.connect(self.log_output.append)
-
-    def setup_dash(self, tab):
-        l = QVBoxLayout(tab)
-        l.addWidget(QLabel("<h2>SYSTEM STATUS: 🟢 RUNNING</h2><p>Le tue credenziali Telegram sono processate in Secure Mode.</p>"))
-        l.addStretch()
 
 def run_app(logger, executor, config, monitor, controller):
     app = QApplication.instance()
