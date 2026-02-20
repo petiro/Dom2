@@ -127,7 +127,30 @@ class SuperAgentController(QObject):
             except Exception: continue
         self.ai_analysis_ready.emit("❌ ERRORE: Analisi AI fallita o server OpenRouter non disponibile.")
 
-    # (Lascia qui le altre eventuali funzioni _on_bet_success o process_signal se le avevi)
+    # ==========================================
+    # 🔴 COMPATIBILITY LAYER FOR HEDGE TEST CI
+    # ==========================================
+    def handle_signal(self, signal):
+        """
+        Wrapper compatibile con hedge_super_tester.py.
+        Inoltra il finto segnale alla vera logica V8.
+        """
+        try:
+            self.logger.info("🛠️ [COMPATIBILITY] Ricevuto segnale dal Tester, inoltro al motore V8...")
+            
+            # Se la tua architettura V8 processa il segnale in un metodo specifico (es: process_signal)
+            if hasattr(self, "process_signal"):
+                return self.process_signal(signal)
+            
+            # Altrimenti spara nell'EventBus globale per far svegliare il Worker    
+            from core.event_bus import bus
+            bus.emit("NEW_SIGNAL", signal)
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Errore nel compatibility layer handle_signal: {e}", exc_info=True)
+            return False
+
     def _on_bet_success(self, event):
         pass
 
