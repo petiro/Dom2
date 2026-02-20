@@ -214,7 +214,9 @@ except Exception as e:
 # =========================================================
 try:
     original_sleep(2) # Diamo 2 secondi al worker per smaltire la coda
-    if not controller.worker.is_alive():
+    
+    # 🔴 FIX SINTASSI: Aggiunto ".thread." prima di ".is_alive()"
+    if not controller.worker.thread.is_alive():
         fail("FREEZE","Worker Thread morto silenziosamente")
     else:
         ok("Sistema ATTIVO e REATTIVO")
