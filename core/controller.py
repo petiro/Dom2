@@ -62,37 +62,23 @@ class SuperAgentController(QObject):
         threading.Thread(target=self._settled_watchdog, daemon=True).start()
 
     def _load_robots(self):
-        # 🔴 FIX: Usa il nuovo Manager Vault invece del vecchio robots.yaml
         return RobotManager().all()
 
     def _nuclear_restart(self):
         self.logger.critical("☢️ NUCLEAR RESTART ATTIVATO")
         try:
-            # 1. Stop forzato worker
-            try:
-                self.worker.stop()
-            except Exception:
-                pass
+            try: self.worker.stop()
+            except Exception: pass
 
-            # 2. Stop forzato executor
-            try:
-                self.worker.executor.close()
-            except Exception:
-                pass
+            try: self.worker.executor.close()
+            except Exception: pass
 
-            # 3. Reset stato interno
             self.bet_lock = False
             self.circuit_open = False
             self.consecutive_crashes = 0
 
-            # 4. Ricrea executor pulito
             allow_bets = self.config.get("betting", {}).get("allow_place", False)
-            self.worker.executor = DomExecutorPlaywright(
-                logger=self.logger,
-                allow_place=allow_bets
-            )
-
-            # 5. Riavvia worker
+            self.worker.executor = DomExecutorPlaywright(logger=self.logger, allow_place=allow_bets)
             self.worker.start()
             self.last_worker_heartbeat = time.time()
 
@@ -104,7 +90,6 @@ class SuperAgentController(QObject):
         threading.Thread(target=self._run_ai_analysis, args=(description, msg_template)).start()
 
     def _run_ai_analysis(self, description, msg_template):
-        # 🔴 LETTURA SICURA API KEY OPENROUTER DAL VAULT
         api_key = ""
         key_file = os.path.join(str(Path.home()), ".superagent_data", "openrouter_key.dat")
         if os.path.exists(key_file):
@@ -128,34 +113,37 @@ class SuperAgentController(QObject):
         self.ai_analysis_ready.emit("❌ ERRORE: Analisi AI fallita o server OpenRouter non disponibile.")
 
     # ==========================================
+    # 🔴 CORE LOGIC: PROCESSAMENTO SEGNALI (RIPRISTINATA)
+    # ==========================================
+    def process_signal(self, payload):
+        """ Riceve il segnale e lo instrada al motore di esecuzione tramite la coda del Worker. """
+        self.logger.info(f"📥 Controller instrada segnale: {payload}")
+        
+        # Se il segnale arriva come testo grezzo (es. dal tester o legacy) normalizzalo in dict
+        if isinstance(payload, str):
+            payload = {"teams": "Simulazione Match", "market": "Test", "raw_text": payload}
+            
+        if not self.worker.running:
+            self.logger.error("❌ Worker spento. Segnale droppato.")
+            return False
+            
+        # 🔴 FIX DEFINITIVO: Accoda la richiesta all'ExecutionEngine dentro il PlaywrightWorker!
+        self.worker.submit(self.engine.process_signal, payload, self.money_manager)
+        return True
+
+    # ==========================================
     # 🔴 COMPATIBILITY LAYER FOR HEDGE TEST CI
     # ==========================================
     def handle_signal(self, signal):
-        """
-        Wrapper compatibile con hedge_super_tester.py.
-        Inoltra il finto segnale alla vera logica V8.
-        """
-        try:
-            self.logger.info("🛠️ [COMPATIBILITY] Ricevuto segnale dal Tester, inoltro al motore V8...")
-            
-            # Se la tua architettura V8 processa il segnale in un metodo specifico (es: process_signal)
-            if hasattr(self, "process_signal"):
-                return self.process_signal(signal)
-            
-            # Altrimenti spara nell'EventBus globale per far svegliare il Worker    
-            from core.event_bus import bus
-            bus.emit("NEW_SIGNAL", signal)
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"❌ Errore nel compatibility layer handle_signal: {e}", exc_info=True)
-            return False
+        """ Wrapper compatibile con hedge_super_tester.py """
+        self.logger.info("🛠️ [COMPATIBILITY] Ricevuto segnale dal Tester, inoltro al motore V8...")
+        return self.process_signal(signal)
 
     def _on_bet_success(self, event):
-        pass
+        self.logger.info(f"✅ Bet Success Event: {event}")
 
     def _on_bet_failed(self, event):
-        pass
+        self.logger.info(f"❌ Bet Failed Event: {event}")
 
     def _settled_watchdog(self):
         pass
