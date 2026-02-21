@@ -32,7 +32,7 @@ def ok(code, desc):
     print(f"🟢 OK [{code}] → {desc}")
 
 # =========================================================
-# ENV SETUP ISOLATO
+# ENV SETUP ISOLATO & TIME TRAVEL (Macchina del tempo)
 # =========================================================
 TEST_DIR = "endurance_env"
 os.makedirs(TEST_DIR, exist_ok=True)
@@ -40,6 +40,11 @@ import core.config_paths
 core.config_paths.CONFIG_DIR = TEST_DIR
 with open(os.path.join(TEST_DIR, "config.yaml"), "w") as f:
     f.write("betting:\n  allow_place: false\n")
+
+# 🔴 FIX TIMEOUT: "Macchina del Tempo". 
+# Disabilita gli sleep lunghi per fare 4000 test in 2 secondi invece di 100 minuti!
+original_sleep = time.sleep
+time.sleep = lambda s: original_sleep(s) if s < 1 else None
 
 # =========================================================
 # MOCK PLAYWRIGHT & TELEGRAM
@@ -114,7 +119,7 @@ except Exception as e:
 try:
     shutdown_flag = {"finished": False}
     def slow_task():
-        time.sleep(1)
+        original_sleep(1) # Usa il VERO sleep qui per simulare il lavoro
         shutdown_flag["finished"] = True
 
     c.worker.submit(slow_task)
