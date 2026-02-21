@@ -38,16 +38,26 @@ def smart_sleep(seconds):
     original_sleep(seconds)
 time.sleep = smart_sleep
 
+# =========================================================
+# MOCK PLAYWRIGHT & TELEGRAM
+# =========================================================
 from core.dom_executor_playwright import DomExecutorPlaywright
-DomExecutorPlaywright.__init__=lambda self,*a,**k:None
-DomExecutorPlaywright.launch_browser=lambda self:True
-DomExecutorPlaywright.ensure_login=lambda self:True
-DomExecutorPlaywright.get_balance=lambda self:10000.0
-DomExecutorPlaywright.place_bet=lambda self,t,m,s:True
-DomExecutorPlaywright.navigate_to_match=lambda self,t:True
-DomExecutorPlaywright.find_odds=lambda self,t,m:2.0
-DomExecutorPlaywright.check_settled_bets=lambda self:None
-DomExecutorPlaywright.check_open_bet=lambda self:False
+
+def mock_init(self, *a, **k):
+    self.bet_count = 0
+    self.logger = logging.getLogger("MockExecutor")
+    self.page = None
+
+DomExecutorPlaywright.__init__ = mock_init
+DomExecutorPlaywright.launch_browser = lambda self: True
+DomExecutorPlaywright.ensure_login = lambda self: True
+DomExecutorPlaywright.get_balance = lambda self: 10000.0
+DomExecutorPlaywright.place_bet = lambda self, t, m, s: True
+DomExecutorPlaywright.navigate_to_match = lambda self, t: True
+DomExecutorPlaywright.find_odds = lambda self, t, m: 2.0
+DomExecutorPlaywright.check_settled_bets = lambda self: None
+DomExecutorPlaywright.check_open_bet = lambda self: False
+DomExecutorPlaywright.save_blackbox = lambda self, *args, **kwargs: None 
 
 from core.telegram_worker import TelegramWorker
 def mock_tg_run(self):
@@ -97,12 +107,6 @@ threads=[threading.Thread(target=spam) for _ in range(15)]
 [t.join() for t in threads]
 if err["v"]: fail("DATABASE","Race Condition / Database Locked!")
 else: ok("Database WAL Mode + RLock: CONCORRENZA PERFETTA")
-
-# 🔴 FIX: PULIZIA DEL DATABASE POST-STRESS! 
-# Cancelliamo le 750 bet fasulle create dal test sopra per non sballare i test dopo!
-with controller.money_manager.db._lock:
-    controller.money_manager.db.conn.execute("DELETE FROM journal")
-    controller.money_manager.db.conn.execute("UPDATE balance SET current_balance = 1000.0 WHERE id = 1")
 
 # 5. PHANTOM REFUND
 controller.money_manager.get_stake=lambda o:5.0
