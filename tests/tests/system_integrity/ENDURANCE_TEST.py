@@ -41,7 +41,13 @@ with open(os.path.join(TEST_DIR, "config.yaml"), "w") as f:
 # MOCK PLAYWRIGHT & TELEGRAM
 # =========================================================
 from core.dom_executor_playwright import DomExecutorPlaywright
-DomExecutorPlaywright.__init__ = lambda self, *a, **k: None
+
+def mock_init(self, *a, **k):
+    self.bet_count = 0
+    self.logger = logging.getLogger("MockExecutor")
+    self.page = None
+    
+DomExecutorPlaywright.__init__ = mock_init
 DomExecutorPlaywright.launch_browser = lambda self: True
 DomExecutorPlaywright.ensure_login = lambda self: True
 DomExecutorPlaywright.get_balance = lambda self: 1000.0
@@ -50,6 +56,7 @@ DomExecutorPlaywright.navigate_to_match = lambda self, t: True
 DomExecutorPlaywright.find_odds = lambda self, t, m: 2.0
 DomExecutorPlaywright.check_settled_bets = lambda self: None
 DomExecutorPlaywright.check_open_bet = lambda self: False
+DomExecutorPlaywright.save_blackbox = lambda self, *args, **kwargs: None
 
 from core.telegram_worker import TelegramWorker
 TelegramWorker.run = lambda self: None
