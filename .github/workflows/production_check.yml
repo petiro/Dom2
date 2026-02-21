@@ -35,11 +35,14 @@ jobs:
       - name: 🚀 RUN HEDGE TEST (Stabilità Base)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: |
-          xvfb-run -a python hedge_super_tester.py
+        run: xvfb-run -a python hedge_super_tester.py
 
       - name: 🧠 GOD MODE CHAOS (Absolute System Test)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: |
-          xvfb-run -a python tests/stress_lab/GOD_MODE_chaos.py
+        run: xvfb-run -a python tests/stress_lab/GOD_MODE_chaos.py
+
+      - name: 🔥 ULTRA SYSTEM INTEGRITY TEST (Architectural Chaos)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: xvfb-run -a python tests/system_integrity/ULTRA_SYSTEM_TEST.py
