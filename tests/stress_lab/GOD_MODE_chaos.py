@@ -6,9 +6,6 @@ import threading
 import traceback
 import logging
 
-# =========================================================
-# 🔴 FIX PATH PER IMPORTARE LA CARTELLA "core/"
-# =========================================================
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -27,9 +24,6 @@ def fail(where, reason):
 def ok(msg):
     print(f"✅ {msg}")
 
-# =========================================================
-# ENV ISOLATO & VAULT SETUP
-# =========================================================
 TEST_DIR="god_chaos_env"
 os.makedirs(TEST_DIR,exist_ok=True)
 import core.config_paths
@@ -38,18 +32,12 @@ core.config_paths.CONFIG_DIR=TEST_DIR
 with open(os.path.join(TEST_DIR, "config.yaml"), "w") as f:
     f.write("betting:\n  allow_place: false\n")
 
-# =========================================================
-# ⏱️ MACCHINA DEL TEMPO
-# =========================================================
 original_sleep = time.sleep
 def smart_sleep(seconds):
     if seconds == 1.5: return 
     original_sleep(seconds)
 time.sleep = smart_sleep
 
-# =========================================================
-# MOCK PLAYWRIGHT & TELEGRAM
-# =========================================================
 from core.dom_executor_playwright import DomExecutorPlaywright
 DomExecutorPlaywright.__init__=lambda self,*a,**k:None
 DomExecutorPlaywright.launch_browser=lambda self:True
@@ -68,9 +56,6 @@ def mock_tg_run(self):
 TelegramWorker.run = mock_tg_run
 TelegramWorker.stop = lambda self: setattr(self, '_is_running', False)
 
-# =========================================================
-# BOOT CONTROLLER
-# =========================================================
 from core.controller import SuperAgentController
 logging.basicConfig(level=logging.CRITICAL)
 logger=logging.getLogger("GOD")
@@ -82,15 +67,9 @@ except Exception as e:
     fail("BOOT","Controller crash all'avvio: "+str(e))
     sys.exit(1)
 
-# =========================================================
-# I 16 TEST DEFINITIVI
-# =========================================================
-
-# 1. TELEGRAM
 if not hasattr(controller,"telegram") or not controller.telegram.isRunning(): fail("TELEGRAM","Worker thread spento/crashato")
 else: ok("Telegram Worker ATTIVO e in ascolto")
 
-# 2. EVENTBUS
 survived={"v":False}
 controller.engine.bus.subscribe("TEST_EVT", lambda p: 1/0)
 controller.engine.bus.subscribe("TEST_EVT", lambda p: survived.update({"v":True}))
@@ -98,7 +77,6 @@ controller.engine.bus.emit("TEST_EVT",{})
 if not survived["v"]: fail("EVENTBUS","Crash di un subscriber ha ucciso il Bus!")
 else: ok("EventBus RESILIENTE (Sopravvive ai crash dei plugin)")
 
-# 3. WORKER POISON
 alive={"v":False}
 for _ in range(10): controller.worker.submit(lambda: 1/0)
 controller.worker.submit(lambda: alive.update({"v":True}))
@@ -120,6 +98,12 @@ threads=[threading.Thread(target=spam) for _ in range(15)]
 if err["v"]: fail("DATABASE","Race Condition / Database Locked!")
 else: ok("Database WAL Mode + RLock: CONCORRENZA PERFETTA")
 
+# 🔴 FIX: PULIZIA DEL DATABASE POST-STRESS! 
+# Cancelliamo le 750 bet fasulle create dal test sopra per non sballare i test dopo!
+with controller.money_manager.db._lock:
+    controller.money_manager.db.conn.execute("DELETE FROM journal")
+    controller.money_manager.db.conn.execute("UPDATE balance SET current_balance = 1000.0 WHERE id = 1")
+
 # 5. PHANTOM REFUND
 controller.money_manager.get_stake=lambda o:5.0
 before=controller.money_manager.bankroll()
@@ -134,7 +118,6 @@ if after==before: fail("LEDGER","CRITICO: Refund fantasma eseguito dopo bet piaz
 else: ok("Ledger INTEGRO (Phantom Refund Neutralizzato)")
 controller.engine.bus.emit=orig_emit
 
-# 6. ENGINE FREEZE
 original_sleep(1)
 if not controller.worker.thread.is_alive(): fail("FREEZE","Worker Thread morto silenziosamente")
 else: ok("Sistema ATTIVO e REATTIVO")
