@@ -45,9 +45,11 @@ jobs:
       - name: "🔥 RUN 3: ULTRA SYSTEM INTEGRITY (Architectural Chaos)"
         env:
           QT_QPA_PLATFORM: offscreen
-        run: xvfb-run -a python tests/system_integrity/ULTRA_SYSTEM_TEST.py
+        # 🔴 FIX DA SMARTPHONE: PERCORSO DOPPIA CARTELLA
+        run: xvfb-run -a python tests/tests/system_integrity/ULTRA_SYSTEM_TEST.py
 
       - name: "🛡️ RUN 4: ENDURANCE & ENVIRONMENT (Extreme Survival)"
         env:
           QT_QPA_PLATFORM: offscreen
-        run: xvfb-run -a python tests/system_integrity/ENDURANCE_TEST.py
+        # 🔴 FIX DA SMARTPHONE: PERCORSO DOPPIA CARTELLA
+        run: xvfb-run -a python tests/tests/system_integrity/ENDURANCE_TEST.py
