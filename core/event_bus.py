@@ -1,53 +1,30 @@
-import threading
-import queue
 import logging
-import time
-from typing import Callable, Dict, List, Any
+import traceback
 
 class EventBus:
     def __init__(self):
-        self._subscribers: Dict[str, List[Callable]] = {}
-        self._queue: queue.Queue = queue.Queue()
-        self._running: bool = False
-        self._dispatcher: threading.Thread | None = None
+        self.subscribers = {}
         self.logger = logging.getLogger("EventBus")
 
-    def subscribe(self, event: str, callback: Callable) -> None:
-        self._subscribers.setdefault(event, []).append(callback)
+    def subscribe(self, event_type, callback):
+        if event_type not in self.subscribers:
+            self.subscribers[event_type] = []
+        self.subscribers[event_type].append(callback)
 
-    def emit(self, event: str, payload: dict | None = None) -> None:
-        if not self._running:
-            return
-
-        if self._queue.qsize() > 5000:
-            self.logger.critical("EventBus overflow. Evento scartato.")
-            return
-
-        self._queue.put((event, payload or {}))
+    def emit(self, event_type, payload):
+        if event_type in self.subscribers:
+            for callback in self.subscribers[event_type]:
+                # 🔴 FIX EVENTBUS: Un subscriber guasto non bloccherà gli altri
+                try:
+                    callback(payload)
+                except Exception as e:
+                    self.logger.error(f"❌ Crash nel Subscriber '{callback.__name__}' per evento '{event_type}': {e}\n{traceback.format_exc()}")
+                    continue  # Fondamentale: passa al prossimo senza uccidere il ciclo
 
     def start(self):
-        if self._running: return
-        self._running = True
-        self._dispatcher = threading.Thread(target=self._dispatch_loop, daemon=True, name="EventBusDispatcher")
-        self._dispatcher.start()
         self.logger.info("EventBus avviato.")
 
     def stop(self):
-        self._running = False
-        if self._dispatcher: self._dispatcher.join(timeout=3)
-
-    def _dispatch_loop(self):
-        while self._running or not self._queue.empty():
-            try:
-                event, payload = self._queue.get(timeout=0.5)
-                callbacks = self._subscribers.get(event, [])
-                for cb in callbacks:
-                    try: cb(payload)
-                    except Exception as e: self.logger.exception(f"🔥 Callback crash su evento {event}: {e}")
-                self._queue.task_done()
-            except queue.Empty: continue
-            except Exception as e:
-                self.logger.exception("🔥 EventBus dispatcher crash evitato")
-                time.sleep(0.5)
+        self.logger.info("EventBus fermato.")
 
 bus = EventBus()
