@@ -8,7 +8,7 @@ import psutil
 import signal
 
 print("\n" + "="*60)
-print("🧠 DOM2 HEDGE FUND STABILITY TEST (V8.4)")
+print("🧠 DOM2 HEDGE FUND STABILITY TEST (V8.5)")
 print("="*60)
 
 # ---------------------------------------------------
@@ -67,6 +67,12 @@ def mocked_get_balance(self):
     print("🔧 HEDGE MOCK: get_balance simulato (1000.0€)")
     return 1000.0
 DomExecutorPlaywright.get_balance = mocked_get_balance
+
+# 🔴 FIX: Aggiunto Mock per Ensure Login (Evita il blocco e l'apertura del browser reale!)
+def mocked_ensure_login(self):
+    print("🔧 HEDGE MOCK: ensure_login simulato (Nessun avvio browser reale)")
+    return True
+DomExecutorPlaywright.ensure_login = mocked_ensure_login
 
 # ---------------------------------------------------
 # 3. IMPORT CORE
