@@ -121,9 +121,7 @@ if err["v"]:
 else: 
     ok("Database WAL Mode + RLock: CONCORRENZA PERFETTA")
 
-# 🛡️ WATCHDOG SIMULATION (Risoluzione Transazionale Legale)
-# L'engine rifiuterà i test successivi se ci sono bet pending.
-# Simuliamo l'intervento del Watchdog che rimborsa le bet bloccate dal test di stress usando le funzioni ufficiali.
+# 🛡️ PULIZIA 1: Storno legale delle bet di stress
 for p in controller.money_manager.db.pending():
     controller.money_manager.refund(p['tx_id'])
 
@@ -151,6 +149,10 @@ if not controller.worker.thread.is_alive():
     fail("FREEZE", "Worker Thread morto silenziosamente")
 else: 
     ok("Sistema ATTIVO e REATTIVO")
+
+# 🛡️ PULIZIA 2: Storno legale della bet incastrata dal Crash del Test 5!
+for p in controller.money_manager.db.pending():
+    controller.money_manager.refund(p['tx_id'])
 
 # =========================================================
 # 8. TWO-PHASE COMMIT
