@@ -9,7 +9,7 @@ on:
 jobs:
   hedge-test:
     runs-on: ubuntu-22.04
-    timeout-minutes: 8
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -32,17 +32,22 @@ jobs:
         run: |
           playwright install chromium
 
-      - name: 🚀 RUN HEDGE TEST (Stabilità Base)
+      - name: 🚀 RUN 1: HEDGE TEST (Stabilità Base)
         env:
           QT_QPA_PLATFORM: offscreen
         run: xvfb-run -a python hedge_super_tester.py
 
-      - name: 🧠 GOD MODE CHAOS (Absolute System Test)
+      - name: 🧠 RUN 2: GOD MODE CHAOS (Absolute System Test)
         env:
           QT_QPA_PLATFORM: offscreen
         run: xvfb-run -a python tests/stress_lab/GOD_MODE_chaos.py
 
-      - name: 🔥 ULTRA SYSTEM INTEGRITY TEST (Architectural Chaos)
+      - name: 🔥 RUN 3: ULTRA SYSTEM INTEGRITY (Architectural Chaos)
         env:
           QT_QPA_PLATFORM: offscreen
         run: xvfb-run -a python tests/system_integrity/ULTRA_SYSTEM_TEST.py
+
+      - name: 🛡️ RUN 4: ENDURANCE & ENVIRONMENT (Extreme Survival)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: xvfb-run -a python tests/system_integrity/ENDURANCE_TEST.py
