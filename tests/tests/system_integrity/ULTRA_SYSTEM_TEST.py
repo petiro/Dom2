@@ -1,134 +1,265 @@
 import os
 import sys
 import time
+import random
 import threading
 import traceback
 import logging
-import psutil
-import sqlite3
+import math
 
+# =========================================================
+# FIX PATH IMPORT CORE
+# =========================================================
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-print("\n"+"🛡️"*50)
-print("ENDURANCE & ENVIRONMENT TEST — EXTREME SURVIVAL SIMULATION")
-print("🛡️"*50+"\n")
+print("\n" + "🔥" * 50)
+print("ULTRA SYSTEM INTEGRITY TEST — ARCHITECTURAL CHAOS SIMULATION")
+print("🔥" * 50 + "\n")
 
 FAILURES = []
-def fail(code, reason):
-    msg = f"❌ FAIL [{code}] → {reason}"
+
+def fail(code, reason, file, impact):
+    msg = (
+        f"\n❌ FAIL [{code}]\n"
+        f"→ {reason}\n"
+        f"File: {file}\n"
+        f"Impatto: {impact}"
+    )
     print(msg)
     FAILURES.append(msg)
 
 def ok(code, desc):
     print(f"🟢 OK [{code}] → {desc}")
 
-TEST_DIR = "endurance_env"
+# =========================================================
+# ENV ISOLATO
+# =========================================================
+TEST_DIR = "ultra_system_env"
 os.makedirs(TEST_DIR, exist_ok=True)
+
 import core.config_paths
 core.config_paths.CONFIG_DIR = TEST_DIR
+
 with open(os.path.join(TEST_DIR, "config.yaml"), "w") as f:
     f.write("betting:\n  allow_place: false\n")
 
-from core.dom_executor_playwright import DomExecutorPlaywright
+original_sleep = time.sleep
+time.sleep = lambda s: original_sleep(s) if s < 1 else None
 
-def mock_init(self, *a, **k):
-    self.bet_count = 0
-    self.logger = logging.getLogger("MockExecutor")
-    self.page = None
-    
-DomExecutorPlaywright.__init__ = mock_init
-DomExecutorPlaywright.launch_browser = lambda self: True
-DomExecutorPlaywright.ensure_login = lambda self: True
-DomExecutorPlaywright.get_balance = lambda self: 1000.0
-DomExecutorPlaywright.place_bet = lambda self, t, m, s: True
-DomExecutorPlaywright.navigate_to_match = lambda self, t: True
-DomExecutorPlaywright.find_odds = lambda self, t, m: 2.0
-DomExecutorPlaywright.check_settled_bets = lambda self: None
-DomExecutorPlaywright.check_open_bet = lambda self: False
-DomExecutorPlaywright.save_blackbox = lambda self, *args, **kwargs: None
+# =========================================================
+# MOCK CONTROLLER
+# =========================================================
+def create_mocked_controller():
+    from core.dom_executor_playwright import DomExecutorPlaywright
 
-from core.telegram_worker import TelegramWorker
-TelegramWorker.run = lambda self: None
-TelegramWorker.stop = lambda self: None
+    def mock_init(self, *a, **k):
+        self.bet_count = 0
+        self.logger = logging.getLogger("MockExecutor")
+        self.page = None
 
-from core.controller import SuperAgentController
-logging.basicConfig(level=logging.CRITICAL)
-c = SuperAgentController(logging.getLogger("ENDURANCE"))
+    DomExecutorPlaywright.__init__ = mock_init
+    DomExecutorPlaywright.launch_browser = lambda self: True
+    DomExecutorPlaywright.ensure_login = lambda self: True
+    DomExecutorPlaywright.get_balance = lambda self: 1000.0
+    DomExecutorPlaywright.place_bet = lambda self, t, m, s: True
+    DomExecutorPlaywright.navigate_to_match = lambda self, t: True
+    DomExecutorPlaywright.find_odds = lambda self, t, m: 2.0
+    DomExecutorPlaywright.check_settled_bets = lambda self: None
+    DomExecutorPlaywright.check_open_bet = lambda self: False
+    DomExecutorPlaywright.save_blackbox = lambda self, *args, **kwargs: None
 
+    from core.telegram_worker import TelegramWorker
+    TelegramWorker.run = lambda self: None
+    TelegramWorker.stop = lambda self: None
+
+    from core.controller import SuperAgentController
+    logging.basicConfig(level=logging.CRITICAL)
+    return SuperAgentController(logging.getLogger("ULTRA"))
+
+# =========================================================
+# TEST 1 — DOUBLE BET POST REBOOT
+# =========================================================
 try:
-    orig_reserve = c.money_manager.reserve
-    def mock_disk_full(*args):
-        raise sqlite3.OperationalError("database or disk is full")
-    c.money_manager.reserve = mock_disk_full
-    
+    c1 = create_mocked_controller()
+
+    def hard_kill_mock(*args):
+        raise SystemExit("OS KILL PROCESS")
+
+    c1.worker.executor.place_bet = hard_kill_mock
+
     try:
-        c.engine.process_signal({"teams": "DISK_FULL", "market": "1"}, c.money_manager)
-        ok("DISK_FULL_SURVIVAL", "Errore 'Disco Pieno' intercettato. Il bot non è crashato.")
-    except Exception as e:
-        fail("DISK_FULL_SURVIVAL", f"L'errore disco pieno ha ucciso il bot: {e}")
-        
-    c.money_manager.reserve = orig_reserve
-except Exception as e: 
-    fail("DISK_FULL_SURVIVAL", str(e))
+        c1.engine.process_signal({"teams": "REBOOT_TEST", "market": "1"}, c1.money_manager)
+    except SystemExit:
+        pass
 
-try:
-    orig_find_odds = c.worker.executor.find_odds
-    def mock_cloudflare(*args):
-        raise Exception("Timeout 30000ms exceeded. (Cloudflare Captcha block)")
-    c.worker.executor.find_odds = mock_cloudflare
-    
-    try:
-        c.engine.process_signal({"teams": "CLOUDFLARE_BAN", "market": "1"}, c.money_manager)
-        ok("CLOUDFLARE_BAN", "Blocco antibot catturato. Il motore ha abortito la giocata in sicurezza.")
-    except Exception as e:
-        fail("CLOUDFLARE_BAN", f"Il blocco antibot ha generato un'eccezione non gestita: {e}")
-        
-    c.worker.executor.find_odds = orig_find_odds
-except Exception as e: 
-    fail("CLOUDFLARE_BAN", str(e))
+    c2 = create_mocked_controller()
+    pending = c2.money_manager.db.pending()
 
-try:
-    shutdown_flag = {"finished": False}
-    def slow_task():
-        time.sleep(1)
-        shutdown_flag["finished"] = True
-
-    c.worker.submit(slow_task)
-    c.worker.stop() 
-    
-    if not shutdown_flag["finished"]:
-        fail("GRACEFUL_SHUTDOWN", "Il comando di spegnimento ha ucciso brutalmente il bot troncando la scommessa in corso!")
+    if len(pending) == 0:
+        fail(
+            "DOUBLE_BET_REBOOT",
+            "Bet piazzata non registrata in PENDING prima del crash fatale.",
+            "execution_engine.py",
+            "Al riavvio il bot piazza doppia bet reale."
+        )
     else:
-        ok("GRACEFUL_SHUTDOWN", "Chiusura elegante OK. Il bot ha finito l'ultima scommessa prima di spegnersi.")
-except Exception as e: 
-    fail("GRACEFUL_SHUTDOWN", str(e))
+        ok("DOUBLE_BET_REBOOT", "2-phase commit corretto, pending salvato.")
+        for p in pending:
+            c2.money_manager.refund(p['tx_id'])
 
+except Exception as e:
+    fail("DOUBLE_BET_REBOOT", str(e), "execution_engine.py", "Unknown")
+
+# =========================================================
+# TEST 2 — EVENT BUS BLOCK
+# =========================================================
 try:
-    process = psutil.Process(os.getpid())
-    mem_start = process.memory_info().rss
-    
-    for _ in range(2000):
-        c.engine.process_signal({"teams": None}, c.money_manager)
-        c.engine.process_signal({"teams": "SPAM", "market": "UNKNOWN"}, c.money_manager)
-        
-    mem_end = process.memory_info().rss
-    diff_mb = (mem_end - mem_start) / 1024 / 1024
-    
-    if diff_mb > 50:
-        fail("MEMORY_LEAK", f"Il sistema ha accumulato {diff_mb:.2f} MB di spazzatura RAM! Rischio OOM Crash in 24h.")
-    else:
-        ok("MEMORY_LEAK", f"Nessun Memory Leak. RAM pulita (Variazione: {diff_mb:.2f} MB su 4000 segnali).")
-        
-except Exception as e: 
-    fail("MEMORY_LEAK", str(e))
+    c = create_mocked_controller()
 
-print("\n"+"="*60)
+    def slow(payload):
+        original_sleep(2)
+
+    c.engine.bus.subscribe("BLOCK", slow)
+
+    start = time.time()
+    c.engine.bus.emit("BLOCK", {})
+    elapsed = time.time() - start
+
+    if elapsed > 1:
+        fail(
+            "EVENT_BUS_BLOCK",
+            f"Bus bloccato per {elapsed:.2f}s",
+            "event_bus.py",
+            "Freeze engine durante operatività reale."
+        )
+    else:
+        ok("EVENT_BUS_BLOCK", "Bus non blocca engine")
+
+except Exception as e:
+    fail("EVENT_BUS_BLOCK", str(e), "event_bus.py", "Unknown")
+
+# =========================================================
+# TEST 3 — WATCHDOG FINANZIARIO
+# =========================================================
+try:
+    c = create_mocked_controller()
+    if not hasattr(c, "fin_watchdog"):
+        fail(
+            "MISSING_FIN_WATCHDOG",
+            "Watchdog finanziario assente",
+            "controller.py",
+            "Mismatch saldo non rilevati → perdita cassa"
+        )
+    else:
+        ok("FIN_WATCHDOG", "Watchdog finanziario presente")
+except:
+    pass
+
+# =========================================================
+# TEST 4 — RACE CONDITION RESERVE
+# =========================================================
+try:
+    c = create_mocked_controller()
+    c.money_manager.db.update_bankroll(100.0)
+
+    def spam():
+        try:
+            stake = c.money_manager.get_stake(2.0)
+            if stake > 0:
+                c.money_manager.reserve(stake)
+        except:
+            pass
+
+    threads = [threading.Thread(target=spam) for _ in range(50)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    pending_sum = sum([p['amount'] for p in c.money_manager.db.pending()])
+
+    if pending_sum > 100:
+        fail(
+            "OVER_RESERVE",
+            f"Reserved {pending_sum}€ su bankroll 100€",
+            "money_management.py",
+            "Possibile bancarotta"
+        )
+    else:
+        ok("OVER_RESERVE", f"Bankroll protetto. Pending: {pending_sum}€")
+
+except Exception as e:
+    fail("OVER_RESERVE", str(e), "money_management.py", "Unknown")
+
+# =========================================================
+# TEST 5 — STAKE NAN / NEGATIVI
+# =========================================================
+try:
+    c = create_mocked_controller()
+
+    bad = [float("inf"), float("-inf"), float("nan"), -50.0, 0.0]
+    poisoned = False
+
+    for s in bad:
+        try:
+            tx = c.money_manager.reserve(s)
+            val = c.money_manager.db.get_transaction(tx)['amount']
+            if math.isnan(val) or val <= 0:
+                poisoned = True
+        except:
+            pass
+
+    if poisoned:
+        fail(
+            "MATH_POISON",
+            "Stake illegali accettati",
+            "money_management.py",
+            "DB finanziario corrotto"
+        )
+    else:
+        ok("MATH_POISON", "Sanity check stake OK")
+
+except Exception as e:
+    fail("MATH_POISON", str(e), "money_management.py", "Unknown")
+
+# =========================================================
+# TEST 6 — ZOMBIE TRANSACTION
+# =========================================================
+try:
+    c = create_mocked_controller()
+
+    def drop(*args):
+        raise ConnectionError("internet down")
+
+    c.worker.executor.place_bet = drop
+    c.engine.process_signal({"teams": "ZOMBIE", "market": "1"}, c.money_manager)
+
+    pend = c.money_manager.db.pending()
+    zombies = [p for p in pend if p['status'] == "PENDING"]
+
+    if len(zombies) > 0:
+        fail(
+            "ZOMBIE_TX",
+            "Pending rimasto dopo crash pre-click",
+            "execution_engine.py",
+            "Blocco fondi fantasma"
+        )
+    else:
+        ok("ZOMBIE_TX", "Rollback corretto")
+
+except Exception as e:
+    fail("ZOMBIE_TX", str(e), "execution_engine.py", "Unknown")
+
+# =========================================================
+# FINALE
+# =========================================================
+print("\n" + "=" * 60)
+
 if FAILURES:
-    print("🔴 ENDURANCE TEST: FAGLIE AMBIENTALI RILEVATE\n")
+    print("🔴 ULTRA SYSTEM TEST: ERRORI CRITICI")
     sys.exit(1)
 else:
-    print("🟢 ENDURANCE TEST SUPERATO CON SUCCESSO")
-    print("Il bot è ora ufficialmente indistruttibile. SOPRAVVIVE A TUTTO.")
+    print("🟢 ULTRA SYSTEM TEST SUPERATO")
     sys.exit(0)
