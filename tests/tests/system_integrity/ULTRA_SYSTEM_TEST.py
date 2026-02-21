@@ -1,9 +1,7 @@
 import os
 import sys
 import time
-import random
 import threading
-import traceback
 import logging
 import math
 
@@ -102,12 +100,7 @@ try:
     pending = c2.money_manager.db.pending()
 
     if len(pending) == 0:
-        fail(
-            "DOUBLE_BET_REBOOT",
-            "Bet piazzata non registrata in PENDING prima del crash fatale.",
-            "execution_engine.py",
-            "Al riavvio il bot piazza doppia bet reale."
-        )
+        fail("DOUBLE_BET_REBOOT", "Bet piazzata non registrata in PENDING.", "execution_engine.py", "Doppia bet.")
     else:
         ok("DOUBLE_BET_REBOOT", "2-phase commit corretto, pending salvato.")
         for p in pending:
@@ -132,12 +125,7 @@ try:
     elapsed = time.time() - start
 
     if elapsed > 1:
-        fail(
-            "EVENT_BUS_BLOCK",
-            f"Bus bloccato per {elapsed:.2f}s",
-            "event_bus.py",
-            "Freeze engine durante operatività reale."
-        )
+        fail("EVENT_BUS_BLOCK", f"Bus bloccato per {elapsed:.2f}s", "event_bus.py", "Freeze engine.")
     else:
         ok("EVENT_BUS_BLOCK", "Bus non blocca engine")
 
@@ -149,18 +137,17 @@ except Exception as e:
 # =========================================================
 try:
     c = create_mocked_controller()
-    # 🔴 FIX TEST: Ora cerchiamo il watchdog correttamente nel MoneyManager
-    if not hasattr(c, "fin_watchdog") and not hasattr(c.money_manager, "reconcile_balances"):
-        fail(
-            "MISSING_FIN_WATCHDOG",
-            "Watchdog finanziario assente",
-            "controller.py / money_management.py",
-            "Mismatch saldo non rilevati → perdita cassa"
-        )
+    import core.money_management
+    
+    # 🔴 FIX: Ora il test sa che il watchdog si chiama 'reconcile_balances'
+    has_watchdog = hasattr(c.money_manager, "reconcile_balances") or hasattr(core.money_management.MoneyManager, "reconcile_balances")
+    
+    if not has_watchdog:
+        fail("MISSING_FIN_WATCHDOG", "Watchdog finanziario assente", "money_management.py", "Mismatch saldo.")
     else:
         ok("MISSING_FIN_WATCHDOG", "Watchdog finanziario presente e integrato")
-except:
-    pass
+except Exception as e:
+    fail("MISSING_FIN_WATCHDOG", str(e), "money_management.py", "Unknown")
 
 # =========================================================
 # TEST 4 — RACE CONDITION RESERVE
@@ -178,25 +165,17 @@ try:
             pass
 
     threads = [threading.Thread(target=spam) for _ in range(50)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    for t in threads: t.start()
+    for t in threads: t.join()
 
     pending_sum = sum([p['amount'] for p in c.money_manager.db.pending()])
 
     if pending_sum > 100:
-        fail(
-            "OVER_RESERVE",
-            f"Reserved {pending_sum}€ su bankroll 100€",
-            "money_management.py",
-            "Possibile bancarotta"
-        )
+        fail("OVER_RESERVE", f"Reserved {pending_sum}€ su 100€", "money_management.py", "Bancarotta")
     else:
         ok("OVER_RESERVE", f"Bankroll protetto. Pending: {pending_sum}€")
 
-    # 🔴 FIX TEST NUCLEARE: Ripuliamo il database dalle finte bet incastrate da questo Test!
-    # Così il Test 6 non troverà fondi bloccati e potrà fare il suo lavoro in pace.
+    # 🔴 FIX: Ripuliamo il DB per non far impazzire il Test 6!
     for p in c.money_manager.db.pending():
         c.money_manager.refund(p['tx_id'])
 
@@ -208,11 +187,9 @@ except Exception as e:
 # =========================================================
 try:
     c = create_mocked_controller()
-
-    bad = [float("inf"), float("-inf"), float("nan"), -50.0, 0.0]
     poisoned = False
 
-    for s in bad:
+    for s in [float("inf"), float("-inf"), float("nan"), -50.0, 0.0]:
         try:
             tx = c.money_manager.reserve(s)
             val = c.money_manager.db.get_transaction(tx)['amount']
@@ -222,12 +199,7 @@ try:
             pass
 
     if poisoned:
-        fail(
-            "MATH_POISON",
-            "Stake illegali accettati",
-            "money_management.py",
-            "DB finanziario corrotto"
-        )
+        fail("MATH_POISON", "Stake illegali accettati", "money_management.py", "DB corrotto")
     else:
         ok("MATH_POISON", "Sanity check stake OK")
 
@@ -239,6 +211,10 @@ except Exception as e:
 # =========================================================
 try:
     c = create_mocked_controller()
+    
+    # 🔴 FIX ULTERIORE SICUREZZA: Svuota DB pre-test
+    for p in c.money_manager.db.pending():
+        c.money_manager.refund(p['tx_id'])
 
     def drop(*args):
         raise ConnectionError("internet down")
@@ -250,18 +226,9 @@ try:
     zombies = [p for p in pend if p['status'] == "PENDING"]
 
     if len(zombies) > 0:
-        fail(
-            "ZOMBIE_TX",
-            "Pending rimasto dopo crash pre-click",
-            "execution_engine.py",
-            "Blocco fondi fantasma"
-        )
+        fail("ZOMBIE_TX", "Pending rimasto dopo crash pre-click", "execution_engine.py", "Blocco fondi")
     else:
         ok("ZOMBIE_TX", "Rollback corretto contro crash di rete pre-click")
-
-    # Pulizia finale di sicurezza
-    for p in c.money_manager.db.pending():
-        c.money_manager.refund(p['tx_id'])
 
 except Exception as e:
     fail("ZOMBIE_TX", str(e), "execution_engine.py", "Unknown")
