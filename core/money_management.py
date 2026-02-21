@@ -1,48 +1,44 @@
 import uuid
+import threading
 import logging
-from decimal import Decimal, ROUND_DOWN
 
 class MoneyManager:
     def __init__(self, db):
         self.db = db
-        self.logger = logging.getLogger("Money")
+        self.logger = logging.getLogger("MoneyManager")
+        # 🔴 FIX DB LOCK: RLock permette allo stesso thread di richiamare le proprie funzioni senza bloccarsi,
+        # ma impedisce a thread esterni (es. la UI) di accavallarsi nelle letture/scritture.
+        self._lock = threading.RLock()
 
-    def get_stake(self, odds):
-        try:
-            bal = Decimal(str(self.db.get_balance()))
-            if bal <= Decimal("0.00"): 
-                return Decimal("0.00")
+    def bankroll(self) -> float:
+        with self._lock:
+            return float(self.db.get_bankroll())
 
-            stake = bal * Decimal("0.02")
-            cap = bal * Decimal("0.25")
-            stake = min(stake, cap)
+    def pending(self):
+        with self._lock:
+            return self.db.pending()
 
-            if stake < Decimal("0.50"): stake = Decimal("0.50")
-            if stake > bal: return Decimal("0.00")
+    def reserve(self, amount: float) -> str:
+        with self._lock:
+            tx_id = str(uuid.uuid4())
+            self.db.add_transaction(tx_id, amount, "PENDING")
+            return tx_id
 
-            return stake.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-        except Exception as e:
-            self.logger.error(f"Stake calc error: {e}")
-            return Decimal("0.00")
+    def refund(self, tx_id: str) -> None:
+        with self._lock:
+            self.db.update_transaction(tx_id, "REFUND")
 
-    def reserve(self, amount):
-        tx = str(uuid.uuid4())
-        self.db.reserve(tx, amount)
-        self.logger.info(f"🔒 Prenotati {amount}€ nel DB (TX: {tx[:8]})")
-        return tx
+    def win(self, tx_id: str, payout: float) -> None:
+        with self._lock:
+            self.db.update_transaction(tx_id, "WIN", payout=payout)
 
-    def win(self, tx, payout):
-        try: self.db.commit(tx, payout)
-        except Exception as e: self.logger.error(f"Win commit error: {e}")
+    def loss(self, tx_id: str) -> None:
+        with self._lock:
+            self.db.update_transaction(tx_id, "LOSS")
 
-    def loss(self, tx):
-        try: self.db.commit(tx, 0)
-        except Exception as e: self.logger.error(f"Loss commit error: {e}")
-
-    def refund(self, tx):
-        try: self.db.rollback(tx)
-        except Exception as e: self.logger.error(f"Refund error: {e}")
-
-    def bankroll(self):
-        try: return float(self.db.get_balance())
-        except Exception: return 0.0
+    def get_stake(self, odds: float) -> float:
+        with self._lock:
+            # Calcolo stake base
+            br = self.bankroll()
+            stake = min(br * 0.05, 50.0) # Protezione massima 5% cassa o 50 euro
+            return round(stake, 2)
