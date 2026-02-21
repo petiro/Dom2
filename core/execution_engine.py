@@ -1,5 +1,6 @@
 import time
 import logging
+import traceback
 from typing import Dict, Any
 
 class ExecutionEngine:
@@ -13,7 +14,7 @@ class ExecutionEngine:
         tx_id = None
         stake = 0.0
         
-        # 🛡️ REGOLA HEDGE FUND: Flag di sicurezza anti Phantom Refund
+        # 🔴 FIX NUCLEARE: Flag per impedire il Phantom Refund
         bet_placed_on_bookmaker = False
 
         try:
@@ -22,7 +23,7 @@ class ExecutionEngine:
                 time.sleep(1.5)
                 is_open = self.executor.check_open_bet()
 
-            if money_manager.db.pending() or is_open:
+            if money_manager.pending() or is_open:
                 self.logger.warning("⚠️ Bet già aperta o pending. Salto segnale.")
                 self.bus.emit("BET_FAILED", {"reason": "Bet already open"})
                 return
@@ -51,39 +52,34 @@ class ExecutionEngine:
                 self.bus.emit("BET_FAILED", {"reason": "Insufficient real balance"})
                 return
 
-            # 1. RISERVIAMO I SOLDI NEL DB
+            # 1. Riserva soldi nel DB
             tx_id = money_manager.reserve(stake)
 
-            # 2. TENTIAMO IL PIAZZAMENTO SUL SITO REALE
+            # 2. Piazza sul bookmaker
             bet_ok = self.executor.place_bet(teams, market, stake)
 
             if not bet_ok:
-                # Se Bet365 rifiuta, rimborsiamo in sicurezza
-                self.logger.error("❌ Fallimento piazzamento scommessa sul bookmaker")
-                money_manager.refund(tx_id)
-                self.bus.emit("BET_FAILED", {"tx_id": tx_id, "reason": "Place bet failed"})
-                return
+                raise RuntimeError("Bet NON piazzata dal bookmaker. Rifiutata.")
 
-            # 🔴 PUNTO DI NON RITORNO: I soldi sono stati presi dal bookmaker.
-            # Blindiamo il ledger disattivando il rollback in caso di futuri crash in questa funzione.
+            # 🔴 PUNTO DI NON RITORNO: I SOLDI SONO SUL SITO.
             bet_placed_on_bookmaker = True
 
             self.executor.bet_count += 1
             self.logger.info("✅ Scommessa piazzata con successo!")
+            
+            # 3. Emetti successo
             self.bus.emit("BET_SUCCESS", {"tx_id": tx_id, "teams": teams, "stake": stake, "odds": odds})
 
         except Exception as e:
-            self.logger.critical(f"🔥 Crash in Execution Engine: {e}")
+            self.logger.critical(f"🔥 Crash in Execution Engine: {e}\n{traceback.format_exc()}")
             
-            # 🛡️ CONTROLLO HEDGE FUND (Anti-Phantom Refund)
+            # 🔴 FIX NUCLEARE: Rollback SOLO se il bookmaker NON ha preso i soldi
             if tx_id:
                 if not bet_placed_on_bookmaker:
-                    # Crash avvenuto PRIMA del click su "Scommetti" -> Rimborso sicuro
                     money_manager.refund(tx_id)
-                    self.logger.warning(f"🔄 Refund DB eseguito per TX {tx_id[:8]} causa Crash prima del piazzamento.")
+                    self.logger.warning(f"🔄 Rollback DB eseguito per TX {tx_id[:8]} (Nessun fondo reale mosso).")
                 else:
-                    # Crash avvenuto DOPO il click -> NESSUN RIMBORSO. Ci penserà il Watchdog.
-                    self.logger.critical(f"☠️ Bet {tx_id[:8]} piazzata ma evento interno fallito. NO REFUND eseguito per proteggere il Ledger.")
+                    self.logger.critical(f"☠️ Bet {tx_id[:8]} PIAZZATA REALE ma crash interno! NO REFUND eseguito. Ledger salvo.")
                 
             if hasattr(self.executor, 'save_blackbox'):
                 self.executor.save_blackbox(
