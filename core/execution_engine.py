@@ -10,17 +10,15 @@ class ExecutionEngine:
         self.executor = executor
         self.logger = logger or logging.getLogger("ExecutionEngine")
 
-    # 🟠 FIX MEDIO: Sanificazione universale (Punti, Virgole, Valute)
     def _safe_float(self, value: Any) -> float:
         if isinstance(value, (int, float)): return float(value)
         if not value: return 0.0
         cleaned = re.sub(r'[^\d,\.]', '', str(value))
         if not cleaned: return 0.0
         if ',' in cleaned and '.' in cleaned:
-            # Stile Europeo: 1.234,56 -> 1234.56
             if cleaned.rfind(',') > cleaned.rfind('.'):
                 cleaned = cleaned.replace('.', '').replace(',', '.')
-            else: # Stile USA: 1,234.56 -> 1234.56
+            else: 
                 cleaned = cleaned.replace(',', '')
         elif ',' in cleaned:
             cleaned = cleaned.replace(',', '.')
@@ -31,14 +29,13 @@ class ExecutionEngine:
 
     def process_signal(self, payload: Dict[str, Any], money_manager) -> None:
         self.logger.info(f"⚙️ Avvio processing segnale: {payload.get('teams')}")
-        tx_id = None
-        stake = 0.0
         
-        # 🔴 FIX NUCLEARE: Flag di stato transazionale
-        bet_placed_on_bookmaker = False
+        # 🔴 FIX: Variabili transazionali inizializzate
+        tx_id = None
+        bet_placed = False
+        stake = 0.0
 
         try:
-            # 🟠 FIX MEDIO: Prevenzione bot cieco (Check Login prima di agire)
             if hasattr(self.executor, 'ensure_login'):
                 self.executor.ensure_login()
 
@@ -47,8 +44,7 @@ class ExecutionEngine:
                 time.sleep(1.5)
                 is_open = self.executor.check_open_bet()
 
-            # 🔴 FIX SINTASSI: Aggiunto .db. prima di pending()
-            if money_manager.db.pending() or is_open:
+            if money_manager.pending() or is_open:
                 self.logger.warning("⚠️ Bet già aperta o pending. Salto segnale.")
                 self.bus.emit("BET_FAILED", {"reason": "Bet already open"})
                 return
@@ -78,36 +74,43 @@ class ExecutionEngine:
                 self.bus.emit("BET_FAILED", {"reason": "Insufficient real balance"})
                 return
 
-            # 🔴 FASE 1: TRANSAZIONE DB (RESERVE PRE-CLICK)
+            # 🔴 STEP 1: RESERVE DB (TWO-PHASE COMMIT)
+            # Salviamo su DB prima di interagire fisicamente col bookmaker
             tx_id = money_manager.reserve(stake)
 
-            # 🔴 FASE 2: PIAZZAMENTO REALE SUL BOOKMAKER
+            # 🔴 STEP 2: PLACE BET
             bet_ok = self.executor.place_bet(teams, market, stake)
 
             if not bet_ok:
                 raise RuntimeError("Bet NON piazzata dal bookmaker. Rifiutata.")
 
-            # 🔴 FASE 3: PUNTO DI NON RITORNO
-            bet_placed_on_bookmaker = True
+            # 🔴 STEP 3: PUNTO DI NON RITORNO
+            bet_placed = True
+            
             self.executor.bet_count += 1
             self.logger.info("✅ Scommessa piazzata con successo!")
             
-            # 🔴 FASE 4: EMIT DELL'EVENTO SOLO A COMMIT AVVENUTO
+            # 🔴 STEP 4: EMIT EVENTO
             self.bus.emit("BET_SUCCESS", {"tx_id": tx_id, "teams": teams, "stake": stake, "odds": odds})
 
         except Exception as e:
             self.logger.critical(f"🔥 Crash in Execution Engine: {e}\n{traceback.format_exc()}")
             
-            # 🔴 FIX NUCLEARE (Il vero Anti-Phantom Refund)
+            # 🔴 FIX NUCLEARE LEDGER: Rollback SOLO SE il bookmaker non ha confermato
             if tx_id:
-                if not bet_placed_on_bookmaker:
-                    # Se il bookmaker NON ha preso i soldi, facciamo il Rollback
+                if not bet_placed:
                     money_manager.refund(tx_id)
-                    self.logger.warning(f"🔄 Rollback DB sicuro per TX {tx_id[:8]}.")
+                    self.logger.warning(f"🔄 Rollback DB sicuro per TX {tx_id[:8]}. I fondi NON sono passati al bookmaker.")
                 else:
-                    # I soldi sono spesi. MAI RIMBORSARE AUTOMATICAMENTE!
-                    self.logger.critical(f"☠️ Bet {tx_id[:8]} PIAZZATA ma crash post-click! NO REFUND ESEGUITO. Demandato al Watchdog.")
+                    # NESSUN ROLLBACK. Il Phantom Refund è neutralizzato.
+                    self.logger.critical(f"☠️ Bet {tx_id[:8]} REALE EFFETTUATA. Nessun rollback per evitare Phantom Refund.")
                 
             if hasattr(self.executor, 'save_blackbox'):
-                self.executor.save_blackbox(tx_id, str(e), payload, stake=stake, quota=odds if 'odds' in locals() else 0, saldo_db=money_manager.bankroll(), saldo_book=self.executor.get_balance())
+                self.executor.save_blackbox(
+                    tx_id, str(e), payload, 
+                    stake=stake, quota=odds if 'odds' in locals() else 0, 
+                    saldo_db=money_manager.bankroll(), 
+                    saldo_book=self.executor.get_balance()
+                )
+            
             self.bus.emit("BET_FAILED", {"tx_id": tx_id, "reason": str(e)})
