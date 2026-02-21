@@ -52,10 +52,12 @@ class Database:
         with self._lock:
             cur = self.conn.execute("SELECT current_balance FROM balance WHERE id = 1")
             row = cur.fetchone()
-            return float(row["current_balance"]) if row else 0.0
+            # 🔴 FIX PROTEZIONE DB: Evita il crash Python se il campo è corrotto/NULL
+            if row and row["current_balance"] is not None:
+                return float(row["current_balance"])
+            return 0.0
 
     def update_bankroll(self, amount):
-        # 🔴 FIX: Transazione WAL sicura e atomica
         with self._lock:
             self.conn.execute("BEGIN TRANSACTION")
             try:
@@ -97,7 +99,7 @@ class Database:
             try:
                 cur = self.conn.execute("SELECT amount FROM journal WHERE tx_id = ? AND status = 'PENDING'", (tx_id,))
                 row = cur.fetchone()
-                if row:
+                if row and row["amount"] is not None:
                     amount = float(row["amount"])
                     self.conn.execute("UPDATE journal SET status = 'VOID' WHERE tx_id = ?", (tx_id,))
                     self.conn.execute("UPDATE balance SET current_balance = current_balance + ? WHERE id = 1", (amount,))
