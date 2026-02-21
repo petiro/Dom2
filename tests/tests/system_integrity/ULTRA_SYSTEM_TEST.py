@@ -8,11 +8,15 @@ import logging
 import math
 
 # =========================================================
-# FIX PATH IMPORT CORE
+# FIX PATH IMPORT CORE (ROBUSTO PER DOPPIA CARTELLA)
 # =========================================================
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = current_dir
+# Risale dinamicamente le cartelle finché non trova "core"
+while not os.path.exists(os.path.join(project_root, "core")) and project_root != "/":
+    project_root = os.path.dirname(project_root)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 print("\n" + "🔥" * 50)
 print("ULTRA SYSTEM INTEGRITY TEST — ARCHITECTURAL CHAOS SIMULATION")
