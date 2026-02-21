@@ -5,7 +5,6 @@ import logging
 import threading
 from pathlib import Path
 
-# 🔴 Database Finanziario nel Vault immortale
 DB_DIR = os.path.join(str(Path.home()), ".superagent_data")
 os.makedirs(DB_DIR, exist_ok=True)
 DB_FILE = "money_db.sqlite"
@@ -15,7 +14,6 @@ class Database:
     def __init__(self):
         self.logger = logging.getLogger("Database")
         
-        # 🔴 FIX HEDGE-GRADE: Threading sicuro + Timeout anti-lock
         self.conn = sqlite3.connect(
             DB_PATH, 
             check_same_thread=False,
@@ -24,7 +22,6 @@ class Database:
         )
         self.conn.row_factory = sqlite3.Row
         
-        # 🔴 FIX HEDGE-GRADE: PRAGMA WAL per scritture concorrenti UI/Worker
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
         
@@ -49,7 +46,6 @@ class Database:
                     current_balance REAL
                 )
             """)
-            # Inizializza saldo a 1000 se vuoto (adattalo se vuoi un altro default)
             self.conn.execute("INSERT OR IGNORE INTO balance (id, current_balance) VALUES (1, 1000.0)")
 
     def get_balance(self):
@@ -57,6 +53,17 @@ class Database:
             cur = self.conn.execute("SELECT current_balance FROM balance WHERE id = 1")
             row = cur.fetchone()
             return float(row["current_balance"]) if row else 0.0
+
+    def update_bankroll(self, amount):
+        # 🔴 FIX: Transazione WAL sicura e atomica
+        with self._lock:
+            self.conn.execute("BEGIN TRANSACTION")
+            try:
+                self.conn.execute("UPDATE balance SET current_balance = ? WHERE id = 1", (float(amount),))
+                self.conn.execute("COMMIT")
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
 
     def reserve(self, tx_id, amount):
         ts = int(time.time())
