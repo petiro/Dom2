@@ -30,7 +30,6 @@ class ExecutionEngine:
     def process_signal(self, payload: Dict[str, Any], money_manager) -> None:
         self.logger.info(f"⚙️ Avvio processing segnale: {payload.get('teams')}")
         
-        # 🔴 FIX: Variabili transazionali inizializzate
         tx_id = None
         bet_placed = False
         stake = 0.0
@@ -74,11 +73,10 @@ class ExecutionEngine:
                 self.bus.emit("BET_FAILED", {"reason": "Insufficient real balance"})
                 return
 
-            # 🔴 STEP 1: RESERVE DB (TWO-PHASE COMMIT)
-            # Salviamo su DB prima di interagire fisicamente col bookmaker
+            # 🔴 STEP 1: RESERVE DB
             tx_id = money_manager.reserve(stake)
 
-            # 🔴 STEP 2: PLACE BET
+            # 🔴 STEP 2: PLACE BET (Il crash viene gestito dall'except esterno)
             bet_ok = self.executor.place_bet(teams, market, stake)
 
             if not bet_ok:
@@ -94,16 +92,15 @@ class ExecutionEngine:
             self.bus.emit("BET_SUCCESS", {"tx_id": tx_id, "teams": teams, "stake": stake, "odds": odds})
 
         except Exception as e:
-            self.logger.critical(f"🔥 Crash in Execution Engine: {e}\n{traceback.format_exc()}")
+            self.logger.critical(f"🔥 Crash in Execution Engine: {e}")
             
-            # 🔴 FIX NUCLEARE LEDGER: Rollback SOLO SE il bookmaker non ha confermato
+            # 🔴 GESTIONE ATOMICA UNICA: Rollback solo pre-click.
             if tx_id:
                 if not bet_placed:
                     money_manager.refund(tx_id)
                     self.logger.warning(f"🔄 Rollback DB sicuro per TX {tx_id[:8]}. I fondi NON sono passati al bookmaker.")
                 else:
-                    # NESSUN ROLLBACK. Il Phantom Refund è neutralizzato.
-                    self.logger.critical(f"☠️ Bet {tx_id[:8]} REALE EFFETTUATA. Nessun rollback per evitare Phantom Refund.")
+                    self.logger.critical(f"☠️ Bet {tx_id[:8]} REALE EFFETTUATA. Nessun rollback.")
                 
             if hasattr(self.executor, 'save_blackbox'):
                 self.executor.save_blackbox(
