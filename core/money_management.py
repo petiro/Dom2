@@ -6,35 +6,40 @@ class MoneyManager:
     def __init__(self, db):
         self.db = db
         self.logger = logging.getLogger("MoneyManager")
-        # 🔴 FIX DB LOCK: RLock permette allo stesso thread di richiamare le proprie funzioni senza bloccarsi,
-        # ma impedisce a thread esterni (es. la UI) di accavallarsi nelle letture/scritture.
+        # 🔴 FIX DB LOCK: RLock impedisce l'Overspending Simultaneo
         self._lock = threading.RLock()
 
     def bankroll(self) -> float:
         with self._lock:
-            return float(self.db.get_bankroll())
+            # 🔴 FIX: Ora chiama correttamente get_balance() del DB
+            return float(self.db.get_balance())
 
     def pending(self):
         with self._lock:
+            # Questo era già corretto
             return self.db.pending()
 
     def reserve(self, amount: float) -> str:
         with self._lock:
             tx_id = str(uuid.uuid4())
-            self.db.add_transaction(tx_id, amount, "PENDING")
+            # 🔴 FIX: Ora usa la funzione reserve() del DB invece di add_transaction
+            self.db.reserve(tx_id, amount)
             return tx_id
 
     def refund(self, tx_id: str) -> None:
         with self._lock:
-            self.db.update_transaction(tx_id, "REFUND")
+            # 🔴 FIX: Ora usa rollback() che ripristina i fondi nel tuo DB
+            self.db.rollback(tx_id)
 
     def win(self, tx_id: str, payout: float) -> None:
         with self._lock:
-            self.db.update_transaction(tx_id, "WIN", payout=payout)
+            # 🔴 FIX: Usa commit() per confermare la vincita
+            self.db.commit(tx_id, payout)
 
     def loss(self, tx_id: str) -> None:
         with self._lock:
-            self.db.update_transaction(tx_id, "LOSS")
+            # 🔴 FIX: Usa commit() con payout 0 per segnare la sconfitta
+            self.db.commit(tx_id, 0.0)
 
     def get_stake(self, odds: float) -> float:
         with self._lock:
