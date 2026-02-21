@@ -18,15 +18,20 @@ BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
+# 🔴 FIX NUCLEARE I/O: Lucchetto Globale per la lettura/scrittura dei file JSON
+_io_lock = threading.RLock()
+
 def _load(path, default):
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f: return json.load(f)
-        except Exception: return default
-    return default
+    with _io_lock:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f: return json.load(f)
+            except Exception: return default
+        return default
 
 def _save(path, data):
-    with open(path, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+    with _io_lock:
+        with open(path, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
 
 # ================================
 # AUTO-BACKUP ATOMICO (Hedge-Grade)
@@ -48,20 +53,17 @@ class BackupEngine:
             temp_dir = os.path.join(BACKUP_DIR, f"temp_{timestamp}")
             os.makedirs(temp_dir, exist_ok=True)
             
-            # 1. Copia file di configurazione normali
             files_to_backup = ["bookmakers.json", "robots.json", "selectors.json", "telegram_session.dat", "openrouter_key.dat", ".master.key"]
             for file in files_to_backup:
                 src = os.path.join(BASE_DIR, file)
                 if os.path.exists(src): shutil.copy2(src, temp_dir)
             
-            # 2. 🔴 BACKUP ATOMICO SQLITE (Safe-Lock)
             db_src = os.path.join(BASE_DIR, "money_db.sqlite")
             db_dst = os.path.join(temp_dir, "money_db.sqlite")
             if os.path.exists(db_src):
                 with sqlite3.connect(db_src) as conn_src, sqlite3.connect(db_dst) as conn_dst:
-                    conn_src.backup(conn_dst) # Lock transazionale nativo C++
+                    conn_src.backup(conn_dst)
                     
-            # 3. Zip e rotazione
             zip_name = os.path.join(BACKUP_DIR, f"superagent_backup_{timestamp}")
             shutil.make_archive(zip_name, 'zip', temp_dir)
             shutil.rmtree(temp_dir)
@@ -73,22 +75,18 @@ class BackupEngine:
 BackupEngine.start_auto_backup()
 
 # ================================
-# MANAGER CRIPTATI
+# MANAGER CRIPTATI E SICURI
 # ================================
 class BookmakerManager:
     def all(self): return _load(BOOKMAKER_FILE, [])
     def save_all(self, data): _save(BOOKMAKER_FILE, data)
-    
     def add(self, name, username, password):
         data = self.all()
-        enc_pass = CryptoVault.encrypt(password) # 🔴 Cifra la password
+        enc_pass = CryptoVault.encrypt(password)
         data.append({"id": name.lower().replace(" ", "_"), "name": name, "username": username, "password": enc_pass})
         self.save_all(data)
-        
     def delete(self, book_id): self.save_all([b for b in self.all() if b["id"] != book_id])
-    
     def get_decrypted(self, book_id):
-        # 🔴 Decifra solo quando l'Executor ne ha bisogno in memoria
         for b in self.all():
             if b["id"] == book_id:
                 return b["username"], CryptoVault.decrypt(b["password"])
@@ -100,6 +98,21 @@ class RobotManager:
     def add(self, name, book_id):
         data = self.all(); data.append({"id": name.lower().replace(" ", "_"), "name": name, "bookmaker_id": book_id, "selectors": []})
         self.save_all(data)
+        
+    # 🔴 FIX: Aggiunta funzione 'save' usata dal tester per la sovrascrittura sicura
+    def save(self, robot_id, bot_data):
+        data = self.all()
+        found = False
+        for r in data:
+            if r.get("id") == robot_id:
+                r.update(bot_data)
+                found = True
+                break
+        if not found:
+            bot_data["id"] = robot_id
+            data.append(bot_data)
+        self.save_all(data)
+        
     def delete(self, robot_id): self.save_all([r for r in self.all() if r["id"] != robot_id])
 
 class SelectorManager:
