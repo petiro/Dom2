@@ -1,71 +1,56 @@
 import threading
 import queue
-import time
+import traceback
+import logging
 
 class PlaywrightWorker:
-    def __init__(self, logger):
-        self.logger = logger
-        self.queue = queue.Queue()
+    def __init__(self, logger=None):
+        self.logger = logger or logging.getLogger("PlaywrightWorker")
+        self.q = queue.Queue()
         self.running = False
         self.thread = None
         self.executor = None
 
     def start(self):
-        if self.running:
-            return
-
         self.running = True
-        self.thread = threading.Thread(target=self._loop, daemon=True, name="PW_Worker")
+        self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.logger.info("Playwright Worker avviato.")
 
     def stop(self):
         self.logger.info("Arresto Playwright Worker richiesto...")
         self.running = False
-
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=3.0)
-
-        if self.executor:
-            try:
-                self.executor.close()
-            except Exception as e:
-                self.logger.error("Errore chiusura executor: %s", e)
-
+        self.q.put((None, None, None))
+        if self.thread:
+            self.thread.join(timeout=2)
         self.logger.info("Playwright Worker arrestato.")
 
-    def submit(self, fn, *args, **kwargs):
-        if not self.running:
-            self.logger.warning("Tentativo di submit su worker spento. Ignorato.")
-            return False
+    def submit(self, func, *args, **kwargs):
+        self.q.put((func, args, kwargs))
 
-        if self.queue.qsize() > 100:
-            self.logger.warning("Worker Queue satura! Task droppato.")
-            return False
+    def is_alive(self):
+        return self.thread and self.thread.is_alive()
 
-        self.queue.put((fn, args, kwargs))
-        return True
-
-    def _loop(self):
+    def _run(self):
         self.logger.info("Worker Loop Iniziato.")
-
         while self.running:
             try:
-                fn, args, kwargs = self.queue.get(timeout=1.0)
+                task = self.q.get(timeout=1)
+                func, args, kwargs = task
+                if func is None:
+                    break
+                
+                # 🔴 FIX WORKER: Isolamento totale del task. 
+                # Se crasha, il worker logga l'errore ma SOPRAVVIVE e passa al task successivo.
+                try:
+                    func(*args, **kwargs)
+                except Exception as e:
+                    self.logger.error(f"❌ Worker Task Crash: {e}\n{traceback.format_exc()}")
+
+                self.q.task_done()
             except queue.Empty:
                 continue
-
-            try:
-                start_time = time.time()
-                fn(*args, **kwargs)
-                exec_time = time.time() - start_time
-
-                if exec_time > 30.0:
-                    self.logger.warning("⚠️ Task lento (%s): %.2fs", getattr(fn, '__name__', 'unknown'), exec_time)
-
             except Exception as e:
-                self.logger.exception("❌ Errore critico nel task worker: %s", e)
-            finally:
-                self.queue.task_done()
-
+                self.logger.error(f"Errore critico nella coda worker: {e}")
+                
         self.logger.info("Worker Loop Terminato.")
