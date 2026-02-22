@@ -15,8 +15,12 @@ Immagina questo programma come il tuo **ufficio virtuale**: qui assumi i tuoi "r
 Ecco una guida passo-passo per navigare tra le 6 sezioni (Tab) che trovi in alto:
 
 ### 📊 1. Tab: Dashboard (Il Pannello di Controllo)
-* **A cosa serve:** È la tua schermata di benvenuto.
-* **Come si usa:** Non devi cliccare nulla qui. Ti serve solo per avere un colpo d'occhio. Se vedi la scritta **"SYSTEM STATUS: 🟢 WATCHDOG OS ACTIVE"**, significa che il motore del programma è acceso, i tuoi dati sono al sicuro nel "Vault" (una cassaforte digitale invisibile) e il sistema di backup è attivo.
+* **A cosa serve:** È la tua schermata di benvenuto e la cabina di pilotaggio principale.
+* **Sistema di Sicurezza:** Ti avvisa che tutti i dati sono protetti nel "Vault" (una cassaforte digitale invisibile) e il sistema di backup è attivo.
+* 🔴 **Pulsante "START/STOP MOTORE" (Toggle di Accensione Globale):**
+  Un grande interruttore visivo che ti permette di accendere e spegnere il motore principale del bot direttamente dall'interfaccia.
+  * **Stato OFF:** Rosso, con scritto "Avvia Sistema". Il bot è a riposo e non elabora segnali.
+  * **Stato ON:** Verde, con scritto "Sistema Operativo: IN ASCOLTO". Il bot è connesso a Telegram ed è pronto ad agire.
 
 ### 💰 2. Tab: Bookmakers (La tua Cassaforte)
 * **A cosa serve:** Qui è dove inserisci le tue credenziali (nome utente e password) dei vari siti di scommesse (es. Bet365, Sisal, ecc.).
@@ -44,6 +48,7 @@ Ecco una guida passo-passo per navigare tra le 6 sezioni (Tab) che trovi in alto
   3. Scegli dal menu a tendina quale **Account Bookmaker** (che hai salvato nella Tab 2) questo robot dovrà usare.
   4. Inserisci le **Trigger Words** (parole chiave separate da virgola, es: *calcio, over 2.5, serie a*). Quando il bot leggerà queste parole su Telegram, si attiverà.
   5. Imposta lo **Stake** (l'importo fisso in Euro da scommettere).
+* 🔘 **Pulsante START/STOP Individuale:** Oltre al motore principale, puoi accendere o mettere in pausa ogni singolo robot! Se una strategia sta andando male, spegni solo quel robot ("⏸️ Robot IN PAUSA") senza fermare le altre strategie.
 * 💡 **NOTA MAGICA:** Hai notato che non c'è il pulsante "Salva"? In questa schermata **il salvataggio è automatico e istantaneo**. Ogni lettera che digiti viene salvata in tempo reale. Se va via la corrente, non perdi nulla!
 * **Come eliminare un robot:** Selezionalo a sinistra e clicca **`❌ Elimina Robot`**.
 
@@ -64,8 +69,9 @@ Per non confonderti, segui questo ordine esatto per la prima configurazione:
 1. Vai su **Cloud & API** e collega Telegram e l'Intelligenza artificiale.
 2. Vai su **Bookmakers** e inserisci il tuo conto di gioco (es. Bet365).
 3. Vai su **Selettori** (se hai codici da aggiornare per i siti).
-4. Vai su **Robot & Strategie** e crea il tuo primo lavoratore virtuale, dicendogli quanti soldi usare e quale account scommesse gestire.
-5. Vai su **Logs**, rilassati e lascia che il bot faccia il lavoro sporco!
+4. Vai su **Robot & Strategie** e crea il tuo primo lavoratore virtuale, assicurandoti che sia "🟢 Robot ATTIVO".
+5. Vai sulla **Dashboard** e clicca su "🔴 Avvia Sistema" per accendere il motore.
+6. Vai su **Logs**, rilassati e lascia che il bot faccia il lavoro sporco!
 
 ---
 
@@ -90,6 +96,21 @@ Ecco l'elenco completo di tutti i file attualmente caricati e disponibili nell'a
 
 ---
 
+## 🖥️ Interfaccia Grafica (GUI) - Dettagli Tecnici Back-End
+
+Dietro la semplicità visiva, l'interfaccia esegue operazioni complesse di sicurezza e sincronizzazione:
+
+* **Pulsante START/STOP Motore (Dashboard):** 1. *Nella UI (Front-end):* Un grande `QPushButton` con due stati (Rosso/OFF, Verde/ON).
+    2. *L'Azione (Wiring):* Il click chiama direttamente la funzione del `SuperAgentController` (`controller.start_listening()`).
+    3. *Il Motore (Back-end):* Il Controller sveglia il `TelegramWorker`, che si connette a Telegram. Avvia l'`EventBus` che si mette in ascolto dei segnali.
+    4. *Graceful Shutdown:* Spegnendo il motore, non si "uccide" il programma brutalmente. Il pulsante dice al worker di disconnettersi. Se c'è una scommessa PENDING, l'`ExecutionEngine` la porta a termine e poi si addormenta.
+* **Pulsanti START/STOP Robot (Robot Tab):** Ogni Robot object ha un flag `is_active`. Spegnere un singolo robot disinnesca il suo ascolto nel controller (`process_signal`), permettendoti di testare o disabilitare una specifica strategia senza fermare l'intero sistema.
+* **Gestione Credenziali (Bookmakers):** Il file della UI chiama il modulo `core.secure_storage`. La password è crittografata usando una chiave generata specificamente per la macchina (AES-256) e salvata in binario.
+* **Auto-Save Asincrono:** Il codice usa i Segnali di PyQt. Ogni singola lettera digitata innesca la funzione `save_current_robot_data()` che salva istantaneamente in `config/robots.yaml`, prevenendo la perdita dati in caso di crash.
+* **Telemetria Asincrona (Logs):** Il motore principale usa un segnale PyQt asincrono (`self.controller.log_message.connect`). Qualsiasi evento viene stampato dinamicamente con auto-scroll, separando il thread dell'interfaccia da quello di esecuzione.
+
+---
+
 ## 🧪 Ingegneria del Caos e Suite di Test (`tests/`)
 
 SuperAgent non è testato con semplici "Unit Test", ma con una vera e propria suite di **Ingegneria del Caos (Chaos Engineering)** progettata per simulare i peggiori disastri possibili in ambiente di produzione VPS. 
@@ -105,6 +126,7 @@ Questi script collaudano le fondamenta finanziarie e la resilienza del Core:
   * *Event Bus Block:* Verifica che messaggi Telegram lenti non blocchino il motore di scommessa (Asincronia totale).
   * *Financial Watchdog:* Controlla che il bot si accorga se il bookmaker annulla una scommessa esternamente.
   * *Over-reserve & Math Poison:* Simula 50 attacchi simultanei al database tentando di prelevare più soldi del bankroll e inietta input matematici corrotti (NaN/Infinito) per validare i lock di SQLite (PRAGMA WAL).
+  * *Command Center Locks:* Assicura che, a motore spento o a robot in pausa, nessun segnale fantasma possa attivare una scommessa non autorizzata.
 
 * **`ENDURANCE_TEST.py` (Extreme Survival Simulation):**
   Simula il degrado ambientale della VPS nel tempo:
