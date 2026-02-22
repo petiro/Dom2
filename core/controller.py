@@ -2,22 +2,18 @@ import logging
 import threading
 import time
 import os
-import json
-import re
 import requests
-import psutil
 from pathlib import Path
 from typing import Dict, Any
 from PySide6.QtCore import QObject, Signal
 
 from core.event_bus import bus
 from core.playwright_worker import PlaywrightWorker
-from core.telegram_worker import TelegramWorker  # 🔴 FIX 1: Import Telegram
+from core.telegram_worker import TelegramWorker
 from core.execution_engine import ExecutionEngine
 from core.money_management import MoneyManager
 from core.dom_executor_playwright import DomExecutorPlaywright
 from core.database import Database
-from core.config_paths import CONFIG_DIR
 from core.config_loader import ConfigLoader
 from core.secure_storage import RobotManager
 
@@ -40,101 +36,138 @@ class SuperAgentController(QObject):
         self.worker.executor = DomExecutorPlaywright(logger=logger, allow_place=allow_bets)
         self.engine = ExecutionEngine(bus, self.worker.executor, logger)
 
-        # 🔴 FIX 1: Telegram Worker riattivato e collegato!
+        # Inizializza Telegram Worker ma non farlo partire
         self.telegram = TelegramWorker(self.config)
         self.telegram.message_received.connect(self.process_signal)
+
+        # Stati del Command Center
+        self.is_running = False 
+        self.engine.betting_enabled = False
+        self._bus_started = False
 
         self.bet_lock = False
         self.circuit_open = False
         self._lock = threading.Lock()
         
-        self.last_bet_ts = 0 
-        self.last_signal_ts = 0
-        self.consecutive_crashes = 0
-        self.last_desync_check = time.time()
-        
         self.last_worker_heartbeat = time.time()
-        self.nuclear_threshold = 90  
 
         bus.subscribe("BET_SUCCESS", self._on_bet_success)
         bus.subscribe("BET_FAILED", self._on_bet_failed)
 
-        self.worker.start()
-        self.telegram.start()  # 🔴 FIX 1: Avvia l'ascolto!
-        bus.start()
         threading.Thread(target=self._settled_watchdog, daemon=True).start()
+
+    # =========================================================
+    # CONTROLLI MOTORE (START / STOP HEDGE-GRADE)
+    # =========================================================
+    def start_listening(self):
+        """Sveglia il worker di Telegram, Playwright e l'EventBus in sicurezza"""
+        if getattr(self, "is_running", False):
+            self.logger.warning("Motore già attivo. Ignoro doppio comando.")
+            return
+
+        self.logger.info("🟢 MOTORE AVVIATO: Inizializzazione servizi...")
+        self.is_running = True
+        
+        # Sblocco globale delle scommesse (Circuit Breaker)
+        if hasattr(self, "engine"):
+            self.engine.betting_enabled = True
+
+        if not getattr(self, "_bus_started", False):
+            bus.start()
+            self._bus_started = True
+
+        if not getattr(self.worker, "running", False):
+            self.worker.start()
+
+        if hasattr(self, "telegram") and self.telegram:
+            if not getattr(self.telegram, "running", False):
+                self.telegram.start()
+            
+    def stop_listening(self):
+        """Graceful shutdown: ferma Telegram, blocca nuovi segnali, finisce bet in corso"""
+        if not getattr(self, "is_running", False):
+            return
+
+        self.logger.warning("🔴 STOP MOTORE (Graceful Shutdown)...")
+        self.is_running = False
+
+        # Blocco betting immediato (Circuit Breaker)
+        if hasattr(self, "engine"):
+            self.engine.betting_enabled = False
+
+        if hasattr(self, "telegram") and self.telegram:
+            self.telegram.stop()
+            self.logger.info("Worker disconnesso. Nessun nuovo segnale verrà processato.")
 
     def _load_robots(self):
         return RobotManager().all()
 
-    def _nuclear_restart(self):
-        self.logger.critical("☢️ NUCLEAR RESTART ATTIVATO")
-        try:
-            try: self.worker.stop()
-            except Exception: pass
+    def _match_robot(self, payload, robot_config):
+        text = payload.get("raw_text", "").lower()
+        if not text:
+            text = f"{payload.get('teams', '')} {payload.get('market', '')}".lower()
             
-            try: self.telegram.stop()
-            except Exception: pass
-
-            try: self.worker.executor.close()
-            except Exception: pass
-
-            self.bet_lock = False
-            self.circuit_open = False
-            self.consecutive_crashes = 0
-
-            allow_bets = self.config.get("betting", {}).get("allow_place", False)
-            self.worker.executor = DomExecutorPlaywright(logger=self.logger, allow_place=allow_bets)
-            self.worker.start()
-            self.telegram = TelegramWorker(self.config)
-            self.telegram.message_received.connect(self.process_signal)
-            self.telegram.start()
+        triggers = robot_config.get("trigger_words", [])
+        if isinstance(triggers, str):
+            triggers = [t.strip() for t in triggers.split(",") if t.strip()]
             
-            self.last_worker_heartbeat = time.time()
-            self.logger.critical("☢️ NUCLEAR RESTART COMPLETATO. Sistema di nuovo online.")
-        except Exception as e:
-            self.logger.critical(f"NUCLEAR FAILURE: {e}")
-
-    def test_ai_strategy(self, description, msg_template):
-        threading.Thread(target=self._run_ai_analysis, args=(description, msg_template)).start()
-
-    def _run_ai_analysis(self, description, msg_template):
-        api_key = ""
-        key_file = os.path.join(str(Path.home()), ".superagent_data", "openrouter_key.dat")
-        if os.path.exists(key_file):
-            with open(key_file, "r", encoding="utf-8") as f:
-                api_key = f.read().strip()
+        excludes = robot_config.get("exclude_words", [])
+        if isinstance(excludes, str):
+            excludes = [e.strip() for e in excludes.split(",") if e.strip()]
+            
+        for ex in excludes:
+            if ex and str(ex).lower() in text:
+                return False
                 
-        if not api_key:
-            self.ai_analysis_ready.emit("❌ ERRORE: API Key OpenRouter mancante. Inseriscila nella UI.")
-            return
+        if not triggers:
+            return True 
             
-        prompt = f"Regola: '{description}'. Messaggio: '{msg_template}'. Spiega: OBIETTIVO, DATI, LOGICA, MERCATO."
-        MODELS = ["arcee-ai/trinity-large-preview:free", "google/gemini-2.0-flash-lite-preview-02-05:free"]
-        
-        for model in MODELS:
-            try:
-                resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}", "HTTP-Referer": "https://github.com"}, json={"model": model, "messages": [{"role": "user", "content": prompt}]}, timeout=12)
-                if resp.status_code == 200:
-                    self.ai_analysis_ready.emit(f"✅ (Modello: {model})\n\n" + resp.json()['choices'][0]['message']['content'])
-                    return
-            except Exception: continue
-        self.ai_analysis_ready.emit("❌ ERRORE: Analisi AI fallita o server OpenRouter non disponibile.")
+        for t in triggers:
+            if str(t).lower() in text:
+                return True
+                
+        return False
 
     def process_signal(self, payload):
+        if not getattr(self, "is_running", False):
+            self.logger.warning("⛔ Motore OFF → segnale Telegram ignorato.")
+            return False
+
         self.logger.info(f"📥 Controller instrada segnale: {payload}")
         if isinstance(payload, str):
             payload = {"teams": "Analisi Auto", "market": "N/A", "raw_text": payload}
             
         if not self.worker.running:
-            self.logger.error("❌ Worker spento. Segnale droppato.")
+            self.logger.error("❌ Worker Playwright spento. Segnale droppato.")
             return False
             
-        self.worker.submit(self.engine.process_signal, payload, self.money_manager)
-        return True
+        robots = self._load_robots()
+        if not robots:
+            self.logger.warning("Nessun robot configurato nel Vault. Segnale droppato.")
+            return False
+            
+        matched = False
+        for r in robots:
+            # Filtro START/STOP singolo robot
+            if not r.get("is_active", True):
+                continue
+                
+            if self._match_robot(payload, r):
+                self.logger.info(f"🤖 Match Robot Triggered: {r.get('name')}")
+                
+                payload["is_active"] = True
+                payload["robot_name"] = r.get("name")
+                
+                self.worker.submit(self.engine.process_signal, payload, self.money_manager)
+                matched = True
+                return True
+
+        if not matched:
+            self.logger.info("Nessun robot ha trovato match di parole chiave → Skip segnale.")
+            return False
 
     def handle_signal(self, signal):
-        self.logger.info("🛠️ [COMPATIBILITY] Ricevuto segnale dal Tester, inoltro al motore V8...")
+        self.logger.info("🛠️ [COMPATIBILITY] Ricevuto segnale, inoltro...")
         return self.process_signal(signal)
 
     def _on_bet_success(self, event):
@@ -143,17 +176,15 @@ class SuperAgentController(QObject):
     def _on_bet_failed(self, event):
         self.logger.info(f"❌ Bet Failed Event: {event}")
 
-    # 🔴 FIX 2: WATCHDOG IMPLEMENTATO (Sblocca i loop di pending eterni)
     def _settled_watchdog(self):
         self.logger.info("👁️ Watchdog Refertazione DB avviato in background.")
         while True:
-            time.sleep(120)  # Controlla referti ogni 2 minuti
+            time.sleep(120)
             try:
                 pending_bets = self.money_manager.db.pending()
                 if not pending_bets:
                     continue
                 
-                # Accodiamo al PlaywrightWorker il controllo del Bookmaker
                 def check_job():
                     try:
                         self.logger.info(f"⏳ Controllo {len(pending_bets)} referti pendenti su Bookmaker...")
@@ -162,7 +193,6 @@ class SuperAgentController(QObject):
                             status = res["status"]
                             payout = res.get("payout", 0.0)
                             
-                            # Refertiamo la più vecchia pending in coda
                             oldest_tx = pending_bets[0]["tx_id"]
                             if status == "WIN":
                                 self.money_manager.win(oldest_tx, payout)
@@ -175,7 +205,8 @@ class SuperAgentController(QObject):
                     except Exception as e:
                         self.logger.error(f"Errore lettura referti bookmaker: {e}")
                 
-                self.worker.submit(check_job)
+                if getattr(self, "is_running", False) and getattr(self.worker, "running", False):
+                    self.worker.submit(check_job)
                 
             except Exception as e:
                 self.logger.error(f"Errore Loop Watchdog PENDING: {e}")
