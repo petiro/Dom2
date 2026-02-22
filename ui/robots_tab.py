@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, 
                                QLabel, QLineEdit, QPushButton, QListWidget, QGroupBox, QComboBox, QMessageBox)
+from PySide6.QtCore import Qt
 from core.secure_storage import RobotManager, BookmakerManager
 
 class RobotsTab(QWidget):
@@ -30,9 +31,18 @@ class RobotsTab(QWidget):
         right_layout = QVBoxLayout()
         form = QFormLayout()
 
+        # Bottone START/STOP singolo robot
+        self.robot_active_btn = QPushButton("🟢 Robot ATTIVO")
+        self.robot_active_btn.setCheckable(True)
+        self.robot_active_btn.setChecked(True)
+        self.robot_active_btn.setStyleSheet("""
+            QPushButton:checked { background-color: #2e7d32; color: white; font-weight: bold; padding: 10px;}
+            QPushButton:!checked { background-color: #f57c00; color: white; font-weight: bold; padding: 10px;}
+        """)
+        self.robot_active_btn.toggled.connect(self.on_robot_toggle)
+
         self.in_name = QLineEdit(); self.in_name.textChanged.connect(self.update_data)
         
-        # 🔴 Dropdown dinamico con gli account Bookmaker salvati
         self.in_book = QComboBox()
         self.in_book.addItems([b.get("id") for b in BookmakerManager().all()])
         self.in_book.currentTextChanged.connect(self.update_data)
@@ -40,6 +50,7 @@ class RobotsTab(QWidget):
         self.in_triggers = QLineEdit(); self.in_triggers.textChanged.connect(self.update_data)
         self.in_stake = QLineEdit(); self.in_stake.textChanged.connect(self.update_data)
 
+        form.addRow("Stato Robot:", self.robot_active_btn)
         form.addRow("Nome Robot:", self.in_name)
         form.addRow("Collega a Account:", self.in_book)
         form.addRow("Trigger Words (es. OVER):", self.in_triggers)
@@ -61,22 +72,43 @@ class RobotsTab(QWidget):
 
     def refresh(self):
         self.list.clear()
+        self.in_book.blockSignals(True)
         self.in_book.clear()
         self.in_book.addItems([b.get("id") for b in BookmakerManager().all()])
+        self.in_book.blockSignals(False)
         for r in self.manager.all():
-            self.list.addItem(f"{r['name']} ➔ {r.get('bookmaker_id', 'Nessuno')}")
+            status_icon = "🟢" if r.get("is_active", True) else "⏸️"
+            self.list.addItem(f"{status_icon} {r['name']} ➔ {r.get('bookmaker_id', 'Nessuno')}")
 
     def select_item(self, idx):
         if idx < 0: return
         self.current_idx = idx
         d = self.manager.all()[idx]
         
-        self.in_name.blockSignals(True); self.in_book.blockSignals(True); self.in_triggers.blockSignals(True); self.in_stake.blockSignals(True)
+        self.in_name.blockSignals(True)
+        self.in_book.blockSignals(True)
+        self.in_triggers.blockSignals(True)
+        self.in_stake.blockSignals(True)
+        self.robot_active_btn.blockSignals(True)
+        
         self.in_name.setText(d.get("name", ""))
         self.in_book.setCurrentText(d.get("bookmaker_id", ""))
         self.in_triggers.setText(", ".join(d.get("trigger_words", [])))
         self.in_stake.setText(str(d.get("stake", "2.0")))
-        self.in_name.blockSignals(False); self.in_book.blockSignals(False); self.in_triggers.blockSignals(False); self.in_stake.blockSignals(False)
+        
+        is_active = d.get("is_active", True)
+        self.robot_active_btn.setChecked(is_active)
+        self.robot_active_btn.setText("🟢 Robot ATTIVO" if is_active else "⏸️ Robot IN PAUSA")
+        
+        self.in_name.blockSignals(False)
+        self.in_book.blockSignals(False)
+        self.in_triggers.blockSignals(False)
+        self.in_stake.blockSignals(False)
+        self.robot_active_btn.blockSignals(False)
+
+    def on_robot_toggle(self, checked):
+        self.robot_active_btn.setText("🟢 Robot ATTIVO" if checked else "⏸️ Robot IN PAUSA")
+        self.update_data()
 
     def update_data(self):
         if self.current_idx < 0: return
@@ -86,11 +118,25 @@ class RobotsTab(QWidget):
         d["bookmaker_id"] = self.in_book.currentText()
         d["trigger_words"] = [w.strip() for w in self.in_triggers.text().split(",") if w.strip()]
         d["stake"] = self.in_stake.text()
+        d["is_active"] = self.robot_active_btn.isChecked()
+        
         self.manager.save_all(data)
-        self.list.item(self.current_idx).setText(f"{d['name']} ➔ {d['bookmaker_id']}")
+        
+        status_icon = "🟢" if d["is_active"] else "⏸️"
+        self.list.item(self.current_idx).setText(f"{status_icon} {d['name']} ➔ {d['bookmaker_id']}")
 
     def add_robot(self):
-        self.manager.add("Nuovo Robot", "")
+        data = self.manager.all()
+        new_id = f"robot_{len(data) + 1}"
+        data.append({
+            "id": new_id,
+            "name": "Nuovo Robot",
+            "bookmaker_id": "",
+            "trigger_words": [],
+            "stake": "2.0",
+            "is_active": True
+        })
+        self.manager.save_all(data)
         self.refresh()
         self.list.setCurrentRow(len(self.manager.all())-1)
 
