@@ -4,8 +4,8 @@ from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QLabel, QTextEdit, QTabWidget, QLineEdit, QFormLayout, 
                              QPushButton, QMessageBox)
+from PySide6.QtCore import Qt, QTimer
 
-# 🔴 IMPORTA I MODULI UI DEL VAULT SICURO
 from ui.bookmaker_tab import BookmakerTab
 from ui.selectors_tab import SelectorsTab
 from ui.robots_tab import RobotsTab
@@ -89,24 +89,35 @@ class DesktopApp(QMainWindow):
         layout = QVBoxLayout(main_widget)
         self.tabs = QTabWidget()
         
+        # --- TAB DASHBOARD ---
         self.dashboard_tab = QWidget()
         l = QVBoxLayout(self.dashboard_tab)
         l.addWidget(QLabel("<h2>SYSTEM STATUS: 🟢 WATCHDOG OS ACTIVE</h2><p>Tutti i dati sono protetti in ~/.superagent_data/. Backup automatico attivo.</p>"))
+        
+        # 🔴 MEGA PULSANTE START/STOP
+        self.engine_btn = QPushButton("🔴 Avvia Sistema")
+        self.engine_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.engine_btn.setStyleSheet("""
+            QPushButton { background-color: #d32f2f; color: white; font-size: 24px; font-weight: bold; padding: 25px; border-radius: 10px; }
+            QPushButton:hover { background-color: #b71c1c; }
+        """)
+        self.engine_btn.clicked.connect(self.toggle_engine)
+        l.addWidget(self.engine_btn)
+        
         l.addStretch()
         self.tabs.addTab(self.dashboard_tab, "📊 Dashboard")
         
-        # 🔴 LE TRE TAB MODULARI CHE LEGGONO DAL VAULT
         self.tabs.addTab(BookmakerTab(), "💰 Bookmakers")
         self.tabs.addTab(SelectorsTab(), "🧩 Selettori")
         self.tabs.addTab(RobotsTab(self.logger, self.controller), "🤖 Robot & Strategie")
         
-        # Cloud & AI
         self.cloud_tab = CloudApiTab(self.config)
         self.tabs.addTab(self.cloud_tab, "☁️ Cloud & API")
         
-        # Logs
-        self.logs_tab = QWidget(); log_l = QVBoxLayout(self.logs_tab)
-        self.log_output = QTextEdit(); self.log_output.setReadOnly(True)
+        self.logs_tab = QWidget()
+        log_l = QVBoxLayout(self.logs_tab)
+        self.log_output = QTextEdit()
+        self.log_output.setReadOnly(True)
         self.log_output.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: monospace;")
         log_l.addWidget(self.log_output)
         self.tabs.addTab(self.logs_tab, "📝 Logs")
@@ -114,8 +125,39 @@ class DesktopApp(QMainWindow):
         layout.addWidget(self.tabs)
         self.controller.log_message.connect(self.log_output.append)
 
+        # 🔴 Polling di Stato Reale (ogni 2 secondi)
+        self.engine_monitor = QTimer()
+        self.engine_monitor.timeout.connect(self.refresh_engine_state)
+        self.engine_monitor.start(2000)
+
+    def toggle_engine(self):
+        is_running = getattr(self.controller, 'is_running', False)
+        if not is_running:
+            self.controller.start_listening()
+        else:
+            self.controller.stop_listening()
+        self.refresh_engine_state()
+
+    def refresh_engine_state(self):
+        running = getattr(self.controller, "is_running", False)
+
+        if running and "IN ASCOLTO" not in self.engine_btn.text():
+            self.engine_btn.setText("🟢 Sistema Operativo: IN ASCOLTO")
+            self.engine_btn.setStyleSheet("""
+                QPushButton { background-color: #2e7d32; color: white; font-size: 24px; font-weight: bold; padding: 25px; border-radius: 10px; }
+                QPushButton:hover { background-color: #1b5e20; }
+            """)
+        elif not running and "Avvia Sistema" not in self.engine_btn.text():
+            self.engine_btn.setText("🔴 Avvia Sistema")
+            self.engine_btn.setStyleSheet("""
+                QPushButton { background-color: #d32f2f; color: white; font-size: 24px; font-weight: bold; padding: 25px; border-radius: 10px; }
+                QPushButton:hover { background-color: #b71c1c; }
+            """)
+
 def run_app(logger, executor, config, monitor, controller):
     app = QApplication.instance()
+    if not app:
+        app = QApplication(sys.argv)
     window = DesktopApp(logger, executor, config, monitor, controller)
     window.show()
     return app.exec()
