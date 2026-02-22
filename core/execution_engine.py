@@ -9,6 +9,7 @@ class ExecutionEngine:
         self.bus = bus
         self.executor = executor
         self.logger = logger or logging.getLogger("ExecutionEngine")
+        self.betting_enabled = False # Partiamo disabilitati
 
     def _safe_float(self, value: Any) -> float:
         if isinstance(value, (int, float)): return float(value)
@@ -30,6 +31,17 @@ class ExecutionEngine:
     def process_signal(self, payload: Dict[str, Any], money_manager) -> None:
         self.logger.info(f"⚙️ Avvio processing segnale: {payload.get('teams')}")
         
+        # 🔴 Blocco Betting Globale
+        if not getattr(self, "betting_enabled", False):
+            self.logger.warning("⛔ Betting disabilitato dal Controller. Motore SPENTO → Segnale ignorato.")
+            return
+
+        # 🔴 Rispetto del Toggle Robot Individuale
+        robot_is_active = payload.get("is_active", True)
+        if not robot_is_active:
+            self.logger.info("⏸️ Il Robot associato a questo segnale è IN PAUSA → Segnale scartato.")
+            return
+
         tx_id = None
         bet_placed = False
         stake = 0.0
@@ -73,28 +85,26 @@ class ExecutionEngine:
                 self.bus.emit("BET_FAILED", {"reason": "Insufficient real balance"})
                 return
 
-            # 🔴 STEP 1: RESERVE DB
             tx_id = money_manager.reserve(stake)
 
-            # 🔴 STEP 2: PLACE BET (Il crash viene gestito dall'except esterno)
-            bet_ok = self.executor.place_bet(teams, market, stake)
+            try:
+                bet_ok = self.executor.place_bet(teams, market, stake)
+            except Exception as e:
+                self.logger.error(f"Crash di rete o browser durante la bet: {e}")
+                money_manager.refund(tx_id)
+                raise e
 
             if not bet_ok:
                 raise RuntimeError("Bet NON piazzata dal bookmaker. Rifiutata.")
 
-            # 🔴 STEP 3: PUNTO DI NON RITORNO
             bet_placed = True
-            
             self.executor.bet_count += 1
             self.logger.info("✅ Scommessa piazzata con successo!")
-            
-            # 🔴 STEP 4: EMIT EVENTO
             self.bus.emit("BET_SUCCESS", {"tx_id": tx_id, "teams": teams, "stake": stake, "odds": odds})
 
         except Exception as e:
             self.logger.critical(f"🔥 Crash in Execution Engine: {e}")
             
-            # 🔴 GESTIONE ATOMICA UNICA: Rollback solo pre-click.
             if tx_id:
                 if not bet_placed:
                     money_manager.refund(tx_id)
