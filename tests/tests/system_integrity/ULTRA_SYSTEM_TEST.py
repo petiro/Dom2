@@ -234,6 +234,34 @@ except Exception as e:
     fail("ZOMBIE_TX", str(e), "execution_engine.py", "Unknown")
 
 # =========================================================
+# TEST 7 — COMMAND CENTER & CIRCUIT BREAKER (NEW)
+# =========================================================
+try:
+    c = create_mocked_controller()
+    # 1. Simula l'iniezione di un robot dal Vault
+    c._load_robots = lambda: [{"name": "TestBot", "trigger_words": ["calcio"], "is_active": False}]
+    
+    # --- PROVA A: MOTORE SPENTO (Ghost Injection) ---
+    c.is_running = False
+    c.engine.betting_enabled = False
+    res_off = c.process_signal({"teams": "Roma", "market": "1", "raw_text": "calcio roma"})
+    
+    # --- PROVA B: MOTORE ACCESO MA ROBOT IN PAUSA (Zombie Robot) ---
+    c.is_running = True
+    c.engine.betting_enabled = True
+    res_robot_off = c.process_signal({"teams": "Roma", "market": "1", "raw_text": "calcio roma"})
+
+    if res_off is not False:
+        fail("CIRCUIT_BREAKER_FAIL", "Il Controller ha processato un segnale mentre il motore era OFF!", "controller.py", "Perdita di fondi incontrollata a sistema spento.")
+    elif res_robot_off is not False:
+        fail("ZOMBIE_ROBOT_FAIL", "Il Controller ha eseguito un segnale per un Robot messo in pausa!", "controller.py", "Strategie disabilitate continuano a operare segretamente.")
+    else:
+        ok("COMMAND_CENTER_LOCKS", "Circuit Breakers verificati. Nessun segnale aggira gli switch UI.")
+
+except Exception as e:
+    fail("COMMAND_CENTER_LOCKS", str(e), "controller.py", "Unknown")
+
+# =========================================================
 # FINALE
 # =========================================================
 print("\n" + "=" * 60)
