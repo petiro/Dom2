@@ -101,6 +101,14 @@ if hasattr(signal, "SIGALRM"):
 try:
     print("🚀 Avvio Controller...")
     controller = SuperAgentController(logger)
+    
+    # 🔥 FIX 1: Dobbiamo "Accendere" il motore, altrimenti il worker resta None
+    print("🔘 Pressione fittizia del bottone START/STOP...")
+    controller.start_listening()
+    
+    # 🔥 FIX 2: Iniettiamo un robot finto attivo per superare i blocchi di sicurezza
+    controller._load_robots = lambda: [{"name": "HedgeTestBot", "trigger_words": [], "is_active": True}]
+    
     print("✅ Controller avviato.")
 except Exception as e:
     print(f"❌ CONTROLLER CRASH ALL'AVVIO: {e}")
@@ -108,8 +116,8 @@ except Exception as e:
 
 time.sleep(2) # Warmup
 
-if not controller.worker.thread.is_alive():
-    print("❌ CRITICAL: Worker Thread morto subito dopo l'avvio!")
+if not controller.worker.thread or not controller.worker.thread.is_alive():
+    print("❌ CRITICAL: Worker Thread morto (o mai partito) subito dopo l'avvio!")
     sys.exit(1)
 print("✅ Worker Thread: VIVO")
 
@@ -132,7 +140,8 @@ bus.subscribe(AppEvent.BET_FAILED, on_fail)
 fake_signal = {
     "teams": "HEDGE FUND TEST MATCH",
     "market": "WINNER",
-    "sport": "SOCCER"
+    "sport": "SOCCER",
+    "raw_text": "hedge fund test match" # Utile per superare il check del parser
 }
 
 print("💉 INIEZIONE SEGNALE TEST...")
@@ -149,7 +158,7 @@ while time.time() - start_time < 60:
     if crash_flag["dead"]:
         print("❌ CRASH RILEVATO DAL WATCHDOG")
         sys.exit(1)
-    if not controller.worker.thread.is_alive():
+    if not controller.worker.thread or not controller.worker.thread.is_alive():
         print("❌ WORKER THREAD MORTO DURANTE L'ESECUZIONE")
         sys.exit(1)
     time.sleep(1)
@@ -179,6 +188,7 @@ except:
 # ---------------------------------------------------
 # 9. SHUTDOWN & VERDETTO
 # ---------------------------------------------------
+controller.stop_listening() # 🔥 FIX: Spegnimento pulito
 controller.worker.stop()
 bus.stop()
 
